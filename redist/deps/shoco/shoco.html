@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <title>shoco example</title>
+    <style>
+    </style>
+  </head>
+  <body>
+    <script async type="text/javascript" src="shoco.js"></script>
+    <script type="text/javascript">
+       window.onload = function() {
+         in_str_input = document.getElementById('in_str');
+         ratio_span =  document.getElementById('ratio');
+         out_str_span =  document.getElementById('out_str');
+         on_in_str_change = function() {
+           compressed = shoco.compress(in_str_input.value); 
+           out_str_span.innerHTML = shoco.decompress(compressed);
+           ratio_span.innerHTML = (((in_str_input.value.length - compressed.length) / in_str_input.value.length) * 100) | 0;
+         }
+         in_str_input.addEventListener("keyup", on_in_str_change);
+         on_in_str_change();
+         in_str_input.focus();
+         in_str_input.select();
+       }
+    </script>
+    <h1>see <em>shoco</em> in action</h1>
+    <input type="text" autofocus="true" id="in_str" value="test"></input>
+    compression ratio: <span id="ratio"></span>%
+    output: <span id="out_str"></span>
+    </body>
+    </html>

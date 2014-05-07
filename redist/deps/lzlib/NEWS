@@ -1,0 +1,8 @@
+Changes in version 1.5:
+
+Decompression support for deprecated version 0 files has been removed.
+
+A bug has been fixed that would make an instance of "struct LZ_Encoder"
+unresponsive if "LZ_compress_sync_flush" is called at the wrong moment.
+
+Minor fixes have been made.
