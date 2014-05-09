@@ -47,6 +47,7 @@ int main( int argc, char **argv )
         assert( pak[1]["content"] == "1337" );
     }
 
+    if( const bool compression_tests = true )
     {
         using namespace bundle;
 
@@ -61,11 +62,15 @@ int main( int argc, char **argv )
             original = ss.str();
         }
 
+        std::cout << "benchmarking compression of " << original.size() << " bytes..." << std::endl;
+
         // some benchmarks
         auto data = measures( original );
         for( auto &in : data ) {
             std::cout << in.str() << std::endl;
         }
+
+        std::cout << "compressing " << original.size() << " bytes..." << std::endl;
 
         bundle::pak pak;
 
@@ -73,7 +78,7 @@ int main( int argc, char **argv )
             pak.push_back( pakfile() );
             pak.back()["filename"] = std::string() + nameof(encoding);
             pak.back()["ext"] = std::string() + extof(encoding);
-            pak.back()["content"] = z( original, encoding );
+            pak.back()["content"] = pack( encoding, original );
         }
 
         std::cout << "toc:\n" << pak.toc() << std::endl;

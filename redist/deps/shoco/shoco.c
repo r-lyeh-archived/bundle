@@ -1,4 +1,4 @@
-#include <stdint.h>
+// #include <stdint.h>
 
 #if (defined (__BYTE_ORDER__) && (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__) || __BIG_ENDIAN__)
   #define swap(x) (x)

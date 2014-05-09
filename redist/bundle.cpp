@@ -1,14 +1,16 @@
 // simple compression interface
 // - rlyeh. mit licensed
 
-#include <cstdio>
+#include <cassert>
+#include <cctype>  // std::isprint
+#include <cstdio>  // std::sprintf
 #include <iomanip>
 #include <iostream>
 #include <sstream>
+#include <string>
+#include <vector>
 
-#include \
-"bundle.hpp"
-
+#include "bundle.hpp"
 
 namespace {
   /* Compresses 'size' bytes from 'data'. Returns the address of a
@@ -22,7 +24,7 @@ namespace {
     struct LZ_Encoder * encoder;
   //uint8_t * new_data;
     const int match_len_limit = 36;
-    const unsigned long long member_size = INT64_MAX;
+    const unsigned long long member_size = (unsigned long long)~0;
     int delta_size, new_data_size;
     int new_pos = 0;
     int written = 0;
@@ -176,9 +178,7 @@ namespace bundle {
     }
 
     const char *const version( unsigned q ) {
-        switch( q ) {
-            break; default : return "0";
-        }
+        return "0";
     }
 
     const char *const extof( unsigned q ) {
@@ -258,16 +258,16 @@ namespace bundle
 {
     // compression methods
 
-    bool is_z( const std::string &self ) {
+    bool is_packed( const std::string &self ) {
         return self.size() > 0 && self.at(0) == '\0';
     }
 
     bool is_unz( const std::string &self ) {
-        return !is_z( self );
+        return !is_packed( self );
     }
 
-    std::string z( const std::string &self, unsigned q ) {
-        if( is_z( self ) )
+    std::string pack( unsigned q, const std::string &self ) {
+        if( is_packed( self ) )
             return self;
 
         if( !self.size() )
@@ -278,55 +278,228 @@ namespace bundle
 
         // compress
 
-        if( !pack( binary, input, q ) )
+        if( !pack( q, binary, input ) )
             return self;
 
         // encapsulated by exploiting std::string design (portable? standard?)
         // should i encapsulate by escaping characters instead? (safer but slower)
 
-        std::ostringstream oss;
+        uint32_t size1 = (uint32_t)input.size(), size2 = (uint32_t)binary.size();
+        std::string output( 9 + size2, '\0' );
 
-        oss << '\x01' <<
-            std::setfill('0') << std::setw(8) << std::hex << input.size() <<
-            std::setfill('0') << std::setw(8) << std::hex << binary.size();
+        output[1] = (unsigned char)(( size1 >> 24 ) & 0xff );
+        output[2] = (unsigned char)(( size1 >> 16 ) & 0xff );
+        output[3] = (unsigned char)(( size1 >>  8 ) & 0xff );
+        output[4] = (unsigned char)(( size1 >>  0 ) & 0xff );
 
-        std::string output = oss.str();
+        output[5] = (unsigned char)(( size2 >> 24 ) & 0xff );
+        output[6] = (unsigned char)(( size2 >> 16 ) & 0xff );
+        output[7] = (unsigned char)(( size2 >>  8 ) & 0xff );
+        output[8] = (unsigned char)(( size2 >>  0 ) & 0xff );
 
-        output.resize( 1 + 8 + 8 + binary.size() );
-
-        std::memcpy( &output.at( 1 + 8 + 8 ), &binary.at( 0 ), binary.size() );
-
-        output.at( 0 ) = '\0';
+        std::memcpy( &output.at( 9 ), &binary.at( 0 ), size2 );
 
         return output;
     }
 
-    std::string unz( const std::string &self, unsigned q ) {
-        if( is_z( self ) )
+    std::string unpack( unsigned q, const std::string &self ) {
+        if( is_packed( self ) )
         {
             // decapsulate
-            size_t size1, size2;
+            uint32_t size1, size2;
 
-            std::stringstream ioss1;
-            ioss1 << std::setfill('0') << std::setw(8) << std::hex << self.substr( 1, 8 );
-            ioss1 >> size1;
+            size1  = ((unsigned char)self[1]) << 24;
+            size1 |= ((unsigned char)self[2]) << 16;
+            size1 |= ((unsigned char)self[3]) <<  8;
+            size1 |= ((unsigned char)self[4]) <<  0;
 
-            std::stringstream ioss2;
-            ioss2 << std::setfill('0') << std::setw(8) << std::hex << self.substr( 9, 8 );
-            ioss2 >> size2;
+            size2  = ((unsigned char)self[5]) << 24;
+            size2 |= ((unsigned char)self[6]) << 16;
+            size2 |= ((unsigned char)self[7]) <<  8;
+            size2 |= ((unsigned char)self[8]) <<  0;
 
-            std::string output;
-            output.resize( size1 );
+            std::string output( size1, '\0' );
 
             std::vector<char> content( size2 );
-            std::memcpy( &content.at( 0 ), &self.at( 17 ), size2 );
+            std::memcpy( &content.at( 0 ), &self.at( 1 + 4 + 4 ), size2 );
 
             // decompress
-            if( unpack( output, content, q ) )
+            if( unpack( q, output, content ) )
                 return output;
         }
 
         return self;
+    }
+}
+
+namespace bundle
+{
+    static std::string hexdump( const std::string &str ) {
+        char spr[ 80 ];
+        std::string out1, out2;
+
+        for( unsigned i = 0; i < 16 && i < str.size(); ++i ) {
+            std::sprintf( spr, "%c ", std::isprint(str[i]) ? str[i] : '.' );
+            out1 += spr;
+            std::sprintf( spr, "%02X ", (unsigned char)str[i] );
+            out2 += spr;
+        }
+
+        for( unsigned i = str.size(); i < 16; ++i ) {
+            std::sprintf( spr, ". " );
+            out1 += spr;
+            std::sprintf( spr, "?? " );
+            out2 += spr;
+        }
+
+        return out1 + "[...] (" + out2 + "[...])";
+    }
+
+    bool pakfile::has( const std::string &property ) const {
+        return this->find( property ) != this->end();
+    }
+
+    // binary serialization
+
+    bool pak::bin( const std::string &bin_import ) //const
+    {
+        this->clear();
+        std::vector<pakfile> result;
+
+        if( !bin_import.size() )
+            return true; // :)
+
+        if( type == paktype::ZIP )
+        {
+            // Try to open the archive.
+            mz_zip_archive zip_archive;
+            memset(&zip_archive, 0, sizeof(zip_archive));
+
+            mz_bool status = mz_zip_reader_init_mem( &zip_archive, (void *)bin_import.c_str(), bin_import.size(), 0 );
+
+            if( !status )
+                return "mz_zip_reader_init_file() failed!", false;
+
+            // Get and print information about each file in the archive.
+            for( unsigned int i = 0; i < mz_zip_reader_get_num_files(&zip_archive); i++ )
+            {
+                mz_zip_archive_file_stat file_stat;
+
+                if( !mz_zip_reader_file_stat( &zip_archive, i, &file_stat ) )
+                {
+                    mz_zip_reader_end( &zip_archive );
+                    return "mz_zip_reader_file_stat() failed!", false;
+                }
+
+                result.push_back( pakfile() );
+
+                result.back()["filename"] = file_stat.m_filename;
+                result.back()["comment"] = file_stat.m_comment;
+                result.back()["size"] = (unsigned int)file_stat.m_uncomp_size;
+                result.back()["size_z"] = (unsigned int)file_stat.m_comp_size;
+                //result.back()["modify_time"] = ze.mtime;
+                //result.back()["access_time"] = ze.atime;
+                //result.back()["create_time"] = ze.ctime;
+                //result.back()["attributes"] = ze.attr;
+
+                if( const bool decode = true )
+                {
+                    // Try to extract file to the heap.
+                    size_t uncomp_size;
+
+                    void *p = mz_zip_reader_extract_file_to_heap(&zip_archive, file_stat.m_filename, &uncomp_size, 0);
+
+                    if( !p )
+                    {
+                        mz_zip_reader_end(&zip_archive);
+                        return "mz_zip_reader_extract_file_to_heap() failed!", false;
+                    }
+
+                    // Make sure the extraction really succeeded.
+                    /*
+                    if ((uncomp_size != strlen(s_pStr)) || (memcmp(p, s_pStr, strlen(s_pStr))))
+                    {
+                    free(p);
+                    mz_zip_reader_end(&zip_archive);
+                    return "mz_zip_reader_extract_file_to_heap() failed to extract the proper data", false;
+                    }
+                    */
+
+                    result.back()["content"].resize( uncomp_size );
+                    memcpy( (void *)result.back()["content"].data(), p, uncomp_size );
+
+                    free(p);
+                }
+            }
+
+            // We're done.
+            mz_zip_reader_end(&zip_archive);
+        }
+        else
+        {}
+
+        this->resize( result.size() );
+        std::copy( result.begin(), result.end(), this->begin() );
+
+        return true;
+    }
+
+    std::string pak::bin() const
+    {
+        std::string result;
+
+        if( type == paktype::ZIP )
+        {
+            mz_zip_archive zip_archive;
+            memset( &zip_archive, 0, sizeof(zip_archive) );
+
+            mz_bool status = mz_zip_writer_init_heap( &zip_archive, 0, 128 * 1024 );
+
+            if( !status ) {
+                assert( status );
+                return "mz_zip_writer_init_heap() failed!", std::string();
+            }
+
+            for( const_iterator it = this->begin(), end = this->end(); it != end; ++it ) {
+                std::map< std::string, bundle::string >::const_iterator filename = it->find("filename");
+                std::map< std::string, bundle::string >::const_iterator content = it->find("content");
+                if( filename != it->end() && content != it->end() ) {
+                    const size_t bufsize = content->second.size();
+
+                    status = mz_zip_writer_add_mem( &zip_archive, filename->second.c_str(), content->second.c_str(), bufsize, MZ_DEFAULT_COMPRESSION );
+                    if( !status ) {
+                        assert( status );
+                        return "mz_zip_writer_add_mem() failed!", std::string();
+                    }
+                }
+            }
+
+            void *pBuf;
+            size_t pSize;
+
+            status = mz_zip_writer_finalize_heap_archive( &zip_archive, &pBuf, &pSize);
+            if( !status ) {
+                assert( status );
+                return "mz_zip_writer_finalize_heap_archive() failed!", std::string();
+            }
+
+            // Ends archive writing, freeing all allocations, and closing the output file if mz_zip_writer_init_file() was used.
+            // Note for the archive to be valid, it must have been finalized before ending.
+            status = mz_zip_writer_end( &zip_archive );
+            if( !status ) {
+                assert( status );
+                return "mz_zip_writer_end() failed!", std::string();
+            }
+
+            result.resize( pSize );
+            memcpy( &result.at(0), pBuf, pSize );
+
+            free( pBuf );
+        }
+        else
+        {}
+
+        return result;
     }
 }
 
