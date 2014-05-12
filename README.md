@@ -20,7 +20,7 @@ int main() {
     for( auto &encoding : { LZ4, SHOCO, MINIZ, LZLIB, NONE } ) {
         std::string encname = bundle::name(encoding);
         std::string zipped = bundle::pack(original, encoding);
-        std::string unzipped = bundle::unpack(compressed, encoding);
+        std::string unzipped = bundle::unpack(compressed);
         std::cout << encname << ": " << original.size() << " to " << zipped.size() << " bytes" << std::endl;
         assert( original == unzipped );
     }
@@ -46,11 +46,18 @@ All ok.
 - sorted by disk space: lzlib < miniz < lz4
 - and maybe use SHOCO for plain text ascii IDs
 
-### public api (@todoc)
-- bool is_packed( const string &self )
-- bool is_unpacked( const string &self )
-- std::string pack( unsigned q, const string &self )
-- std::string unpack( unsigned q, const string &self )
+### public api (@todocument)
+- bool is_packed( string )
+- bool is_unpacked( string )
+- string pack( unsigned q, string )
+- string unpack( string )
+- unsigned typeof( string )
+- string nameof( string )
+- string versionof( string )
+- string extof( string )
+- size_t length( string )
+- size_t zlength( string )
+- void *zptr( string )
 - bool pack( unsigned q, const char *in, size_t len, char *out, size_t &zlen )
 - bool unpack( unsigned q, const char *in, size_t len, char *out, size_t &zlen )
 - size_t bound( unsigned q, size_t len )
@@ -58,8 +65,10 @@ All ok.
 - const char *const version( unsigned q )
 - const char *const extof( unsigned q )
 - unsigned typeof( const void *mem, size_t size )
-- bool pack( unsigned q, <T2> &buffer_out, const <T1> &buffer_in )
-- bool unpack( unsigned q, <T2> &buffer_out, const <T1> &buffer_in )
+- bool pack( unsigned q, CONTAINER out, CONTAINER in )
+- bool unpack( unsigned q, CONTAINER out, CONTAINER in )
+- also, pakfile
+- also, pak
 
 ### evaluated libraries
 - [LZO](http://www.oberhumer.com/opensource/lzo/), [LibLZF](http://freshmeat.net/projects/liblzf), [FastLZ](http://fastlz.org/), replaced by [LZ4](https://code.google.com/p/lz4/)

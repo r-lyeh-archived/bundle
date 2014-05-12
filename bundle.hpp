@@ -43,7 +43,15 @@ namespace bundle
 	bool is_unpacked( const std::string &self );
 
 	std::string pack( unsigned q, const std::string &self );
-	std::string unpack( unsigned q, const std::string &self );
+	std::string unpack( const std::string &self );
+
+	unsigned typeof( const std::string &self );
+	std::string nameof( const std::string &self );
+	std::string versionof( const std::string &self );
+	std::string extof( const std::string &self );
+	size_t length( const std::string &self );
+	size_t zlength( const std::string &self );
+	void *zptr( const std::string &self );
 
 	// low level API
 
@@ -51,7 +59,7 @@ namespace bundle
 	  bool unpack( unsigned q, const char *in, size_t len, char *out, size_t &zlen );
 	size_t bound( unsigned q, size_t len );
 	const char *const nameof( unsigned q );
-	const char *const version( unsigned q );
+	const char *const versionof( unsigned q );
 	const char *const extof( unsigned q );
 	unsigned typeof( const void *mem, size_t size );
 
@@ -134,13 +142,13 @@ namespace bundle
 
 			if( do_dec ) {
 				auto begin = std::chrono::high_resolution_clock::now();
-				unzipped = unpack(scheme, zipped);
+				unzipped = unpack(zipped);
 				auto end = std::chrono::high_resolution_clock::now();
 				r.dectime = std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count();
 				r.pass = ( original == unzipped );
 			}
 
-			r.pass = ( do_verify && do_enc && do_dec ? original == unzipped : true );
+			r.pass = ( do_verify && do_enc && do_dec && is_packed(zipped) && is_unpacked(unzipped) ? original == unzipped : true );
 		}
 
 		return results;
@@ -277,11 +285,12 @@ namespace bundle
 		// binary serialization
 
 		bool bin( const std::string &bin_import ); //const
-		std::string bin() const;
+		std::string bin( unsigned q = EXTRA ) const;
 
 		// debug
 
 		std::string toc() const {
+			// @todo: add offset in file
 			std::string ret;
 			for( const_iterator it = this->begin(), end = this->end(); it != end; ++it ) {
 				const pakfile &file = *it;

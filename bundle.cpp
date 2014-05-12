@@ -45,7 +45,15 @@ namespace bundle
 	bool is_unpacked( const std::string &self );
 
 	std::string pack( unsigned q, const std::string &self );
-	std::string unpack( unsigned q, const std::string &self );
+	std::string unpack( const std::string &self );
+
+	unsigned typeof( const std::string &self );
+	std::string nameof( const std::string &self );
+	std::string versionof( const std::string &self );
+	std::string extof( const std::string &self );
+	size_t length( const std::string &self );
+	size_t zlength( const std::string &self );
+	void *zptr( const std::string &self );
 
 	// low level API
 
@@ -53,7 +61,7 @@ namespace bundle
 	  bool unpack( unsigned q, const char *in, size_t len, char *out, size_t &zlen );
 	size_t bound( unsigned q, size_t len );
 	const char *const nameof( unsigned q );
-	const char *const version( unsigned q );
+	const char *const versionof( unsigned q );
 	const char *const extof( unsigned q );
 	unsigned typeof( const void *mem, size_t size );
 
@@ -136,13 +144,13 @@ namespace bundle
 
 			if( do_dec ) {
 				auto begin = std::chrono::high_resolution_clock::now();
-				unzipped = unpack(scheme, zipped);
+				unzipped = unpack(zipped);
 				auto end = std::chrono::high_resolution_clock::now();
 				r.dectime = std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count();
 				r.pass = ( original == unzipped );
 			}
 
-			r.pass = ( do_verify && do_enc && do_dec ? original == unzipped : true );
+			r.pass = ( do_verify && do_enc && do_dec && is_packed(zipped) && is_unpacked(unzipped) ? original == unzipped : true );
 		}
 
 		return results;
@@ -279,11 +287,12 @@ namespace bundle
 		// binary serialization
 
 		bool bin( const std::string &bin_import ); //const
-		std::string bin() const;
+		std::string bin( unsigned q = EXTRA ) const;
 
 		// debug
 
 		std::string toc() const {
+			// @todo: add offset in file
 			std::string ret;
 			for( const_iterator it = this->begin(), end = this->end(); it != end; ++it ) {
 				const pakfile &file = *it;
@@ -520,6 +529,9 @@ int LZ4_uncompress_unknownOutputSize (const char* source, char* dest, int isize,
 size_t shoco_compress(const char * const in, size_t len, char * const out, size_t bufsize);
 size_t shoco_decompress(const char * const in, size_t len, char * const out, size_t bufsize);
 
+#define MINIZ_NO_ZLIB_COMPATIBLE_NAMES 1
+#define MINIZ_USE_UNALIGNED_LOADS_AND_STORES 1
+#define MINIZ_HAS_64BIT_REGISTERS 1
 
 #line 1 "miniz.c"
 #ifndef MINIZ_HEADER_INCLUDED
@@ -5281,7 +5293,8 @@ void *mz_zip_extract_archive_file_to_heap(const char *pZip_filename, const char 
   For more information, please refer to <http://unlicense.org/>
 */
 
-#define mz_crc32 mz_crc32_lz
+
+//#define mz_crc32 mz_crc32_lz
 
 #line 1 "lzlib.c"
 #if defined(_MSC_VER) && _MSC_VER < 1700
@@ -9973,7 +9986,7 @@ namespace bundle {
 		}
 	}
 
-	const char *const version( unsigned q ) {
+	const char *const versionof( unsigned q ) {
 		return "0";
 	}
 
@@ -10054,12 +10067,59 @@ namespace bundle
 {
 	// compression methods
 
+	namespace {
+		enum {
+			OFFSET_MARK = 0,
+			OFFSET_LEN = 1,
+			OFFSET_ZLEN = 5,
+			OFFSET_TYPE = 9,
+			OFFSET_ZDATA = 10
+		};
+	}
+
 	bool is_packed( const std::string &self ) {
 		return self.size() > 0 && self.at(0) == '\0';
 	}
-
-	bool is_unz( const std::string &self ) {
+	bool is_unpacked( const std::string &self ) {
 		return !is_packed( self );
+	}
+
+	unsigned typeof( const std::string &self ) {
+		return is_packed( self ) ? self[ OFFSET_TYPE ] : NONE;
+	}
+	std::string nameof( const std::string &self ) {
+		return bundle::nameof( typeof(self) );
+	}
+	std::string versionof( const std::string &self ) {
+		return bundle::versionof( typeof(self) );
+	}
+	std::string extof( const std::string &self ) {
+		return bundle::extof( typeof(self) );
+	}
+
+	size_t length( const std::string &self ) {
+		uint32_t size = self.size();
+		if( is_packed(self) ) {
+			size  = ((unsigned char)self[OFFSET_LEN + 0]) << 24;
+			size |= ((unsigned char)self[OFFSET_LEN + 1]) << 16;
+			size |= ((unsigned char)self[OFFSET_LEN + 2]) <<  8;
+			size |= ((unsigned char)self[OFFSET_LEN + 3]) <<  0;
+		}
+		return size;
+	}
+	size_t zlength( const std::string &self ) {
+		uint32_t size = 0;
+		if( is_packed(self) ) {
+			size  = ((unsigned char)self[OFFSET_ZLEN + 0]) << 24;
+			size |= ((unsigned char)self[OFFSET_ZLEN + 1]) << 16;
+			size |= ((unsigned char)self[OFFSET_ZLEN + 2]) <<  8;
+			size |= ((unsigned char)self[OFFSET_ZLEN + 3]) <<  0;
+		}
+		return size;
+	}
+
+	void *zptr( const std::string &self ) {
+		return is_packed( self ) ? (void *)&self[OFFSET_ZDATA] : (void *)0;
 	}
 
 	std::string pack( unsigned q, const std::string &self ) {
@@ -10081,7 +10141,7 @@ namespace bundle
 		// should i encapsulate by escaping characters instead? (safer but slower)
 
 		uint32_t size1 = (uint32_t)input.size(), size2 = (uint32_t)binary.size();
-		std::string output( 9 + size2, '\0' );
+		std::string output( 10 + size2, '\0' );
 
 		output[1] = (unsigned char)(( size1 >> 24 ) & 0xff );
 		output[2] = (unsigned char)(( size1 >> 16 ) & 0xff );
@@ -10093,34 +10153,27 @@ namespace bundle
 		output[7] = (unsigned char)(( size2 >>  8 ) & 0xff );
 		output[8] = (unsigned char)(( size2 >>  0 ) & 0xff );
 
-		std::memcpy( &output.at( 9 ), &binary.at( 0 ), size2 );
+		output[9] = (unsigned char)( q & 0xff );
+
+		std::memcpy( &output.at( 10 ), &binary.at( 0 ), size2 );
 
 		return output;
 	}
 
-	std::string unpack( unsigned q, const std::string &self ) {
+	std::string unpack( const std::string &self ) {
 		if( is_packed( self ) )
 		{
 			// decapsulate
-			uint32_t size1, size2;
-
-			size1  = ((unsigned char)self[1]) << 24;
-			size1 |= ((unsigned char)self[2]) << 16;
-			size1 |= ((unsigned char)self[3]) <<  8;
-			size1 |= ((unsigned char)self[4]) <<  0;
-
-			size2  = ((unsigned char)self[5]) << 24;
-			size2 |= ((unsigned char)self[6]) << 16;
-			size2 |= ((unsigned char)self[7]) <<  8;
-			size2 |= ((unsigned char)self[8]) <<  0;
+			uint32_t size1 = uint32_t( length( self ) ), size2 = uint32_t( zlength( self ) );
+			unsigned Q = typeof( self );
 
 			std::string output( size1, '\0' );
 
 			std::vector<char> content( size2 );
-			std::memcpy( &content.at( 0 ), &self.at( 1 + 4 + 4 ), size2 );
+			std::memcpy( &content.at( 0 ), zptr( self ), size2 );
 
 			// decompress
-			if( unpack( q, output, content ) )
+			if( unpack( Q, output, content ) )
 				return output;
 		}
 
@@ -10240,7 +10293,7 @@ namespace bundle
 		return true;
 	}
 
-	std::string pak::bin() const
+	std::string pak::bin( unsigned q ) const
 	{
 		std::string result;
 
@@ -10249,7 +10302,7 @@ namespace bundle
 			mz_zip_archive zip_archive;
 			memset( &zip_archive, 0, sizeof(zip_archive) );
 
-			mz_bool status = mz_zip_writer_init_heap( &zip_archive, 0, 128 * 1024 );
+			mz_bool status = mz_zip_writer_init_heap( &zip_archive, 0, 0 );
 
 			if( !status ) {
 				assert( status );
@@ -10259,10 +10312,30 @@ namespace bundle
 			for( const_iterator it = this->begin(), end = this->end(); it != end; ++it ) {
 				std::map< std::string, bundle::string >::const_iterator filename = it->find("filename");
 				std::map< std::string, bundle::string >::const_iterator content = it->find("content");
+				std::map< std::string, bundle::string >::const_iterator comment = it->find("comment");
 				if( filename != it->end() && content != it->end() ) {
 					const size_t bufsize = content->second.size();
 
-					status = mz_zip_writer_add_mem( &zip_archive, filename->second.c_str(), content->second.c_str(), bufsize, MZ_DEFAULT_COMPRESSION );
+					int quality = q;
+					if( it->find("compression") != it->end() ) {
+						std::stringstream ss( it->find("compression")->second );
+						if( !(ss >> quality) ) quality = q;
+					}
+					switch( quality ) {
+						break; case DEFAULT: default: quality = MZ_DEFAULT_LEVEL;
+						break; case UNCOMPRESSED: quality = MZ_NO_COMPRESSION;
+						break; case FAST: case ASCII: quality = MZ_BEST_SPEED;
+						break; case EXTRA: quality = MZ_BEST_COMPRESSION;
+					}
+
+					if( comment == it->end() )
+					status = mz_zip_writer_add_mem_ex( &zip_archive, filename->second.c_str(), content->second.c_str(), bufsize,
+						0, 0, quality, 0, 0 );
+					else
+					status = mz_zip_writer_add_mem_ex( &zip_archive, filename->second.c_str(), content->second.c_str(), bufsize,
+						comment->second.c_str(), comment->second.size(), quality, 0, 0 );
+
+					//status = mz_zip_writer_add_mem( &zip_archive, filename->second.c_str(), content->second.c_str(), bufsize, quality );
 					if( !status ) {
 						assert( status );
 						return "mz_zip_writer_add_mem() failed!", std::string();
