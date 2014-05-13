@@ -12,4 +12,7 @@
 // lz4 defines 'inline' and 'restrict' which is later required by shoco
 #include "deps/lz4/lz4.c"
 #include "deps/shoco/shoco.c"
+#ifdef swap
+#undef swap
+#endif
 #include "bundle.cpp"

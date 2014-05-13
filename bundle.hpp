@@ -1,8 +1,5 @@
 
 #line 1 "bundle.hpp"
-// simple compression interface
-// - rlyeh. mit licensed
-
 #ifndef BUNDLE_HPP
 #define BUNDLE_HPP
 
@@ -30,9 +27,9 @@ namespace bundle
 	// per lib
 	enum { UNDEFINED, SHOCO, LZ4, MINIZ, LZLIB };
 	// per family
-	enum { NONE = UNDEFINED, ENTROPY = SHOCO, LZ77 = LZ4, DEFLATE = MINIZ, LZMA = LZLIB };
+	enum { NONE = UNDEFINED, ASCII = SHOCO, LZ77 = LZ4, DEFLATE = MINIZ, LZMA = LZLIB };
 	// per context
-	enum { UNCOMPRESSED = NONE, ASCII = ENTROPY, FAST = LZ77, DEFAULT = DEFLATE, EXTRA = LZMA };
+	enum { UNCOMPRESSED = NONE, ENTROPY = ASCII, FAST = LZ77, DEFAULT = DEFLATE, EXTRA = LZMA };
 
 	// dont compress if compression ratio is below 5%
 	enum { NO_COMPRESSION_TRESHOLD = 5 };
@@ -123,11 +120,11 @@ namespace bundle
 	};
 
 	template< class T, bool do_enc = true, bool do_dec = true, bool do_verify = true >
-	std::vector< measure > measures( const T& original, const std::vector<unsigned> &encodings = encodings() ) {
+	std::vector< measure > measures( const T& original, const std::vector<unsigned> &use_encodings = encodings() ) {
 		std::vector< measure > results;
 		std::string zipped, unzipped;
 
-		for( auto scheme : encodings ) {
+		for( auto scheme : use_encodings ) {
 			results.push_back( measure() );
 			auto &r = results.back();
 			r.q = scheme;
@@ -156,11 +153,11 @@ namespace bundle
 
 	// find best choice for given data
 	template< class T >
-	unsigned find_smallest_compressor( const T& original, const std::vector<unsigned> &encodings = encodings() ) {
+	unsigned find_smallest_compressor( const T& original, const std::vector<unsigned> &use_encodings = encodings() ) {
 		unsigned q = bundle::NONE;
 		double ratio = 0;
 
-		auto results = measures< true, false, false >( original, encodings );
+		auto results = measures< true, false, false >( original, use_encodings );
 		for( auto &r : results ) {
 			if( r.pass && r.ratio > ratio && r.ratio >= (100 - NO_COMPRESSION_TRESHOLD / 100.0) ) {
 				ratio = r.ratio;
@@ -172,11 +169,11 @@ namespace bundle
 	}
 
 	template< class T >
-	unsigned find_fastest_compressor( const T& original, const std::vector<unsigned> &encodings = encodings() ) {
+	unsigned find_fastest_compressor( const T& original, const std::vector<unsigned> &use_encodings = encodings() ) {
 		unsigned q = bundle::NONE;
 		double enctime = 9999999;
 
-		auto results = measures< true, false, false >( original, encodings );
+		auto results = measures< true, false, false >( original, use_encodings );
 		for( auto &r : results ) {
 			if( r.pass && r.enctime < enctime ) {
 				enctime = r.enctime;
@@ -188,7 +185,7 @@ namespace bundle
 	}
 
 	template< class T >
-	unsigned find_fastest_decompressor( const T& original, const std::vector<unsigned> &encodings = encodings() ) {
+	unsigned find_fastest_decompressor( const T& original, const std::vector<unsigned> &use_encodings = encodings() ) {
 		unsigned q = bundle::NONE;
 		double dectime = 9999999;
 
@@ -241,10 +238,9 @@ namespace bundle
 
 		template< typename T0 >
 		string( const std::string &_fmt, const T0 &t0 ) : std::string() {
-			std::string t[] = { string(), string(t0), string(t1) };
+			std::string t[] = { string(), string(t0) };
 			for( const char *fmt = _fmt.c_str(); *fmt; ++fmt ) {
 				/**/ if( *fmt == '\1' ) t[0] += t[1];
-				else if( *fmt == '\2' ) t[0] += t[2];
 				else                    t[0] += *fmt;
 			}
 			this->assign( t[0] );

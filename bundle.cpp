@@ -2,9 +2,6 @@
  */
 
 #line 1 "bundle.hpp"
-// simple compression interface
-// - rlyeh. mit licensed
-
 #ifndef BUNDLE_HPP
 #define BUNDLE_HPP
 
@@ -32,9 +29,9 @@ namespace bundle
 	// per lib
 	enum { UNDEFINED, SHOCO, LZ4, MINIZ, LZLIB };
 	// per family
-	enum { NONE = UNDEFINED, ENTROPY = SHOCO, LZ77 = LZ4, DEFLATE = MINIZ, LZMA = LZLIB };
+	enum { NONE = UNDEFINED, ASCII = SHOCO, LZ77 = LZ4, DEFLATE = MINIZ, LZMA = LZLIB };
 	// per context
-	enum { UNCOMPRESSED = NONE, ASCII = ENTROPY, FAST = LZ77, DEFAULT = DEFLATE, EXTRA = LZMA };
+	enum { UNCOMPRESSED = NONE, ENTROPY = ASCII, FAST = LZ77, DEFAULT = DEFLATE, EXTRA = LZMA };
 
 	// dont compress if compression ratio is below 5%
 	enum { NO_COMPRESSION_TRESHOLD = 5 };
@@ -125,11 +122,11 @@ namespace bundle
 	};
 
 	template< class T, bool do_enc = true, bool do_dec = true, bool do_verify = true >
-	std::vector< measure > measures( const T& original, const std::vector<unsigned> &encodings = encodings() ) {
+	std::vector< measure > measures( const T& original, const std::vector<unsigned> &use_encodings = encodings() ) {
 		std::vector< measure > results;
 		std::string zipped, unzipped;
 
-		for( auto scheme : encodings ) {
+		for( auto scheme : use_encodings ) {
 			results.push_back( measure() );
 			auto &r = results.back();
 			r.q = scheme;
@@ -158,11 +155,11 @@ namespace bundle
 
 	// find best choice for given data
 	template< class T >
-	unsigned find_smallest_compressor( const T& original, const std::vector<unsigned> &encodings = encodings() ) {
+	unsigned find_smallest_compressor( const T& original, const std::vector<unsigned> &use_encodings = encodings() ) {
 		unsigned q = bundle::NONE;
 		double ratio = 0;
 
-		auto results = measures< true, false, false >( original, encodings );
+		auto results = measures< true, false, false >( original, use_encodings );
 		for( auto &r : results ) {
 			if( r.pass && r.ratio > ratio && r.ratio >= (100 - NO_COMPRESSION_TRESHOLD / 100.0) ) {
 				ratio = r.ratio;
@@ -174,11 +171,11 @@ namespace bundle
 	}
 
 	template< class T >
-	unsigned find_fastest_compressor( const T& original, const std::vector<unsigned> &encodings = encodings() ) {
+	unsigned find_fastest_compressor( const T& original, const std::vector<unsigned> &use_encodings = encodings() ) {
 		unsigned q = bundle::NONE;
 		double enctime = 9999999;
 
-		auto results = measures< true, false, false >( original, encodings );
+		auto results = measures< true, false, false >( original, use_encodings );
 		for( auto &r : results ) {
 			if( r.pass && r.enctime < enctime ) {
 				enctime = r.enctime;
@@ -190,7 +187,7 @@ namespace bundle
 	}
 
 	template< class T >
-	unsigned find_fastest_decompressor( const T& original, const std::vector<unsigned> &encodings = encodings() ) {
+	unsigned find_fastest_decompressor( const T& original, const std::vector<unsigned> &use_encodings = encodings() ) {
 		unsigned q = bundle::NONE;
 		double dectime = 9999999;
 
@@ -243,10 +240,9 @@ namespace bundle
 
 		template< typename T0 >
 		string( const std::string &_fmt, const T0 &t0 ) : std::string() {
-			std::string t[] = { string(), string(t0), string(t1) };
+			std::string t[] = { string(), string(t0) };
 			for( const char *fmt = _fmt.c_str(); *fmt; ++fmt ) {
 				/**/ if( *fmt == '\1' ) t[0] += t[1];
-				else if( *fmt == '\2' ) t[0] += t[2];
 				else                    t[0] += *fmt;
 			}
 			this->assign( t[0] );
@@ -9621,9 +9617,9 @@ typedef struct Pack {
 #define MAX_SUCCESSOR_N 7
 
 static const Pack packs[PACK_COUNT] = {
-  { 0x80000000, 1, 2, { 26, 24, 24, 24, 24, 24, 24, 24 }, { 15, 3, 0, 0, 0, 0, 0, 0 }, 0xc0, 0x80 },
-  { 0xc0000000, 2, 4, { 25, 22, 19, 16, 16, 16, 16, 16 }, { 15, 7, 7, 7, 0, 0, 0, 0 }, 0xe0, 0xc0 },
-  { 0xe0000000, 4, 8, { 23, 19, 15, 11, 8, 5, 2, 0 }, { 31, 15, 15, 15, 7, 7, 7, 3 }, 0xf0, 0xe0 }
+  { 0x80000000, 1, 2, { 26, 24, 24, 24, 24, 24, 24, 24 }, { 15, 3, 0, 0, 0, 0, 0, 0 }, char(0xc0), char(0x80) },
+  { 0xc0000000, 2, 4, { 25, 22, 19, 16, 16, 16, 16, 16 }, { 15, 7, 7, 7, 0, 0, 0, 0 }, char(0xe0), char(0xc0) },
+  { 0xe0000000, 4, 8, { 23, 19, 15, 11, 8, 5, 2, 0 }, { 31, 15, 15, 15, 7, 7, 7, 3 }, char(0xf0), char(0xe0) }
 };
 
 
@@ -9809,10 +9805,39 @@ size_t shoco_decompress(const char * const restrict original, size_t complen, ch
   return o - out;
 }
 
+#ifdef swap
+#undef swap
+#endif
 
 #line 1 "bundle.cpp"
-// simple compression interface
-// - rlyeh. mit licensed
+/*
+ * Simple compression interface.
+ * Copyright (c) 2013, 2014, Mario 'rlyeh' Rodriguez
+
+ * wire::eval() based on code by Peter Kankowski (see http://goo.gl/Kx6Oi)
+ * wire::format() based on code by Adam Rosenfield (see http://goo.gl/XPnoe)
+ * wire::format() based on code by Tom Distler (see http://goo.gl/KPT66)
+
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+
+ * - rlyeh ~~ listening to Boris / Missing Pieces
+ */
 
 #include <cassert>
 #include <cctype>  // std::isprint
@@ -9822,6 +9847,7 @@ size_t shoco_decompress(const char * const restrict original, size_t complen, ch
 #include <sstream>
 #include <string>
 #include <vector>
+#include <algorithm>
 
 namespace {
   /* Compresses 'size' bytes from 'data'. Returns the address of a
@@ -9963,10 +9989,29 @@ namespace bundle {
 
 	enum { verbose = false };
 
-	std::string hexdump( const std::string &str );
-
 	namespace
 	{
+		std::string hexdump( const std::string &str ) {
+			char spr[ 80 ];
+			std::string out1, out2;
+
+			for( unsigned i = 0; i < 16 && i < str.size(); ++i ) {
+				std::sprintf( spr, "%c ", std::isprint(str[i]) ? str[i] : '.' );
+				out1 += spr;
+				std::sprintf( spr, "%02X ", (unsigned char)str[i] );
+				out2 += spr;
+			}
+
+			for( unsigned i = str.size(); i < 16; ++i ) {
+				std::sprintf( spr, ". " );
+				out1 += spr;
+				std::sprintf( spr, "?? " );
+				out2 += spr;
+			}
+
+			return out1 + "[...] (" + out2 + "[...])";
+		}
+
 		void shout( unsigned q, const char *context, size_t from, size_t to ) {
 			if( verbose ) {
 				std::cout << context << " q:" << q << ",from:" << from << ",to:" << to << std::endl;
@@ -10183,27 +10228,6 @@ namespace bundle
 
 namespace bundle
 {
-	static std::string hexdump( const std::string &str ) {
-		char spr[ 80 ];
-		std::string out1, out2;
-
-		for( unsigned i = 0; i < 16 && i < str.size(); ++i ) {
-			std::sprintf( spr, "%c ", std::isprint(str[i]) ? str[i] : '.' );
-			out1 += spr;
-			std::sprintf( spr, "%02X ", (unsigned char)str[i] );
-			out2 += spr;
-		}
-
-		for( unsigned i = str.size(); i < 16; ++i ) {
-			std::sprintf( spr, ". " );
-			out1 += spr;
-			std::sprintf( spr, "?? " );
-			out2 += spr;
-		}
-
-		return out1 + "[...] (" + out2 + "[...])";
-	}
-
 	bool pakfile::has( const std::string &property ) const {
 		return this->find( property ) != this->end();
 	}
@@ -10328,11 +10352,14 @@ namespace bundle
 						break; case EXTRA: quality = MZ_BEST_COMPRESSION;
 					}
 
+					std::string pathfile = filename->second;
+					std::replace( pathfile.begin(), pathfile.end(), '\\', '/');
+
 					if( comment == it->end() )
-					status = mz_zip_writer_add_mem_ex( &zip_archive, filename->second.c_str(), content->second.c_str(), bufsize,
+					status = mz_zip_writer_add_mem_ex( &zip_archive, pathfile.c_str(), content->second.c_str(), bufsize,
 						0, 0, quality, 0, 0 );
 					else
-					status = mz_zip_writer_add_mem_ex( &zip_archive, filename->second.c_str(), content->second.c_str(), bufsize,
+					status = mz_zip_writer_add_mem_ex( &zip_archive, pathfile.c_str(), content->second.c_str(), bufsize,
 						comment->second.c_str(), comment->second.size(), quality, 0, 0 );
 
 					//status = mz_zip_writer_add_mem( &zip_archive, filename->second.c_str(), content->second.c_str(), bufsize, quality );
@@ -10371,4 +10398,5 @@ namespace bundle
 		return result;
 	}
 }
+
 
