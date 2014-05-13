@@ -1,8 +1,5 @@
 
 #line 1 "bundle.hpp"
-// simple compression interface
-// - rlyeh. mit licensed
-
 #ifndef BUNDLE_HPP
 #define BUNDLE_HPP
 
@@ -30,9 +27,9 @@ namespace bundle
 	// per lib
 	enum { UNDEFINED, SHOCO, LZ4, MINIZ, LZLIB };
 	// per family
-	enum { NONE = UNDEFINED, ENTROPY = SHOCO, LZ77 = LZ4, DEFLATE = MINIZ, LZMA = LZLIB };
+	enum { NONE = UNDEFINED, ASCII = SHOCO, LZ77 = LZ4, DEFLATE = MINIZ, LZMA = LZLIB };
 	// per context
-	enum { UNCOMPRESSED = NONE, ASCII = ENTROPY, FAST = LZ77, DEFAULT = DEFLATE, EXTRA = LZMA };
+	enum { UNCOMPRESSED = NONE, ENTROPY = ASCII, FAST = LZ77, DEFAULT = DEFLATE, EXTRA = LZMA };
 
 	// dont compress if compression ratio is below 5%
 	enum { NO_COMPRESSION_TRESHOLD = 5 };

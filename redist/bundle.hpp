@@ -1,5 +1,31 @@
-// simple compression interface
-// - rlyeh. mit licensed
+/*
+ * Simple compression interface.
+ * Copyright (c) 2013, 2014, Mario 'rlyeh' Rodriguez
+
+ * wire::eval() based on code by Peter Kankowski (see http://goo.gl/Kx6Oi)
+ * wire::format() based on code by Adam Rosenfield (see http://goo.gl/XPnoe)
+ * wire::format() based on code by Tom Distler (see http://goo.gl/KPT66)
+
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+
+ * - rlyeh ~~ listening to Boris / Missing Pieces
+ */
 
 #ifndef BUNDLE_HPP
 #define BUNDLE_HPP
@@ -28,9 +54,9 @@ namespace bundle
     // per lib
     enum { UNDEFINED, SHOCO, LZ4, MINIZ, LZLIB };
     // per family
-    enum { NONE = UNDEFINED, ENTROPY = SHOCO, LZ77 = LZ4, DEFLATE = MINIZ, LZMA = LZLIB };
+    enum { NONE = UNDEFINED, ASCII = SHOCO, LZ77 = LZ4, DEFLATE = MINIZ, LZMA = LZLIB };
     // per context
-    enum { UNCOMPRESSED = NONE, ASCII = ENTROPY, FAST = LZ77, DEFAULT = DEFLATE, EXTRA = LZMA };
+    enum { UNCOMPRESSED = NONE, ENTROPY = ASCII, FAST = LZ77, DEFAULT = DEFLATE, EXTRA = LZMA };
 
     // dont compress if compression ratio is below 5%
     enum { NO_COMPRESSION_TRESHOLD = 5 };
