@@ -5355,7 +5355,8 @@ void *mz_zip_extract_archive_file_to_heap(const char *pZip_filename, const char 
 //#define mz_crc32 mz_crc32_lz
 
 #line 1 "lzlib.c"
-#if defined(_MSC_VER) && _MSC_VER < 1700
+/* @r-lyeh changed 1700 -> 1800 */
+#if defined(_MSC_VER) && _MSC_VER < 1800
 typedef unsigned char uint8_t;
 typedef unsigned short uint16_t;
 typedef unsigned int uint32_t;

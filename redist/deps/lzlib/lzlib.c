@@ -25,7 +25,8 @@
     Public License.
 */
 
-#if defined(_MSC_VER) && _MSC_VER < 1700
+/* @r-lyeh changed 1700 -> 1800 */
+#if defined(_MSC_VER) && _MSC_VER < 1800
 typedef unsigned char uint8_t;
 typedef unsigned short uint16_t;
 typedef unsigned int uint32_t;
