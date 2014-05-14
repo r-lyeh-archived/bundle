@@ -5,10 +5,10 @@
 #ifndef BUNDLE_HPP
 #define BUNDLE_HPP
 
-#if defined(_MSC_VER) && _MSC_VER < 1700
-#define BUNDLE_CXX11 0
-#else
+#if ( defined(_MSC_VER) && _MSC_VER >= 1700 ) || __cplusplus >= 201103L
 #define BUNDLE_CXX11 1
+#else
+#define BUNDLE_CXX11 0
 #endif
 
 #include <cassert>
@@ -38,29 +38,26 @@ namespace bundle
 
 	// high level API
 
-	bool is_packed( const std::string &self );
-	bool is_unpacked( const std::string &self );
+	//std::string pack( unsigned q, const std::string &self );
+	//std::string unpack( const std::string &self );
 
-	std::string pack( unsigned q, const std::string &self );
-	std::string unpack( const std::string &self );
-
-	unsigned typeof( const std::string &self );
-	std::string nameof( const std::string &self );
-	std::string versionof( const std::string &self );
-	std::string extof( const std::string &self );
+	unsigned type_of( const std::string &self );
+	std::string name_of( const std::string &self );
+	std::string version_of( const std::string &self );
+	std::string ext_of( const std::string &self );
 	size_t length( const std::string &self );
 	size_t zlength( const std::string &self );
 	void *zptr( const std::string &self );
 
 	// low level API
 
-	  bool pack( unsigned q, const char *in, size_t len, char *out, size_t &zlen );
-	  bool unpack( unsigned q, const char *in, size_t len, char *out, size_t &zlen );
+	  bool pack( unsigned q, const void *in, size_t len, void *out, size_t &zlen );
+	  bool unpack( unsigned q, const void *in, size_t len, void *out, size_t &zlen );
 	size_t bound( unsigned q, size_t len );
-	const char *const nameof( unsigned q );
-	const char *const versionof( unsigned q );
-	const char *const extof( unsigned q );
-	unsigned typeof( const void *mem, size_t size );
+	const char *const name_of( unsigned q );
+	const char *const version_of( unsigned q );
+	const char *const ext_of( unsigned q );
+	unsigned type_of( const void *mem, size_t size );
 
 	// template API
 
@@ -75,21 +72,82 @@ namespace bundle
 		buffer_out.resize( zlen );
 
 		// compress
-		bool result = pack( q, (const char *)&buffer_in.at(0), buffer_in.size(), (char *)&buffer_out.at(0), zlen );
+		bool result = pack( q, &buffer_in.at(0), buffer_in.size(), &buffer_out.at(0), zlen );
 
 		// resize properly
 		return result ? ( buffer_out.resize( zlen ), true ) : ( buffer_out = T2(), false );
 	}
 
 	template < class T1, class T2 >
-	static inline bool unpack( unsigned q, T2 &buffer_out, const T1 &buffer_in) {
+	static inline bool unpack( unsigned q, T2 &buffer_out, const T1 &buffer_in ) {
 		// sanity checks
 		assert( sizeof(buffer_in.at(0)) == 1 && "size of input elements != 1" );
 		assert( sizeof(buffer_out.at(0)) == 1 && "size of output elements != 1" );
 
 		// note: buffer_out must be resized properly before calling this function!!
 		size_t zlen = buffer_out.size();
-		return unpack( q, (const char *)&buffer_in.at(0), buffer_in.size(), (char *)&buffer_out.at(0), zlen );
+		return unpack( q, &buffer_in.at(0), buffer_in.size(), &buffer_out.at(0), zlen );
+	}
+
+	std::string vlebit( size_t i );
+	size_t vlebit( const char *&i );
+
+	template<typename container>
+	static inline bool is_packed( const container &input ) {
+		return input.size() && 0 == input[0];
+	}
+
+	template<typename container>
+	static inline bool is_unpacked( const container &input ) {
+		return !is_packed(input);
+	}
+
+	template<typename container>
+	static inline container pack( unsigned q, const container &input ) {
+		// sanity checks
+		assert( sizeof(input.at(0)) == 1 && "size of input elements != 1" );
+
+		if( is_packed( input ) )
+			return input;
+
+		if( !input.size() )
+			return input;
+
+		container output( bound( q, input.size() ), '\0' );
+
+		// compress
+		size_t len = output.size();
+		if( !pack( q, &input[0], input.size(), &output[0], len ) )
+			return input;
+		output.resize( len );
+
+		// encapsulate
+		output = std::string() + char(0) + char(q & 0xff) + vlebit(input.size()) + vlebit(output.size()) + output;
+		return output;
+	}
+
+	template<typename container>
+	static inline container unpack( const container &input ) {
+		// sanity checks
+		assert( sizeof(input.at(0)) == 1 && "size of input elements != 1" );
+
+		if( is_unpacked( input ) )
+			return input;
+
+		// decapsulate
+		unsigned Q = input[1];
+		const char *ptr = (const char *)&input[2];
+		size_t size1 = vlebit(ptr);
+		size_t size2 = vlebit(ptr);
+
+		container output( size1, '\0' );
+
+		// decompress
+		size_t len = output.size();
+		if( !unpack( Q, ptr, size2, &output[0], len ) )
+			return input;
+
+		return output;
 	}
 
 	static inline std::vector<unsigned> encodings() {
@@ -116,7 +174,7 @@ namespace bundle
 		bool pass = 0;
 		std::string str() const {
 			std::stringstream ss;
-			ss << ( pass ? "[ OK ] " : "[FAIL] ") << nameof(q) << ": ratio=" << ratio << "% enctime=" << enctime << "ms dectime=" << dectime << " ms";
+			ss << ( pass ? "[ OK ] " : "[FAIL] ") << name_of(q) << ": ratio=" << ratio << "% enctime=" << enctime << "ms dectime=" << dectime << " ms";
 			return ss.str();
 		}
 	};
@@ -124,16 +182,17 @@ namespace bundle
 	template< class T, bool do_enc = true, bool do_dec = true, bool do_verify = true >
 	std::vector< measure > measures( const T& original, const std::vector<unsigned> &use_encodings = encodings() ) {
 		std::vector< measure > results;
-		std::string zipped, unzipped;
+		T zipped, unzipped;
 
-		for( auto scheme : use_encodings ) {
+		for( auto encoding : use_encodings ) {
 			results.push_back( measure() );
 			auto &r = results.back();
-			r.q = scheme;
+			r.q = encoding;
+			r.pass = false;
 
 			if( do_enc ) {
 				auto begin = std::chrono::high_resolution_clock::now();
-				zipped = pack(scheme, original);
+				zipped = pack( encoding, original );
 				auto end = std::chrono::high_resolution_clock::now();
 				r.enctime = std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count();
 				r.ratio = 100 - 100 * ( double( zipped.size() ) / original.size() );
@@ -141,13 +200,16 @@ namespace bundle
 
 			if( do_dec ) {
 				auto begin = std::chrono::high_resolution_clock::now();
-				unzipped = unpack(zipped);
+				unzipped = unpack( zipped );
 				auto end = std::chrono::high_resolution_clock::now();
 				r.dectime = std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count();
 				r.pass = ( original == unzipped );
 			}
 
-			r.pass = ( do_verify && do_enc && do_dec && is_packed(zipped) && is_unpacked(unzipped) ? original == unzipped : true );
+			if( encoding == NONE )
+				r.pass = r.pass && do_verify && do_enc && do_dec && is_unpacked(zipped) && is_unpacked(unzipped) && original == unzipped;
+			else
+				r.pass = r.pass && do_verify && do_enc && do_dec && is_packed(zipped) && is_unpacked(unzipped) && original == unzipped;
 		}
 
 		return results;
@@ -10019,7 +10081,7 @@ namespace bundle {
 		}
 	}
 
-	const char *const nameof( unsigned q ) {
+	const char *const name_of( unsigned q ) {
 		switch( q ) {
 			break; default : return "NONE";
 			break; case LZ4: return "LZ4";
@@ -10031,11 +10093,11 @@ namespace bundle {
 		}
 	}
 
-	const char *const versionof( unsigned q ) {
+	const char *const version_of( unsigned q ) {
 		return "0";
 	}
 
-	const char *const extof( unsigned q ) {
+	const char *const ext_of( unsigned q ) {
 		switch( q ) {
 			break; default : return "unc";
 			break; case LZ4: return "lz4";
@@ -10047,7 +10109,7 @@ namespace bundle {
 		}
 	}
 
-	unsigned typeof( const void *ptr, size_t size ) {
+	unsigned type_of( const void *ptr, size_t size ) {
 		unsigned char *mem = (unsigned char *)ptr;
 		//std::string s; s.resize( size ); memcpy( &s[0], mem, size );
 		//std::cout << hexdump( s) << std::endl;
@@ -10066,36 +10128,36 @@ namespace bundle {
 		return shout( q, "[bound]", len, zlen ), zlen;
 	}
 
-	  bool pack( unsigned q, const char *in, size_t inlen, char *out, size_t &outlen ) {
+	  bool pack( unsigned q, const void *in, size_t inlen, void *out, size_t &outlen ) {
 		bool ok = false;
 		if( in && inlen && out && outlen >= inlen ) {
 			ok = true;
 			switch( q ) {
 				break; default: ok = false;
-				break; case LZ4: outlen = LZ4_compress( in, out, inlen );
+				break; case LZ4: outlen = LZ4_compress( (const char *)in, (char *)out, inlen );
 				break; case MINIZ: outlen = tdefl_compress_mem_to_mem( out, outlen, in, inlen, TDEFL_DEFAULT_MAX_PROBES ); //TDEFL_MAX_PROBES_MASK ); //
-				break; case SHOCO: outlen = shoco_compress( in, inlen, out, outlen );
+				break; case SHOCO: outlen = shoco_compress( (const char *)in, inlen, (char *)out, outlen );
 				break; case LZLIB: { int l; lzip_compress( (const uint8_t *)in, inlen, (uint8_t *)out, &l ); outlen = l; }
 				/* for archival reasons: */
 				// break; case LZHAM: { lzham_z_ulong l; lzham_z_compress( (unsigned char *)out, &l, (const unsigned char *)in, inlen ); outlen = l; }
 			}
-			// std::cout << nameof( typeof( out, outlen ) ) << std::endl;
+			// std::cout << name_of( type_of( out, outlen ) ) << std::endl;
 		}
 		ok = ok && outlen > 0 && outlen < inlen;
 		outlen = ok && outlen ? outlen : 0;
 		return shout( q, "[pack]", inlen, outlen ), ok;
 	  }
 
-	bool unpack( unsigned q, const char *in, size_t inlen, char *out, size_t &outlen ) {
+	bool unpack( unsigned q, const void *in, size_t inlen, void *out, size_t &outlen ) {
 		bool ok = false;
 		size_t bytes_read = 0;
 		if( in && inlen && out && outlen ) {
 			ok = true;
 			switch( q ) {
 				break; default: ok = false;
-				break; case LZ4: bytes_read = LZ4_uncompress( in, out, outlen );
+				break; case LZ4: bytes_read = LZ4_uncompress( (const char *)in, (char *)out, outlen );
 				break; case MINIZ: bytes_read = inlen; tinfl_decompress_mem_to_mem( out, outlen, in, inlen, TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF );
-				break; case SHOCO: bytes_read = inlen; shoco_decompress( in, inlen, out, outlen );
+				break; case SHOCO: bytes_read = inlen; shoco_decompress( (const char *)in, inlen, (char *)out, outlen );
 				break; case LZLIB: bytes_read = inlen; { int l = outlen; lzip_decompress( (const uint8_t *)in, inlen, (uint8_t *)out, &l ); outlen = l; }
 				/* for archival reasons: */
 				// break; case LZHAM: bytes_read = inlen; { lzham_z_ulong l = outlen; lzham_z_uncompress( (unsigned char *)out, &l, (const unsigned char *)in, inlen ); }
@@ -10110,120 +10172,84 @@ namespace bundle {
 
 namespace bundle
 {
-	// compression methods
-
-	namespace {
-		enum {
-			OFFSET_MARK = 0,
-			OFFSET_LEN = 1,
-			OFFSET_ZLEN = 5,
-			OFFSET_TYPE = 9,
-			OFFSET_ZDATA = 10
-		};
-	}
-
+	// public API
+	/*
 	bool is_packed( const std::string &self ) {
-		return self.size() > 0 && self.at(0) == '\0';
+		return self.size() > 0 && '\0' == self[ 0 ];
 	}
 	bool is_unpacked( const std::string &self ) {
 		return !is_packed( self );
 	}
+	*/
 
-	unsigned typeof( const std::string &self ) {
-		return is_packed( self ) ? self[ OFFSET_TYPE ] : NONE;
+	unsigned type_of( const std::string &self ) {
+		return is_packed( self ) ? self[ 1 ] : NONE;
 	}
-	std::string nameof( const std::string &self ) {
-		return bundle::nameof( typeof(self) );
+	std::string name_of( const std::string &self ) {
+		return bundle::name_of( type_of(self) );
 	}
-	std::string versionof( const std::string &self ) {
-		return bundle::versionof( typeof(self) );
+	std::string version_of( const std::string &self ) {
+		return bundle::version_of( type_of(self) );
 	}
-	std::string extof( const std::string &self ) {
-		return bundle::extof( typeof(self) );
-	}
-
-	size_t length( const std::string &self ) {
-		uint32_t size = self.size();
-		if( is_packed(self) ) {
-			size  = ((unsigned char)self[OFFSET_LEN + 0]) << 24;
-			size |= ((unsigned char)self[OFFSET_LEN + 1]) << 16;
-			size |= ((unsigned char)self[OFFSET_LEN + 2]) <<  8;
-			size |= ((unsigned char)self[OFFSET_LEN + 3]) <<  0;
-		}
-		return size;
-	}
-	size_t zlength( const std::string &self ) {
-		uint32_t size = 0;
-		if( is_packed(self) ) {
-			size  = ((unsigned char)self[OFFSET_ZLEN + 0]) << 24;
-			size |= ((unsigned char)self[OFFSET_ZLEN + 1]) << 16;
-			size |= ((unsigned char)self[OFFSET_ZLEN + 2]) <<  8;
-			size |= ((unsigned char)self[OFFSET_ZLEN + 3]) <<  0;
-		}
-		return size;
+	std::string ext_of( const std::string &self ) {
+		return bundle::ext_of( type_of(self) );
 	}
 
-	void *zptr( const std::string &self ) {
-		return is_packed( self ) ? (void *)&self[OFFSET_ZDATA] : (void *)0;
+	std::string vlebit( size_t i ) {
+		std::string out;
+		do {
+			out += (unsigned char)( 0x80 | (i & 0x7f));
+			i >>= 7;
+		} while( i > 0 );
+		*out.rbegin() ^= 0x80;
+		return out;
+	}
+	size_t vlebit( const char *&i ) {
+		size_t out = 0, j = -7;
+		do {
+			out |= ((size_t(*i) & 0x7f) << (j += 7) );
+		} while( size_t(*i++) & 0x80 );
+		return out;
 	}
 
-	std::string pack( unsigned q, const std::string &self ) {
-		if( is_packed( self ) )
-			return self;
+	/*
+	std::string pack( unsigned q, const std::string &input ) {
+		if( is_packed( input ) )
+			return input;
 
-		if( !self.size() )
-			return self;
+		if( !input.size() )
+			return input;
 
-		std::vector<char> binary;
-		std::string input = self;
+		std::string output( bound( q, input.size() ), '\0' );
 
 		// compress
+		size_t len = output.size();
+		if( !pack( q, &input[0], input.size(), &output[0], len ) )
+			return input;
+		output.resize( len );
 
-		if( !pack( q, binary, input ) )
-			return self;
-
-		// encapsulated by exploiting std::string design (portable? standard?)
-		// should i encapsulate by escaping characters instead? (safer but slower)
-
-		uint32_t size1 = (uint32_t)input.size(), size2 = (uint32_t)binary.size();
-		std::string output( 10 + size2, '\0' );
-
-		output[1] = (unsigned char)(( size1 >> 24 ) & 0xff );
-		output[2] = (unsigned char)(( size1 >> 16 ) & 0xff );
-		output[3] = (unsigned char)(( size1 >>  8 ) & 0xff );
-		output[4] = (unsigned char)(( size1 >>  0 ) & 0xff );
-
-		output[5] = (unsigned char)(( size2 >> 24 ) & 0xff );
-		output[6] = (unsigned char)(( size2 >> 16 ) & 0xff );
-		output[7] = (unsigned char)(( size2 >>  8 ) & 0xff );
-		output[8] = (unsigned char)(( size2 >>  0 ) & 0xff );
-
-		output[9] = (unsigned char)( q & 0xff );
-
-		std::memcpy( &output.at( 10 ), &binary.at( 0 ), size2 );
-
-		return output;
+		// encapsulate
+		return std::string() + char(0) + char(q & 0xff) + vlebit(input.size()) + vlebit(output.size()) + output;
 	}
 
 	std::string unpack( const std::string &self ) {
-		if( is_packed( self ) )
-		{
+		if( is_packed( self ) ) {
 			// decapsulate
-			uint32_t size1 = uint32_t( length( self ) ), size2 = uint32_t( zlength( self ) );
-			unsigned Q = typeof( self );
+			unsigned Q = self[1];
+			const char *ptr = &self[2];
+			size_t size1 = vlebit(ptr);
+			size_t size2 = vlebit(ptr);
 
 			std::string output( size1, '\0' );
 
-			std::vector<char> content( size2 );
-			std::memcpy( &content.at( 0 ), zptr( self ), size2 );
-
 			// decompress
-			if( unpack( Q, output, content ) )
+			size_t len = output.size();
+			if( unpack( Q, ptr, size2, &output[0], len ) )
 				return output;
 		}
 
 		return self;
-	}
+	} */
 }
 
 namespace bundle
@@ -10354,6 +10380,8 @@ namespace bundle
 
 					std::string pathfile = filename->second;
 					std::replace( pathfile.begin(), pathfile.end(), '\\', '/');
+
+					//std::cout << hexdump(content->second) << std::endl;
 
 					if( comment == it->end() )
 					status = mz_zip_writer_add_mem_ex( &zip_archive, pathfile.c_str(), content->second.c_str(), bufsize,

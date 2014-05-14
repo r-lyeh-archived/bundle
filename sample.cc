@@ -76,8 +76,8 @@ int main( int argc, char **argv )
 
         for( auto &encoding : encodings() ) {
             pak.push_back( pakfile() );
-            pak.back()["filename"] = std::string() + nameof(encoding);
-            pak.back()["ext"] = std::string() + extof(encoding);
+            pak.back()["filename"] = std::string() + name_of(encoding);
+            pak.back()["ext"] = std::string() + ext_of(encoding);
             pak.back()["content"] = pack( encoding, original );
         }
 
