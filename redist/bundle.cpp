@@ -250,12 +250,13 @@ namespace bundle {
     }
 
     size_t bound( unsigned q, size_t len ) {
+        enum { MAX_BUNDLE_HEADERS = 1 + 1 + (16 + 1) + (16 + 1) }; // up to 128-bit length sized streams
         size_t zlen = len;
         switch( q ) {
-            break; default : zlen *= 2;
+            break; default : zlen = zlen * 2;
             break; case LZ4: zlen = LZ4_compressBound((int)(len));
         }
-        return shout( q, "[bound]", len, zlen ), zlen;
+        return zlen += MAX_BUNDLE_HEADERS, shout( q, "[bound]", len, zlen ), zlen;
     }
 
       bool pack( unsigned q, const void *in, size_t inlen, void *out, size_t &outlen ) {
@@ -267,7 +268,7 @@ namespace bundle {
                 break; case LZ4: outlen = LZ4_compress( (const char *)in, (char *)out, inlen );
                 break; case MINIZ: outlen = tdefl_compress_mem_to_mem( out, outlen, in, inlen, TDEFL_DEFAULT_MAX_PROBES ); //TDEFL_MAX_PROBES_MASK ); //
                 break; case SHOCO: outlen = shoco_compress( (const char *)in, inlen, (char *)out, outlen );
-                break; case LZLIB: { int l; lzip_compress( (const uint8_t *)in, inlen, (uint8_t *)out, &l ); outlen = l; }
+                break; case LZLIB: { int l; outlen = 0; if( lzip_compress( (const uint8_t *)in, inlen, (uint8_t *)out, &l ) ) outlen = l; }
                 /* for archival reasons: */
                 // break; case LZHAM: { lzham_z_ulong l; lzham_z_compress( (unsigned char *)out, &l, (const unsigned char *)in, inlen ); outlen = l; }
             }
@@ -288,7 +289,7 @@ namespace bundle {
                 break; case LZ4: bytes_read = LZ4_uncompress( (const char *)in, (char *)out, outlen );
                 break; case MINIZ: bytes_read = inlen; tinfl_decompress_mem_to_mem( out, outlen, in, inlen, TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF );
                 break; case SHOCO: bytes_read = inlen; shoco_decompress( (const char *)in, inlen, (char *)out, outlen );
-                break; case LZLIB: bytes_read = inlen; { int l = outlen; lzip_decompress( (const uint8_t *)in, inlen, (uint8_t *)out, &l ); outlen = l; }
+                break; case LZLIB: bytes_read = 0; { int l = outlen; if( lzip_decompress( (const uint8_t *)in, inlen, (uint8_t *)out, &l ) ) { outlen = l; bytes_read = inlen; } }
                 /* for archival reasons: */
                 // break; case LZHAM: bytes_read = inlen; { lzham_z_ulong l = outlen; lzham_z_uncompress( (unsigned char *)out, &l, (const unsigned char *)in, inlen ); }
             }
