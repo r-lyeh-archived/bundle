@@ -2,10 +2,6 @@
  * Simple compression interface.
  * Copyright (c) 2013, 2014, Mario 'rlyeh' Rodriguez
 
- * wire::eval() based on code by Peter Kankowski (see http://goo.gl/Kx6Oi)
- * wire::format() based on code by Adam Rosenfield (see http://goo.gl/XPnoe)
- * wire::format() based on code by Tom Distler (see http://goo.gl/KPT66)
-
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
  * in the Software without restriction, including without limitation the rights

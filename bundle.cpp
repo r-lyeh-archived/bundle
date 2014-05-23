@@ -5,7 +5,7 @@
 #ifndef BUNDLE_HPP
 #define BUNDLE_HPP
 
-#if ( defined(_MSC_VER) && _MSC_VER >= 1700 ) || __cplusplus >= 201103L
+#if ( defined(_MSC_VER) && _MSC_VER >= 1800 ) || __cplusplus >= 201103L
 #define BUNDLE_CXX11 1
 #else
 #define BUNDLE_CXX11 0
@@ -9876,10 +9876,6 @@ size_t shoco_decompress(const char * const restrict original, size_t complen, ch
 /*
  * Simple compression interface.
  * Copyright (c) 2013, 2014, Mario 'rlyeh' Rodriguez
-
- * wire::eval() based on code by Peter Kankowski (see http://goo.gl/Kx6Oi)
- * wire::format() based on code by Adam Rosenfield (see http://goo.gl/XPnoe)
- * wire::format() based on code by Tom Distler (see http://goo.gl/KPT66)
 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal

@@ -3,7 +3,7 @@
 #ifndef BUNDLE_HPP
 #define BUNDLE_HPP
 
-#if ( defined(_MSC_VER) && _MSC_VER >= 1700 ) || __cplusplus >= 201103L
+#if ( defined(_MSC_VER) && _MSC_VER >= 1800 ) || __cplusplus >= 201103L
 #define BUNDLE_CXX11 1
 #else
 #define BUNDLE_CXX11 0
