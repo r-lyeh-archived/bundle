@@ -92,7 +92,7 @@ namespace bundle
 
 	template<typename container>
 	static inline bool is_packed( const container &input ) {
-		return input.size() && 0 == input[0];
+		return input.size() >= 2 && 0 == input[0] && input[1] >= 0x70 && input[1] <= 0x7F;
 	}
 
 	template<typename container>
@@ -102,14 +102,11 @@ namespace bundle
 
 	template<typename container>
 	static inline container pack( unsigned q, const container &input ) {
-		// sanity checks
-		assert( sizeof(input.at(0)) == 1 && "size of input elements != 1" );
-
 		if( is_packed( input ) )
 			return input;
 
-		if( !input.size() )
-			return input;
+		// sanity checks
+		assert( sizeof(input.at(0)) == 1 && "size of input elements != 1" );
 
 		container output( bound( q, input.size() ), '\0' );
 
@@ -120,20 +117,20 @@ namespace bundle
 		output.resize( len );
 
 		// encapsulate
-		output = std::string() + char(0) + char(q & 0xff) + vlebit(input.size()) + vlebit(output.size()) + output;
+		output = std::string() + char(0) + char(0x70 | (q & 0x0F)) + vlebit(input.size()) + vlebit(output.size()) + output;
 		return output;
 	}
 
 	template<typename container>
 	static inline container unpack( const container &input ) {
-		// sanity checks
-		assert( sizeof(input.at(0)) == 1 && "size of input elements != 1" );
-
 		if( is_unpacked( input ) )
 			return input;
 
+		// sanity checks
+		assert( sizeof(input.at(0)) == 1 && "size of input elements != 1" );
+
 		// decapsulate
-		unsigned Q = input[1];
+		unsigned Q = input[1] & 0x0F;
 		const char *ptr = (const char *)&input[2];
 		size_t size1 = vlebit(ptr);
 		size_t size2 = vlebit(ptr);
