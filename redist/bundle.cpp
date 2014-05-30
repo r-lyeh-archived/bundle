@@ -46,13 +46,13 @@ namespace {
     {
     struct LZ_Encoder * encoder;
   //uint8_t * new_data;
-    const int match_len_limit = 36;
+    const int match_len_limit = 273; //36; 64; 273;
     const unsigned long long member_size = (unsigned long long)~0;
     int delta_size, new_data_size;
     int new_pos = 0;
     int written = 0;
     bool error = false;
-    int dict_size = 8 << 20;              /* 8 MiB */
+    int dict_size = 4 << 20; //= 4 MiB, 8 << 20 = 8 MiB
 
     if( dict_size > size ) dict_size = size;      /* saves memory */
     if( dict_size < LZ_min_dictionary_size() )
