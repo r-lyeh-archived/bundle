@@ -27,9 +27,9 @@
 namespace bundle
 {
 	// per lib
-	enum { UNDEFINED, SHOCO, LZ4, MINIZ, LZLIB };
+	enum { UNDEFINED, SHOCO, LZ4, MINIZ, LZIP, LZMASDK };
 	// per family
-	enum { NONE = UNDEFINED, ASCII = SHOCO, LZ77 = LZ4, DEFLATE = MINIZ, LZMA = LZLIB };
+	enum { NONE = UNDEFINED, ASCII = SHOCO, LZ77 = LZ4, DEFLATE = MINIZ, LZMA = LZMASDK };
 	// per context
 	enum { UNCOMPRESSED = NONE, ENTROPY = ASCII, FAST = LZ77, DEFAULT = DEFLATE, EXTRA = LZMA };
 
@@ -153,7 +153,8 @@ namespace bundle
 			all.push_back( LZ4 );
 			all.push_back( SHOCO );
 			all.push_back( MINIZ );
-			all.push_back( LZLIB );
+			all.push_back( LZIP );
+			all.push_back( LZMASDK );
 			all.push_back( NONE );
 		}
 		return all;
@@ -583,6 +584,242 @@ int LZ4_uncompress_unknownOutputSize (const char* source, char* dest, int isize,
 
 size_t shoco_compress(const char * const in, size_t len, char * const out, size_t bufsize);
 size_t shoco_decompress(const char * const in, size_t len, char * const out, size_t bufsize);
+
+
+#line 1 "compress.h"
+#ifndef __EASYLZMACOMPRESS_H__
+#define __EASYLZMACOMPRESS_H__
+
+
+#line 1 "common.h"
+#ifndef __EASYLZMACOMMON_H__
+#define __EASYLZMACOMMON_H__
+
+#include <stdlib.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* msft dll export gunk.  To build a DLL on windows, you
+ * must define WIN32, EASYLZMA_SHARED, and EASYLZMA_BUILD.  To use a
+ * DLL, you must define EASYLZMA_SHARED and WIN32 */
+#if defined(WIN32) && defined(EASYLZMA_SHARED)
+#  ifdef EASYLZMA_BUILD
+#    define EASYLZMA_API __declspec(dllexport)
+#  else
+#    define EASYLZMA_API __declspec(dllimport)
+#  endif
+#else
+#  define EASYLZMA_API
+#endif
+
+/** error codes */
+
+/** no error */
+#define ELZMA_E_OK                               0
+/** bad parameters passed to an ELZMA function */
+#define ELZMA_E_BAD_PARAMS                      10
+/** could not initialize the encode with configured parameters. */
+#define ELZMA_E_ENCODING_PROPERTIES_ERROR       11
+/** an error occured during compression (XXX: be more specific) */
+#define ELZMA_E_COMPRESS_ERROR                  12
+/** currently unsupported lzma file format was specified*/
+#define ELZMA_E_UNSUPPORTED_FORMAT              13
+/** an error occured when reading input */
+#define ELZMA_E_INPUT_ERROR                     14
+/** an error occured when writing output */
+#define ELZMA_E_OUTPUT_ERROR                    15
+/** LZMA header couldn't be parsed */
+#define ELZMA_E_CORRUPT_HEADER                  16
+/** an error occured during decompression (XXX: be more specific) */
+#define ELZMA_E_DECOMPRESS_ERROR                17
+/** the input stream returns EOF before the decompression could complete */
+#define ELZMA_E_INSUFFICIENT_INPUT              18
+/** for formats which have an emebedded crc, this error would indicated that
+ *  what came out was not what went in, i.e. data corruption */
+#define ELZMA_E_CRC32_MISMATCH                  19
+/** for formats which have an emebedded uncompressed content length,
+ *  this error indicates that the amount we read was not what we expected */
+#define ELZMA_E_SIZE_MISMATCH                   20
+
+/** Supported file formats */
+typedef enum {
+	ELZMA_lzip, /**< the lzip format which includes a magic number and
+				 *   CRC check */
+	ELZMA_lzma  /**< the LZMA-Alone format, originally designed by
+				 *   Igor Pavlov and in widespread use due to lzmautils,
+				 *   lacking both aforementioned features of lzip */
+/* XXX: future, potentially   ,
+	ELZMA_xz
+*/
+} elzma_file_format;
+
+/**
+ * A callback invoked during elzma_[de]compress_run when the [de]compression
+ * process has generated [de]compressed output.
+ *
+ * the size parameter indicates how much data is in buf to be written.
+ * it is required that the write callback consume all data, and a return
+ * value not equal to input size indicates and error.
+ */
+typedef size_t (*elzma_write_callback)(void *ctx, const void *buf,
+									   size_t size);
+
+/**
+ * A callback invoked during elzma_[de]compress_run when the [de]compression
+ * process requires more [un]compressed input.
+ *
+ * the size parameter is an in/out argument.  on input it indicates
+ * the buffer size.  on output it indicates the amount of data read into
+ * buf.  when *size is zero on output it indicates EOF.
+ *
+ * \returns the read callback should return nonzero on failure.
+ */
+typedef int (*elzma_read_callback)(void *ctx, void *buf,
+								   size_t *size);
+
+/**
+ * A callback invoked during elzma_[de]compress_run to report progress
+ * on the [de]compression.
+ *
+ * \returns the read callback should return nonzero on failure.
+ */
+typedef void (*elzma_progress_callback)(void *ctx, size_t complete,
+										size_t total);
+
+/** pointer to a malloc function, supporting client overriding memory
+ *  allocation routines */
+typedef void * (*elzma_malloc)(void *ctx, unsigned int sz);
+
+/** pointer to a free function, supporting client overriding memory
+ *  allocation routines */
+typedef void (*elzma_free)(void *ctx, void * ptr);
+
+#ifdef __cplusplus
+};
+#endif
+
+#endif
+
+#include <stdlib.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/** suggested default values */
+#define ELZMA_LC_DEFAULT 3
+#define ELZMA_LP_DEFAULT 0
+#define ELZMA_PB_DEFAULT 2
+#define ELZMA_DICT_SIZE_DEFAULT_MAX (1 << 24)
+
+/** an opaque handle to an lzma compressor */
+typedef struct _elzma_compress_handle * elzma_compress_handle;
+
+/**
+ * Allocate a handle to an LZMA compressor object.
+ */
+elzma_compress_handle EASYLZMA_API elzma_compress_alloc();
+
+/**
+ * set allocation routines (optional, if not called malloc & free will
+ * be used)
+ */
+void EASYLZMA_API elzma_compress_set_allocation_callbacks(
+	elzma_compress_handle hand,
+	elzma_malloc mallocFunc, void * mallocFuncContext,
+	elzma_free freeFunc, void * freeFuncContext);
+
+/**
+ * Free all data associated with an LZMA compressor object.
+ */
+void EASYLZMA_API elzma_compress_free(elzma_compress_handle * hand);
+
+/**
+ * Set configuration paramters for a compression run.  If not called,
+ * reasonable defaults will be used.
+ */
+int EASYLZMA_API elzma_compress_config(elzma_compress_handle hand,
+									   unsigned char lc,
+									   unsigned char lp,
+									   unsigned char pb,
+									   unsigned char level,
+									   unsigned int dictionarySize,
+									   elzma_file_format format,
+									   unsigned long long uncompressedSize);
+
+/**
+ * Run compression
+ */
+int EASYLZMA_API elzma_compress_run(
+	elzma_compress_handle hand,
+	elzma_read_callback inputStream, void * inputContext,
+	elzma_write_callback outputStream, void * outputContext,
+	elzma_progress_callback progressCallback, void * progressContext);
+
+/**
+ * a heuristic utility routine to guess a dictionary size that gets near
+ * optimal compression while reducing memory usage.
+ * accepts a size in bytes, returns a proposed dictionary size
+ */
+unsigned int EASYLZMA_API elzma_get_dict_size(unsigned long long size);
+
+#ifdef __cplusplus
+};
+#endif
+
+#endif
+
+
+#line 1 "decompress.h"
+#ifndef __EASYLZMADECOMPRESS_H__
+#define __EASYLZMADECOMPRESS_H__
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/** an opaque handle to an lzma decompressor */
+typedef struct _elzma_decompress_handle * elzma_decompress_handle;
+
+/**
+ * Allocate a handle to an LZMA decompressor object.
+ */
+elzma_decompress_handle EASYLZMA_API elzma_decompress_alloc();
+
+/**
+ * set allocation routines (optional, if not called malloc & free will
+ * be used)
+ */
+void EASYLZMA_API elzma_decompress_set_allocation_callbacks(
+	elzma_decompress_handle hand,
+	elzma_malloc mallocFunc, void * mallocFuncContext,
+	elzma_free freeFunc, void * freeFuncContext);
+
+/**
+ * Free all data associated with an LZMA decompressor object.
+ */
+void EASYLZMA_API elzma_decompress_free(elzma_decompress_handle * hand);
+
+/**
+ * Perform decompression
+ *
+ * XXX: should the library automatically detect format by reading stream?
+ *      currently it's based on data external to stream (such as extension
+ *      or convention)
+ */
+int EASYLZMA_API elzma_decompress_run(
+	elzma_decompress_handle hand,
+	elzma_read_callback inputStream, void * inputContext,
+	elzma_write_callback outputStream, void * outputContext,
+	elzma_file_format format);
+
+#ifdef __cplusplus
+};
+#endif
+
+#endif
 
 #define MINIZ_NO_ZLIB_COMPATIBLE_NAMES 1
 //#define MINIZ_USE_UNALIGNED_LOADS_AND_STORES 1
@@ -5349,3103 +5586,6 @@ void *mz_zip_extract_archive_file_to_heap(const char *pZip_filename, const char 
 */
 
 
-//#define mz_crc32 mz_crc32_lz
-
-#line 1 "lzlib.c"
-/* @r-lyeh changed 1700 -> 1800 */
-#if defined(_MSC_VER) && _MSC_VER < 1800
-typedef unsigned char uint8_t;
-typedef unsigned short uint16_t;
-typedef unsigned int uint32_t;
-typedef unsigned long long int uint64_t;
-typedef signed char int8_t;
-typedef signed short int16_t;
-typedef signed int int32_t;
-typedef signed long long int int64_t;
-#else
-#include <stdbool.h>
-#include <stdint.h>
-#endif
-#include <stdlib.h>
-#include <string.h>
-
-
-#line 1 "lzlib.h"
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-static const char * const LZ_version_string = "1.5";
-
-enum LZ_Errno { LZ_ok = 0,         LZ_bad_argument, LZ_mem_error,
-				LZ_sequence_error, LZ_header_error, LZ_unexpected_eof,
-				LZ_data_error,     LZ_library_error };
-
-const char * LZ_version( void );
-const char * LZ_strerror( const enum LZ_Errno lz_errno );
-
-int LZ_min_dictionary_bits( void );
-int LZ_min_dictionary_size( void );
-int LZ_max_dictionary_bits( void );
-int LZ_max_dictionary_size( void );
-int LZ_min_match_len_limit( void );
-int LZ_max_match_len_limit( void );
-
-/*---------------------- Compression Functions ----------------------*/
-
-struct LZ_Encoder;
-
-struct LZ_Encoder * LZ_compress_open( const int dictionary_size,
-									  const int match_len_limit,
-									  const unsigned long long member_size );
-int LZ_compress_close( struct LZ_Encoder * const encoder );
-
-int LZ_compress_finish( struct LZ_Encoder * const encoder );
-int LZ_compress_restart_member( struct LZ_Encoder * const encoder,
-								const unsigned long long member_size );
-int LZ_compress_sync_flush( struct LZ_Encoder * const encoder );
-
-int LZ_compress_read( struct LZ_Encoder * const encoder,
-					  uint8_t * const buffer, const int size );
-int LZ_compress_write( struct LZ_Encoder * const encoder,
-					   const uint8_t * const buffer, const int size );
-int LZ_compress_write_size( struct LZ_Encoder * const encoder );
-
-enum LZ_Errno LZ_compress_errno( struct LZ_Encoder * const encoder );
-int LZ_compress_finished( struct LZ_Encoder * const encoder );
-int LZ_compress_member_finished( struct LZ_Encoder * const encoder );
-
-unsigned long long LZ_compress_data_position( struct LZ_Encoder * const encoder );
-unsigned long long LZ_compress_member_position( struct LZ_Encoder * const encoder );
-unsigned long long LZ_compress_total_in_size( struct LZ_Encoder * const encoder );
-unsigned long long LZ_compress_total_out_size( struct LZ_Encoder * const encoder );
-
-/*--------------------- Decompression Functions ---------------------*/
-
-struct LZ_Decoder;
-
-struct LZ_Decoder * LZ_decompress_open( void );
-int LZ_decompress_close( struct LZ_Decoder * const decoder );
-
-int LZ_decompress_finish( struct LZ_Decoder * const decoder );
-int LZ_decompress_reset( struct LZ_Decoder * const decoder );
-int LZ_decompress_sync_to_member( struct LZ_Decoder * const decoder );
-
-int LZ_decompress_read( struct LZ_Decoder * const decoder,
-						uint8_t * const buffer, const int size );
-int LZ_decompress_write( struct LZ_Decoder * const decoder,
-						 const uint8_t * const buffer, const int size );
-int LZ_decompress_write_size( struct LZ_Decoder * const decoder );
-
-enum LZ_Errno LZ_decompress_errno( struct LZ_Decoder * const decoder );
-int LZ_decompress_finished( struct LZ_Decoder * const decoder );
-int LZ_decompress_member_finished( struct LZ_Decoder * const decoder );
-
-int LZ_decompress_member_version( struct LZ_Decoder * const decoder );
-int LZ_decompress_dictionary_size( struct LZ_Decoder * const decoder );
-unsigned LZ_decompress_data_crc( struct LZ_Decoder * const decoder );
-
-unsigned long long LZ_decompress_data_position( struct LZ_Decoder * const decoder );
-unsigned long long LZ_decompress_member_position( struct LZ_Decoder * const decoder );
-unsigned long long LZ_decompress_total_in_size( struct LZ_Decoder * const decoder );
-unsigned long long LZ_decompress_total_out_size( struct LZ_Decoder * const decoder );
-
-#ifdef __cplusplus
-}
-#endif
-
-
-#line 1 "lzip.h"
-#ifndef max
-  #define max(x,y) ((x) >= (y) ? (x) : (y))
-#endif
-#ifndef min
-  #define min(x,y) ((x) <= (y) ? (x) : (y))
-#endif
-
-typedef int State;
-
-enum { states = 12 };
-
-static inline bool St_is_char( const State st ) { return st < 7; }
-
-static inline State St_set_char( const State st )
-  {
-  static const State next[states] = { 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 4, 5 };
-  return next[st];
-  }
-
-static inline State St_set_match( const State st )
-  { return ( ( st < 7 ) ? 7 : 10 ); }
-
-static inline State St_set_rep( const State st )
-  { return ( ( st < 7 ) ? 8 : 11 ); }
-
-static inline State St_set_short_rep( const State st )
-  { return ( ( st < 7 ) ? 9 : 11 ); }
-
-enum {
-  min_dictionary_bits = 12,
-  min_dictionary_size = 1 << min_dictionary_bits,
-  max_dictionary_bits = 29,
-  max_dictionary_size = 1 << max_dictionary_bits,
-  literal_context_bits = 3,
-  pos_state_bits = 2,
-  pos_states = 1 << pos_state_bits,
-  pos_state_mask = pos_states - 1,
-
-  dis_slot_bits = 6,
-  start_dis_model = 4,
-  end_dis_model = 14,
-  modeled_distances = 1 << (end_dis_model / 2),		/* 128 */
-  dis_align_bits = 4,
-  dis_align_size = 1 << dis_align_bits,
-
-  len_low_bits = 3,
-  len_mid_bits = 3,
-  len_high_bits = 8,
-  len_low_symbols = 1 << len_low_bits,
-  len_mid_symbols = 1 << len_mid_bits,
-  len_high_symbols = 1 << len_high_bits,
-  max_len_symbols = len_low_symbols + len_mid_symbols + len_high_symbols,
-
-  min_match_len = 2,					/* must be 2 */
-  max_match_len = min_match_len + max_len_symbols - 1,	/* 273 */
-  min_match_len_limit = 5,
-
-  dis_states = 4 };
-
-static inline int get_dis_state( const int len )
-  { return min( len - min_match_len, dis_states - 1 ); }
-
-static inline int get_lit_state( const uint8_t prev_byte )
-  { return ( prev_byte >> ( 8 - literal_context_bits ) ); }
-
-enum { bit_model_move_bits = 5,
-	   bit_model_total_bits = 11,
-	   bit_model_total = 1 << bit_model_total_bits };
-
-typedef int Bit_model;
-
-static inline void Bm_init( Bit_model * const probability )
-  { *probability = bit_model_total / 2; }
-
-static inline void Bm_array_init( Bit_model * const p, const int size )
-  { int i = 0; while( i < size ) p[i++] = bit_model_total / 2; }
-
-struct Len_model
-  {
-  Bit_model choice1;
-  Bit_model choice2;
-  Bit_model bm_low[pos_states][len_low_symbols];
-  Bit_model bm_mid[pos_states][len_mid_symbols];
-  Bit_model bm_high[len_high_symbols];
-  };
-
-static inline void Lm_init( struct Len_model * const lm )
-  {
-  Bm_init( &lm->choice1 );
-  Bm_init( &lm->choice2 );
-  Bm_array_init( lm->bm_low[0], pos_states * len_low_symbols );
-  Bm_array_init( lm->bm_mid[0], pos_states * len_mid_symbols );
-  Bm_array_init( lm->bm_high, len_high_symbols );
-  }
-
-/* Table of CRCs of all 8-bit messages. */
-static const uint32_t crc32[256] =
-  {
-  0x00000000, 0x77073096, 0xEE0E612C, 0x990951BA, 0x076DC419, 0x706AF48F,
-  0xE963A535, 0x9E6495A3, 0x0EDB8832, 0x79DCB8A4, 0xE0D5E91E, 0x97D2D988,
-  0x09B64C2B, 0x7EB17CBD, 0xE7B82D07, 0x90BF1D91, 0x1DB71064, 0x6AB020F2,
-  0xF3B97148, 0x84BE41DE, 0x1ADAD47D, 0x6DDDE4EB, 0xF4D4B551, 0x83D385C7,
-  0x136C9856, 0x646BA8C0, 0xFD62F97A, 0x8A65C9EC, 0x14015C4F, 0x63066CD9,
-  0xFA0F3D63, 0x8D080DF5, 0x3B6E20C8, 0x4C69105E, 0xD56041E4, 0xA2677172,
-  0x3C03E4D1, 0x4B04D447, 0xD20D85FD, 0xA50AB56B, 0x35B5A8FA, 0x42B2986C,
-  0xDBBBC9D6, 0xACBCF940, 0x32D86CE3, 0x45DF5C75, 0xDCD60DCF, 0xABD13D59,
-  0x26D930AC, 0x51DE003A, 0xC8D75180, 0xBFD06116, 0x21B4F4B5, 0x56B3C423,
-  0xCFBA9599, 0xB8BDA50F, 0x2802B89E, 0x5F058808, 0xC60CD9B2, 0xB10BE924,
-  0x2F6F7C87, 0x58684C11, 0xC1611DAB, 0xB6662D3D, 0x76DC4190, 0x01DB7106,
-  0x98D220BC, 0xEFD5102A, 0x71B18589, 0x06B6B51F, 0x9FBFE4A5, 0xE8B8D433,
-  0x7807C9A2, 0x0F00F934, 0x9609A88E, 0xE10E9818, 0x7F6A0DBB, 0x086D3D2D,
-  0x91646C97, 0xE6635C01, 0x6B6B51F4, 0x1C6C6162, 0x856530D8, 0xF262004E,
-  0x6C0695ED, 0x1B01A57B, 0x8208F4C1, 0xF50FC457, 0x65B0D9C6, 0x12B7E950,
-  0x8BBEB8EA, 0xFCB9887C, 0x62DD1DDF, 0x15DA2D49, 0x8CD37CF3, 0xFBD44C65,
-  0x4DB26158, 0x3AB551CE, 0xA3BC0074, 0xD4BB30E2, 0x4ADFA541, 0x3DD895D7,
-  0xA4D1C46D, 0xD3D6F4FB, 0x4369E96A, 0x346ED9FC, 0xAD678846, 0xDA60B8D0,
-  0x44042D73, 0x33031DE5, 0xAA0A4C5F, 0xDD0D7CC9, 0x5005713C, 0x270241AA,
-  0xBE0B1010, 0xC90C2086, 0x5768B525, 0x206F85B3, 0xB966D409, 0xCE61E49F,
-  0x5EDEF90E, 0x29D9C998, 0xB0D09822, 0xC7D7A8B4, 0x59B33D17, 0x2EB40D81,
-  0xB7BD5C3B, 0xC0BA6CAD, 0xEDB88320, 0x9ABFB3B6, 0x03B6E20C, 0x74B1D29A,
-  0xEAD54739, 0x9DD277AF, 0x04DB2615, 0x73DC1683, 0xE3630B12, 0x94643B84,
-  0x0D6D6A3E, 0x7A6A5AA8, 0xE40ECF0B, 0x9309FF9D, 0x0A00AE27, 0x7D079EB1,
-  0xF00F9344, 0x8708A3D2, 0x1E01F268, 0x6906C2FE, 0xF762575D, 0x806567CB,
-  0x196C3671, 0x6E6B06E7, 0xFED41B76, 0x89D32BE0, 0x10DA7A5A, 0x67DD4ACC,
-  0xF9B9DF6F, 0x8EBEEFF9, 0x17B7BE43, 0x60B08ED5, 0xD6D6A3E8, 0xA1D1937E,
-  0x38D8C2C4, 0x4FDFF252, 0xD1BB67F1, 0xA6BC5767, 0x3FB506DD, 0x48B2364B,
-  0xD80D2BDA, 0xAF0A1B4C, 0x36034AF6, 0x41047A60, 0xDF60EFC3, 0xA867DF55,
-  0x316E8EEF, 0x4669BE79, 0xCB61B38C, 0xBC66831A, 0x256FD2A0, 0x5268E236,
-  0xCC0C7795, 0xBB0B4703, 0x220216B9, 0x5505262F, 0xC5BA3BBE, 0xB2BD0B28,
-  0x2BB45A92, 0x5CB36A04, 0xC2D7FFA7, 0xB5D0CF31, 0x2CD99E8B, 0x5BDEAE1D,
-  0x9B64C2B0, 0xEC63F226, 0x756AA39C, 0x026D930A, 0x9C0906A9, 0xEB0E363F,
-  0x72076785, 0x05005713, 0x95BF4A82, 0xE2B87A14, 0x7BB12BAE, 0x0CB61B38,
-  0x92D28E9B, 0xE5D5BE0D, 0x7CDCEFB7, 0x0BDBDF21, 0x86D3D2D4, 0xF1D4E242,
-  0x68DDB3F8, 0x1FDA836E, 0x81BE16CD, 0xF6B9265B, 0x6FB077E1, 0x18B74777,
-  0x88085AE6, 0xFF0F6A70, 0x66063BCA, 0x11010B5C, 0x8F659EFF, 0xF862AE69,
-  0x616BFFD3, 0x166CCF45, 0xA00AE278, 0xD70DD2EE, 0x4E048354, 0x3903B3C2,
-  0xA7672661, 0xD06016F7, 0x4969474D, 0x3E6E77DB, 0xAED16A4A, 0xD9D65ADC,
-  0x40DF0B66, 0x37D83BF0, 0xA9BCAE53, 0xDEBB9EC5, 0x47B2CF7F, 0x30B5FFE9,
-  0xBDBDF21C, 0xCABAC28A, 0x53B39330, 0x24B4A3A6, 0xBAD03605, 0xCDD70693,
-  0x54DE5729, 0x23D967BF, 0xB3667A2E, 0xC4614AB8, 0x5D681B02, 0x2A6F2B94,
-  0xB40BBE37, 0xC30C8EA1, 0x5A05DF1B, 0x2D02EF8D };
-
-static inline void CRC32_update_byte( uint32_t * const crc, const uint8_t byte )
-  { *crc = crc32[(*crc^byte)&0xFF] ^ ( *crc >> 8 ); }
-
-static inline void CRC32_update_buf( uint32_t * const crc,
-									 const uint8_t * const buffer, const int size )
-  {
-  int i;
-  for( i = 0; i < size; ++i )
-	*crc = crc32[(*crc^buffer[i])&0xFF] ^ ( *crc >> 8 );
-  }
-
-static inline int real_bits( unsigned value )
-  {
-  int bits = 0;
-  while( value > 0 ) { value >>= 1; ++bits; }
-  return bits;
-  }
-
-static const uint8_t magic_string[4] = { 0x4C, 0x5A, 0x49, 0x50 }; /* "LZIP" */
-
-typedef uint8_t File_header[6];		/* 0-3 magic bytes */
-					/*   4 version */
-					/*   5 coded_dict_size */
-enum { Fh_size = 6 };
-
-static inline void Fh_set_magic( File_header data )
-  { memcpy( data, magic_string, 4 ); data[4] = 1; }
-
-static inline bool Fh_verify_magic( const File_header data )
-  { return ( memcmp( data, magic_string, 4 ) == 0 ); }
-
-static inline uint8_t Fh_version( const File_header data )
-  { return data[4]; }
-
-static inline bool Fh_verify_version( const File_header data )
-  { return ( data[4] == 1 ); }
-
-static inline unsigned Fh_get_dictionary_size( const File_header data )
-  {
-  unsigned sz = ( 1 << ( data[5] & 0x1F ) );
-  if( sz > min_dictionary_size )
-	sz -= ( sz / 16 ) * ( ( data[5] >> 5 ) & 7 );
-  return sz;
-  }
-
-static inline bool Fh_set_dictionary_size( File_header data, const unsigned sz )
-  {
-  if( sz >= min_dictionary_size && sz <= max_dictionary_size )
-	{
-	data[5] = real_bits( sz - 1 );
-	if( sz > min_dictionary_size )
-	  {
-	  const unsigned base_size = 1 << data[5];
-	  const unsigned wedge = base_size / 16;
-	  int i;
-	  for( i = 7; i >= 1; --i )
-		if( base_size - ( i * wedge ) >= sz )
-		  { data[5] |= ( i << 5 ); break; }
-	  }
-	return true;
-	}
-  return false;
-  }
-
-static inline bool Fh_verify( const File_header data )
-  {
-  return ( Fh_verify_magic( data ) && Fh_verify_version( data ) &&
-		   Fh_get_dictionary_size( data ) >= min_dictionary_size &&
-		   Fh_get_dictionary_size( data ) <= max_dictionary_size );
-  }
-
-typedef uint8_t File_trailer[20];
-			/*  0-3  CRC32 of the uncompressed data */
-			/*  4-11 size of the uncompressed data */
-			/* 12-19 member size including header and trailer */
-
-enum { Ft_size = 20 };
-
-static inline unsigned Ft_get_data_crc( const File_trailer data )
-  {
-  unsigned tmp = 0;
-  int i;
-  for( i = 3; i >= 0; --i ) { tmp <<= 8; tmp += data[i]; }
-  return tmp;
-  }
-
-static inline void Ft_set_data_crc( File_trailer data, unsigned crc )
-  {
-  int i;
-  for( i = 0; i <= 3; ++i ) { data[i] = (uint8_t)crc; crc >>= 8; }
-  }
-
-static inline unsigned long long Ft_get_data_size( const File_trailer data )
-  {
-  unsigned long long tmp = 0;
-  int i;
-  for( i = 11; i >= 4; --i ) { tmp <<= 8; tmp += data[i]; }
-  return tmp;
-  }
-
-static inline void Ft_set_data_size( File_trailer data, unsigned long long sz )
-  {
-  int i;
-  for( i = 4; i <= 11; ++i ) { data[i] = (uint8_t)sz; sz >>= 8; }
-  }
-
-static inline unsigned long long Ft_get_member_size( const File_trailer data )
-  {
-  unsigned long long tmp = 0;
-  int i;
-  for( i = 19; i >= 12; --i ) { tmp <<= 8; tmp += data[i]; }
-  return tmp;
-  }
-
-static inline void Ft_set_member_size( File_trailer data, unsigned long long sz )
-  {
-  int i;
-  for( i = 12; i <= 19; ++i ) { data[i] = (uint8_t)sz; sz >>= 8; }
-  }
-
-
-#line 1 "cbuffer.c"
-struct Circular_buffer
-  {
-  uint8_t * buffer;
-  int buffer_size;		/* capacity == buffer_size - 1 */
-  int get;			/* buffer is empty when get == put */
-  int put;
-  };
-
-static inline void Cb_reset( struct Circular_buffer * const cb )
-  { cb->get = 0; cb->put = 0; }
-
-static inline bool Cb_init( struct Circular_buffer * const cb,
-							const int buf_size )
-  {
-  cb->buffer = (uint8_t *)malloc( buf_size + 1 );
-  cb->buffer_size = buf_size + 1;
-  cb->get = 0;
-  cb->put = 0;
-  return ( cb->buffer != 0 );
-  }
-
-static inline void Cb_free( struct Circular_buffer * const cb )
-  { free( cb->buffer ); cb->buffer = 0; }
-
-static inline int Cb_used_bytes( const struct Circular_buffer * const cb )
-	{ return ( (cb->get <= cb->put) ? 0 : cb->buffer_size ) + cb->put - cb->get; }
-
-static inline int Cb_free_bytes( const struct Circular_buffer * const cb )
-	{ return ( (cb->get <= cb->put) ? cb->buffer_size : 0 ) - cb->put + cb->get - 1; }
-
-static inline uint8_t Cb_get_byte( struct Circular_buffer * const cb )
-	{
-	const uint8_t b = cb->buffer[cb->get];
-	if( ++cb->get >= cb->buffer_size ) cb->get = 0;
-	return b;
-	}
-
-static inline void Cb_put_byte( struct Circular_buffer * const cb,
-								const uint8_t b )
-	{
-	cb->buffer[cb->put] = b;
-	if( ++cb->put >= cb->buffer_size ) cb->put = 0;
-	}
-
-/* Copies up to 'out_size' bytes to 'out_buffer' and updates 'get'.
-   Returns the number of bytes copied.
-*/
-static int Cb_read_data( struct Circular_buffer * const cb,
-						 uint8_t * const out_buffer, const int out_size )
-  {
-  int size = 0;
-  if( out_size < 0 ) return 0;
-  if( cb->get > cb->put )
-	{
-	size = min( cb->buffer_size - cb->get, out_size );
-	if( size > 0 )
-	  {
-	  memcpy( out_buffer, cb->buffer + cb->get, size );
-	  cb->get += size;
-	  if( cb->get >= cb->buffer_size ) cb->get = 0;
-	  }
-	}
-  if( cb->get < cb->put )
-	{
-	const int size2 = min( cb->put - cb->get, out_size - size );
-	if( size2 > 0 )
-	  {
-	  memcpy( out_buffer + size, cb->buffer + cb->get, size2 );
-	  cb->get += size2;
-	  size += size2;
-	  }
-	}
-  return size;
-  }
-
-/* Copies up to 'in_size' bytes from 'in_buffer' and updates 'put'.
-   Returns the number of bytes copied.
-*/
-static int Cb_write_data( struct Circular_buffer * const cb,
-						  const uint8_t * const in_buffer, const int in_size )
-  {
-  int size = 0;
-  if( in_size < 0 ) return 0;
-  if( cb->put >= cb->get )
-	{
-	size = min( cb->buffer_size - cb->put - (cb->get == 0), in_size );
-	if( size > 0 )
-	  {
-	  memcpy( cb->buffer + cb->put, in_buffer, size );
-	  cb->put += size;
-	  if( cb->put >= cb->buffer_size ) cb->put = 0;
-	  }
-	}
-  if( cb->put < cb->get )
-	{
-	const int size2 = min( cb->get - cb->put - 1, in_size - size );
-	if( size2 > 0 )
-	  {
-	  memcpy( cb->buffer + cb->put, in_buffer + size, size2 );
-	  cb->put += size2;
-	  size += size2;
-	  }
-	}
-  return size;
-  }
-
-
-#line 1 "decoder.h"
-enum { rd_min_available_bytes = 8 };
-
-struct Range_decoder
-  {
-  struct Circular_buffer cb;		/* input buffer */
-  unsigned long long member_position;
-  uint32_t code;
-  uint32_t range;
-  bool at_stream_end;
-  bool reload_pending;
-  };
-
-static inline bool Rd_init( struct Range_decoder * const rdec )
-  {
-  if( !Cb_init( &rdec->cb, 65536 + rd_min_available_bytes ) ) return false;
-  rdec->member_position = 0;
-  rdec->code = 0;
-  rdec->range = 0xFFFFFFFFU;
-  rdec->at_stream_end = false;
-  rdec->reload_pending = false;
-  return true;
-  }
-
-static inline void Rd_free( struct Range_decoder * const rdec )
-  { Cb_free( &rdec->cb ); }
-
-static inline bool Rd_finished( const struct Range_decoder * const rdec )
-  { return rdec->at_stream_end && !Cb_used_bytes( &rdec->cb ); }
-
-static inline void Rd_finish( struct Range_decoder * const rdec )
-  { rdec->at_stream_end = true; }
-
-static inline bool Rd_enough_available_bytes( const struct Range_decoder * const rdec )
-  {
-  return ( Cb_used_bytes( &rdec->cb ) >= rd_min_available_bytes ||
-		   ( rdec->at_stream_end && Cb_used_bytes( &rdec->cb ) > 0 ) );
-  }
-
-static inline int Rd_available_bytes( const struct Range_decoder * const rdec )
-  { return Cb_used_bytes( &rdec->cb ); }
-
-static inline int Rd_free_bytes( const struct Range_decoder * const rdec )
-  { if( rdec->at_stream_end ) return 0; return Cb_free_bytes( &rdec->cb ); }
-
-static inline void Rd_purge( struct Range_decoder * const rdec )
-  { rdec->at_stream_end = true; Cb_reset( &rdec->cb ); }
-
-static inline void Rd_reset( struct Range_decoder * const rdec )
-  { rdec->at_stream_end = false; Cb_reset( &rdec->cb ); }
-
-/* Seeks a member header and updates 'get'.
-   Returns true if it finds a valid header.
-*/
-static bool Rd_find_header( struct Range_decoder * const rdec )
-  {
-  while( rdec->cb.get != rdec->cb.put )
-	{
-	if( rdec->cb.buffer[rdec->cb.get] == magic_string[0] )
-	  {
-	  int get = rdec->cb.get;
-	  int i;
-	  File_header header;
-	  for( i = 0; i < Fh_size; ++i )
-		{
-		if( get == rdec->cb.put ) return false;	/* not enough data */
-		header[i] = rdec->cb.buffer[get];
-		if( ++get >= rdec->cb.buffer_size ) get = 0;
-		}
-	  if( Fh_verify( header ) ) return true;
-	  }
-	if( ++rdec->cb.get >= rdec->cb.buffer_size ) rdec->cb.get = 0;
-	}
-  return false;
-  }
-
-/* Returns true, fills 'header', and updates 'get' if 'get' points to a
-   valid header.
-   Else returns false and leaves 'get' unmodified.
-*/
-static bool Rd_read_header( struct Range_decoder * const rdec,
-							File_header header )
-  {
-  int get = rdec->cb.get;
-  int i;
-  for( i = 0; i < Fh_size; ++i )
-	{
-	if( get == rdec->cb.put ) return false;	/* not enough data */
-	header[i] = rdec->cb.buffer[get];
-	if( ++get >= rdec->cb.buffer_size ) get = 0;
-	}
-  if( Fh_verify( header ) )
-	{
-	rdec->cb.get = get;
-	rdec->member_position = Fh_size;
-	rdec->reload_pending = true;
-	return true;
-	}
-  return false;
-  }
-
-static inline int Rd_write_data( struct Range_decoder * const rdec,
-								 const uint8_t * const inbuf, const int size )
-  {
-  if( rdec->at_stream_end || size <= 0 ) return 0;
-  return Cb_write_data( &rdec->cb, inbuf, size );
-  }
-
-static inline uint8_t Rd_get_byte( struct Range_decoder * const rdec )
-  {
-  ++rdec->member_position;
-  return Cb_get_byte( &rdec->cb );
-  }
-
-static inline int Rd_read_data( struct Range_decoder * const rdec,
-								uint8_t * const outbuf, const int size )
-  {
-  const int sz = Cb_read_data( &rdec->cb, outbuf, size );
-  if( sz > 0 ) rdec->member_position += sz;
-  return sz;
-  }
-
-static bool Rd_try_reload( struct Range_decoder * const rdec, const bool force )
-  {
-  if( force ) rdec->reload_pending = true;
-  if( rdec->reload_pending && Rd_available_bytes( rdec ) >= 5 )
-	{
-	int i;
-	rdec->reload_pending = false;
-	rdec->code = 0;
-	for( i = 0; i < 5; ++i )
-	  rdec->code = (rdec->code << 8) | Rd_get_byte( rdec );
-	rdec->range = 0xFFFFFFFFU;
-	}
-  return !rdec->reload_pending;
-  }
-
-static inline void Rd_normalize( struct Range_decoder * const rdec )
-  {
-  if( rdec->range <= 0x00FFFFFFU )
-	{
-	rdec->range <<= 8;
-	rdec->code = (rdec->code << 8) | Rd_get_byte( rdec );
-	}
-  }
-
-static inline int Rd_decode( struct Range_decoder * const rdec,
-							 const int num_bits )
-  {
-  int symbol = 0;
-  int i;
-  for( i = num_bits; i > 0; --i )
-	{
-	uint32_t mask;
-	Rd_normalize( rdec );
-	rdec->range >>= 1;
-/*    symbol <<= 1; */
-/*    if( rdec->code >= rdec->range ) { rdec->code -= rdec->range; symbol |= 1; } */
-	mask = 0U - (rdec->code < rdec->range);
-	rdec->code -= rdec->range;
-	rdec->code += rdec->range & mask;
-	symbol = (symbol << 1) + (mask + 1);
-	}
-  return symbol;
-  }
-
-static inline int Rd_decode_bit( struct Range_decoder * const rdec,
-								 Bit_model * const probability )
-  {
-  uint32_t bound;
-  Rd_normalize( rdec );
-  bound = ( rdec->range >> bit_model_total_bits ) * *probability;
-  if( rdec->code < bound )
-	{
-	rdec->range = bound;
-	*probability += (bit_model_total - *probability) >> bit_model_move_bits;
-	return 0;
-	}
-  else
-	{
-	rdec->range -= bound;
-	rdec->code -= bound;
-	*probability -= *probability >> bit_model_move_bits;
-	return 1;
-	}
-  }
-
-static inline int Rd_decode_tree( struct Range_decoder * const rdec,
-								  Bit_model bm[], const int num_bits )
-  {
-  int symbol = 1;
-  int i;
-  for( i = num_bits; i > 0; --i )
-	symbol = ( symbol << 1 ) | Rd_decode_bit( rdec, &bm[symbol] );
-  return symbol - (1 << num_bits);
-  }
-
-static inline int Rd_decode_tree6( struct Range_decoder * const rdec,
-								   Bit_model bm[] )
-  {
-  int symbol = 1;
-  symbol = ( symbol << 1 ) | Rd_decode_bit( rdec, &bm[symbol] );
-  symbol = ( symbol << 1 ) | Rd_decode_bit( rdec, &bm[symbol] );
-  symbol = ( symbol << 1 ) | Rd_decode_bit( rdec, &bm[symbol] );
-  symbol = ( symbol << 1 ) | Rd_decode_bit( rdec, &bm[symbol] );
-  symbol = ( symbol << 1 ) | Rd_decode_bit( rdec, &bm[symbol] );
-  symbol = ( symbol << 1 ) | Rd_decode_bit( rdec, &bm[symbol] );
-  return symbol - (1 << 6);
-  }
-
-static inline int Rd_decode_tree_reversed( struct Range_decoder * const rdec,
-										   Bit_model bm[], const int num_bits )
-  {
-  int model = 1;
-  int symbol = 0;
-  int i;
-  for( i = 0; i < num_bits; ++i )
-	{
-	const bool bit = Rd_decode_bit( rdec, &bm[model] );
-	model <<= 1;
-	if( bit ) { ++model; symbol |= (1 << i); }
-	}
-  return symbol;
-  }
-
-static inline int Rd_decode_tree_reversed4( struct Range_decoder * const rdec,
-											Bit_model bm[] )
-  {
-  int model = 1;
-  int symbol = 0;
-  int bit = Rd_decode_bit( rdec, &bm[model] );
-  model = (model << 1) + bit; symbol |= bit;
-  bit = Rd_decode_bit( rdec, &bm[model] );
-  model = (model << 1) + bit; symbol |= (bit << 1);
-  bit = Rd_decode_bit( rdec, &bm[model] );
-  model = (model << 1) + bit; symbol |= (bit << 2);
-  if( Rd_decode_bit( rdec, &bm[model] ) ) symbol |= 8;
-  return symbol;
-  }
-
-static inline int Rd_decode_matched( struct Range_decoder * const rdec,
-									 Bit_model bm[], int match_byte )
-  {
-  Bit_model * const bm1 = bm + 0x100;
-  int symbol = 1;
-  int i;
-  for( i = 7; i >= 0; --i )
-	{
-	int match_bit, bit;
-	match_byte <<= 1;
-	match_bit = match_byte & 0x100;
-	bit = Rd_decode_bit( rdec, &bm1[match_bit+symbol] );
-	symbol = ( symbol << 1 ) | bit;
-	if( match_bit != bit << 8 )
-	  {
-	  while( symbol < 0x100 )
-		symbol = ( symbol << 1 ) | Rd_decode_bit( rdec, &bm[symbol] );
-	  break;
-	  }
-	}
-  return symbol - 0x100;
-  }
-
-static inline int Rd_decode_len( struct Range_decoder * const rdec,
-								 struct Len_model * const lm,
-								 const int pos_state )
-  {
-  if( Rd_decode_bit( rdec, &lm->choice1 ) == 0 )
-	return Rd_decode_tree( rdec, lm->bm_low[pos_state], len_low_bits );
-  if( Rd_decode_bit( rdec, &lm->choice2 ) == 0 )
-	return len_low_symbols +
-		   Rd_decode_tree( rdec, lm->bm_mid[pos_state], len_mid_bits );
-  return len_low_symbols + len_mid_symbols +
-		 Rd_decode_tree( rdec, lm->bm_high, len_high_bits );
-  }
-
-enum { lzd_min_free_bytes = max_match_len };
-
-struct LZ_decoder
-  {
-  struct Circular_buffer cb;
-  unsigned long long partial_data_pos;
-  int dictionary_size;
-  uint32_t crc;
-  bool member_finished;
-  bool verify_trailer_pending;
-  unsigned rep0;		/* rep[0-3] latest four distances */
-  unsigned rep1;		/* used for efficient coding of */
-  unsigned rep2;		/* repeated distances */
-  unsigned rep3;
-  State state;
-
-  Bit_model bm_literal[1<<literal_context_bits][0x300];
-  Bit_model bm_match[states][pos_states];
-  Bit_model bm_rep[states];
-  Bit_model bm_rep0[states];
-  Bit_model bm_rep1[states];
-  Bit_model bm_rep2[states];
-  Bit_model bm_len[states][pos_states];
-  Bit_model bm_dis_slot[dis_states][1<<dis_slot_bits];
-  Bit_model bm_dis[modeled_distances-end_dis_model];
-  Bit_model bm_align[dis_align_size];
-
-  struct Range_decoder * rdec;
-  struct Len_model match_len_model;
-  struct Len_model rep_len_model;
-  };
-
-static inline bool LZd_enough_free_bytes( const struct LZ_decoder * const decoder )
-  { return Cb_free_bytes( &decoder->cb ) >= lzd_min_free_bytes; }
-
-static inline uint8_t LZd_get_prev_byte( const struct LZ_decoder * const decoder )
-  {
-  const int i =
-	( ( decoder->cb.put > 0 ) ? decoder->cb.put : decoder->cb.buffer_size ) - 1;
-  return decoder->cb.buffer[i];
-  }
-
-static inline uint8_t LZd_get_byte( const struct LZ_decoder * const decoder,
-									const int distance )
-  {
-  int i = decoder->cb.put - distance - 1;
-  if( i < 0 ) i += decoder->cb.buffer_size;
-  return decoder->cb.buffer[i];
-  }
-
-static inline void LZd_put_byte( struct LZ_decoder * const decoder,
-								 const uint8_t b )
-  {
-  CRC32_update_byte( &decoder->crc, b );
-  decoder->cb.buffer[decoder->cb.put] = b;
-  if( ++decoder->cb.put >= decoder->cb.buffer_size )
-	{ decoder->partial_data_pos += decoder->cb.put; decoder->cb.put = 0; }
-  }
-
-static inline void LZd_copy_block( struct LZ_decoder * const decoder,
-								   const int distance, int len )
-  {
-  int i = decoder->cb.put - distance - 1;
-  if( i < 0 ) i += decoder->cb.buffer_size;
-  if( len < decoder->cb.buffer_size - max( decoder->cb.put, i ) &&
-	  len <= abs( decoder->cb.put - i ) )	/* no wrap, no overlap */
-	{
-	CRC32_update_buf( &decoder->crc, decoder->cb.buffer + i, len );
-	memcpy( decoder->cb.buffer + decoder->cb.put, decoder->cb.buffer + i, len );
-	decoder->cb.put += len;
-	}
-  else for( ; len > 0; --len )
-	{
-	LZd_put_byte( decoder, decoder->cb.buffer[i] );
-	if( ++i >= decoder->cb.buffer_size ) i = 0;
-	}
-  }
-
-static inline bool LZd_init( struct LZ_decoder * const decoder,
-							 const File_header header,
-							 struct Range_decoder * const rde )
-  {
-  decoder->dictionary_size = Fh_get_dictionary_size( header );
-  if( !Cb_init( &decoder->cb, max( 65536, decoder->dictionary_size ) + lzd_min_free_bytes ) )
-	return false;
-  decoder->partial_data_pos = 0;
-  decoder->crc = 0xFFFFFFFFU;
-  decoder->member_finished = false;
-  decoder->verify_trailer_pending = false;
-  decoder->rep0 = 0;
-  decoder->rep1 = 0;
-  decoder->rep2 = 0;
-  decoder->rep3 = 0;
-  decoder->state = 0;
-
-  Bm_array_init( decoder->bm_literal[0], (1 << literal_context_bits) * 0x300 );
-  Bm_array_init( decoder->bm_match[0], states * pos_states );
-  Bm_array_init( decoder->bm_rep, states );
-  Bm_array_init( decoder->bm_rep0, states );
-  Bm_array_init( decoder->bm_rep1, states );
-  Bm_array_init( decoder->bm_rep2, states );
-  Bm_array_init( decoder->bm_len[0], states * pos_states );
-  Bm_array_init( decoder->bm_dis_slot[0], dis_states * (1 << dis_slot_bits) );
-  Bm_array_init( decoder->bm_dis, modeled_distances - end_dis_model );
-  Bm_array_init( decoder->bm_align, dis_align_size );
-
-  decoder->rdec = rde;
-  Lm_init( &decoder->match_len_model );
-  Lm_init( &decoder->rep_len_model );
-  decoder->cb.buffer[decoder->cb.buffer_size-1] = 0; /* prev_byte of first_byte */
-  return true;
-  }
-
-static inline void LZd_free( struct LZ_decoder * const decoder )
-  { Cb_free( &decoder->cb ); }
-
-static inline bool LZd_member_finished( const struct LZ_decoder * const decoder )
-  { return ( decoder->member_finished && !Cb_used_bytes( &decoder->cb ) ); }
-
-static inline unsigned LZd_crc( const struct LZ_decoder * const decoder )
-  { return decoder->crc ^ 0xFFFFFFFFU; }
-
-static inline unsigned long long
-LZd_data_position( const struct LZ_decoder * const decoder )
-  { return decoder->partial_data_pos + decoder->cb.put; }
-
-
-#line 1 "decoder.c"
-static bool LZd_verify_trailer( struct LZ_decoder * const decoder )
-  {
-  File_trailer trailer;
-  const unsigned long long member_size =
-	decoder->rdec->member_position + Ft_size;
-
-  int size = Rd_read_data( decoder->rdec, trailer, Ft_size );
-  if( size < Ft_size )
-	return false;
-
-  return ( decoder->rdec->code == 0 &&
-		   Ft_get_data_crc( trailer ) == LZd_crc( decoder ) &&
-		   Ft_get_data_size( trailer ) == LZd_data_position( decoder ) &&
-		   Ft_get_member_size( trailer ) == member_size );
-  }
-
-/* Return value: 0 = OK, 1 = decoder error, 2 = unexpected EOF,
-				 3 = trailer error, 4 = unknown marker found. */
-static int LZd_decode_member( struct LZ_decoder * const decoder )
-  {
-  struct Range_decoder * const rdec = decoder->rdec;
-  State * const state = &decoder->state;
-
-  if( decoder->member_finished ) return 0;
-  if( !Rd_try_reload( rdec, false ) ) return 0;
-  if( decoder->verify_trailer_pending )
-	{
-	if( Rd_available_bytes( rdec ) < Ft_size && !rdec->at_stream_end )
-	  return 0;
-	decoder->verify_trailer_pending = false;
-	decoder->member_finished = true;
-	if( LZd_verify_trailer( decoder ) ) return 0; else return 3;
-	}
-
-  while( !Rd_finished( rdec ) )
-	{
-	const int pos_state = LZd_data_position( decoder ) & pos_state_mask;
-	if( !Rd_enough_available_bytes( rdec ) ||
-		!LZd_enough_free_bytes( decoder ) )
-	  return 0;
-	if( Rd_decode_bit( rdec, &decoder->bm_match[*state][pos_state] ) == 0 )	/* 1st bit */
-	  {
-	  const uint8_t prev_byte = LZd_get_prev_byte( decoder );
-	  if( St_is_char( *state ) )
-		{
-		*state -= ( *state < 4 ) ? *state : 3;
-		LZd_put_byte( decoder, Rd_decode_tree( rdec,
-					  decoder->bm_literal[get_lit_state(prev_byte)], 8 ) );
-		}
-	  else
-		{
-		*state -= ( *state < 10 ) ? 3 : 6;
-		LZd_put_byte( decoder, Rd_decode_matched( rdec,
-					  decoder->bm_literal[get_lit_state(prev_byte)],
-					  LZd_get_byte( decoder, decoder->rep0 ) ) );
-		}
-	  }
-	else
-	  {
-	  int len;
-	  if( Rd_decode_bit( rdec, &decoder->bm_rep[*state] ) == 1 )	/* 2nd bit */
-		{
-		if( Rd_decode_bit( rdec, &decoder->bm_rep0[*state] ) == 1 )	/* 3rd bit */
-		  {
-		  unsigned distance;
-		  if( Rd_decode_bit( rdec, &decoder->bm_rep1[*state] ) == 0 )	/* 4th bit */
-			distance = decoder->rep1;
-		  else
-			{
-			if( Rd_decode_bit( rdec, &decoder->bm_rep2[*state] ) == 0 )	/* 5th bit */
-			  distance = decoder->rep2;
-			else
-			  { distance = decoder->rep3; decoder->rep3 = decoder->rep2; }
-			decoder->rep2 = decoder->rep1;
-			}
-		  decoder->rep1 = decoder->rep0;
-		  decoder->rep0 = distance;
-		  }
-		else
-		  {
-		  if( Rd_decode_bit( rdec, &decoder->bm_len[*state][pos_state] ) == 0 )	/* 4th bit */
-			{ *state = St_set_short_rep( *state );
-			  LZd_put_byte( decoder, LZd_get_byte( decoder, decoder->rep0 ) ); continue; }
-		  }
-		*state = St_set_rep( *state );
-		len = min_match_len + Rd_decode_len( rdec, &decoder->rep_len_model, pos_state );
-		}
-	  else
-		{
-		int dis_slot;
-		const unsigned rep0_saved = decoder->rep0;
-		len = min_match_len + Rd_decode_len( rdec, &decoder->match_len_model, pos_state );
-		dis_slot = Rd_decode_tree6( rdec, decoder->bm_dis_slot[get_dis_state(len)] );
-		if( dis_slot < start_dis_model ) decoder->rep0 = dis_slot;
-		else
-		  {
-		  const int direct_bits = ( dis_slot >> 1 ) - 1;
-		  decoder->rep0 = ( 2 | ( dis_slot & 1 ) ) << direct_bits;
-		  if( dis_slot < end_dis_model )
-			decoder->rep0 += Rd_decode_tree_reversed( rdec,
-							 decoder->bm_dis + decoder->rep0 - dis_slot - 1,
-							 direct_bits );
-		  else
-			{
-			decoder->rep0 += Rd_decode( rdec, direct_bits - dis_align_bits ) << dis_align_bits;
-			decoder->rep0 += Rd_decode_tree_reversed4( rdec, decoder->bm_align );
-			if( decoder->rep0 == 0xFFFFFFFFU )		/* Marker found */
-			  {
-			  decoder->rep0 = rep0_saved;
-			  Rd_normalize( rdec );
-			  if( len == min_match_len )	/* End Of Stream marker */
-				{
-				if( Rd_available_bytes( rdec ) < Ft_size && !rdec->at_stream_end )
-				  { decoder->verify_trailer_pending = true; return 0; }
-				decoder->member_finished = true;
-				if( LZd_verify_trailer( decoder ) ) return 0; else return 3;
-				}
-			  if( len == min_match_len + 1 )	/* Sync Flush marker */
-				{
-				if( Rd_try_reload( rdec, true ) ) continue;
-				else return 0;
-				}
-			  return 4;
-			  }
-			}
-		  }
-		decoder->rep3 = decoder->rep2;
-		decoder->rep2 = decoder->rep1; decoder->rep1 = rep0_saved;
-		*state = St_set_match( *state );
-		if( decoder->rep0 >= (unsigned)decoder->dictionary_size ||
-			( decoder->rep0 >= (unsigned)decoder->cb.put &&
-			  !decoder->partial_data_pos ) )
-		  return 1;
-		}
-	  LZd_copy_block( decoder, decoder->rep0, len );
-	  }
-	}
-  return 2;
-  }
-
-
-#line 1 "encoder.h"
-enum { max_num_trials = 1 << 12,
-	   price_shift_bits = 6,
-	   price_step_bits = 2 };
-
-static const uint8_t dis_slots[1<<10] =
-  {
-   0,  1,  2,  3,  4,  4,  5,  5,  6,  6,  6,  6,  7,  7,  7,  7,
-   8,  8,  8,  8,  8,  8,  8,  8,  9,  9,  9,  9,  9,  9,  9,  9,
-  10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
-  11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11,
-  12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12,
-  12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12,
-  13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13,
-  13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13,
-  14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14,
-  14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14,
-  14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14,
-  14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14,
-  15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
-  15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
-  15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
-  15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
-  16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16,
-  16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16,
-  16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16,
-  16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16,
-  16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16,
-  16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16,
-  16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16,
-  16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16,
-  17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17,
-  17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17,
-  17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17,
-  17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17,
-  17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17,
-  17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17,
-  17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17,
-  17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17,
-  18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18,
-  18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18,
-  18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18,
-  18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18,
-  18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18,
-  18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18,
-  18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18,
-  18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18,
-  18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18,
-  18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18,
-  18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18,
-  18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18,
-  18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18,
-  18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18,
-  18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18,
-  18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18,
-  19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19,
-  19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19,
-  19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19,
-  19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19,
-  19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19,
-  19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19,
-  19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19,
-  19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19,
-  19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19,
-  19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19,
-  19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19,
-  19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19,
-  19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19,
-  19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19,
-  19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19,
-  19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19 };
-
-static inline uint8_t get_slot( const uint32_t dis )
-  {
-  if( dis < (1 << 10) ) return dis_slots[dis];
-  if( dis < (1 << 19) ) return dis_slots[dis>> 9] + 18;
-  if( dis < (1 << 28) ) return dis_slots[dis>>18] + 36;
-  return dis_slots[dis>>27] + 54;
-  }
-
-static const short prob_prices[bit_model_total >> price_step_bits] =
-{
-640, 539, 492, 461, 438, 419, 404, 390, 379, 369, 359, 351, 343, 336, 330, 323,
-318, 312, 307, 302, 298, 293, 289, 285, 281, 277, 274, 270, 267, 264, 261, 258,
-255, 252, 250, 247, 244, 242, 239, 237, 235, 232, 230, 228, 226, 224, 222, 220,
-218, 216, 214, 213, 211, 209, 207, 206, 204, 202, 201, 199, 198, 196, 195, 193,
-192, 190, 189, 188, 186, 185, 184, 182, 181, 180, 178, 177, 176, 175, 174, 172,
-171, 170, 169, 168, 167, 166, 165, 164, 163, 162, 161, 159, 158, 157, 157, 156,
-155, 154, 153, 152, 151, 150, 149, 148, 147, 146, 145, 145, 144, 143, 142, 141,
-140, 140, 139, 138, 137, 136, 136, 135, 134, 133, 133, 132, 131, 130, 130, 129,
-128, 127, 127, 126, 125, 125, 124, 123, 123, 122, 121, 121, 120, 119, 119, 118,
-117, 117, 116, 115, 115, 114, 114, 113, 112, 112, 111, 111, 110, 109, 109, 108,
-108, 107, 106, 106, 105, 105, 104, 104, 103, 103, 102, 101, 101, 100, 100,  99,
- 99,  98,  98,  97,  97,  96,  96,  95,  95,  94,  94,  93,  93,  92,  92,  91,
- 91,  90,  90,  89,  89,  88,  88,  88,  87,  87,  86,  86,  85,  85,  84,  84,
- 83,  83,  83,  82,  82,  81,  81,  80,  80,  80,  79,  79,  78,  78,  77,  77,
- 77,  76,  76,  75,  75,  75,  74,  74,  73,  73,  73,  72,  72,  71,  71,  71,
- 70,  70,  70,  69,  69,  68,  68,  68,  67,  67,  67,  66,  66,  65,  65,  65,
- 64,  64,  64,  63,  63,  63,  62,  62,  61,  61,  61,  60,  60,  60,  59,  59,
- 59,  58,  58,  58,  57,  57,  57,  56,  56,  56,  55,  55,  55,  54,  54,  54,
- 53,  53,  53,  53,  52,  52,  52,  51,  51,  51,  50,  50,  50,  49,  49,  49,
- 48,  48,  48,  48,  47,  47,  47,  46,  46,  46,  45,  45,  45,  45,  44,  44,
- 44,  43,  43,  43,  43,  42,  42,  42,  41,  41,  41,  41,  40,  40,  40,  40,
- 39,  39,  39,  38,  38,  38,  38,  37,  37,  37,  37,  36,  36,  36,  35,  35,
- 35,  35,  34,  34,  34,  34,  33,  33,  33,  33,  32,  32,  32,  32,  31,  31,
- 31,  31,  30,  30,  30,  30,  29,  29,  29,  29,  28,  28,  28,  28,  27,  27,
- 27,  27,  26,  26,  26,  26,  26,  25,  25,  25,  25,  24,  24,  24,  24,  23,
- 23,  23,  23,  22,  22,  22,  22,  22,  21,  21,  21,  21,  20,  20,  20,  20,
- 20,  19,  19,  19,  19,  18,  18,  18,  18,  18,  17,  17,  17,  17,  17,  16,
- 16,  16,  16,  15,  15,  15,  15,  15,  14,  14,  14,  14,  14,  13,  13,  13,
- 13,  13,  12,  12,  12,  12,  12,  11,  11,  11,  11,  10,  10,  10,  10,  10,
-  9,   9,   9,   9,   9,   9,   8,   8,   8,   8,   8,   7,   7,   7,   7,   7,
-  6,   6,   6,   6,   6,   5,   5,   5,   5,   5,   4,   4,   4,   4,   4,   4,
-  3,   3,   3,   3,   3,   2,   2,   2,   2,   2,   1,   1,   1,   1,   1,   1 };
-
-static inline int get_price( const int probability )
-  { return prob_prices[probability >> price_step_bits]; }
-
-static inline int price0( const Bit_model probability )
-  { return get_price( probability ); }
-
-static inline int price1( const Bit_model probability )
-  { return get_price( bit_model_total - probability ); }
-
-static inline int price_bit( const Bit_model bm, const int bit )
-  { if( bit ) return price1( bm ); else return price0( bm ); }
-
-static inline int price_symbol( const Bit_model bm[], int symbol,
-								const int num_bits )
-  {
-  int price = 0;
-  symbol |= ( 1 << num_bits );
-  while( symbol > 1 )
-	{
-	const int bit = symbol & 1;
-	symbol >>= 1;
-	price += price_bit( bm[symbol], bit );
-	}
-  return price;
-  }
-
-static inline int price_symbol_reversed( const Bit_model bm[], int symbol,
-										 const int num_bits )
-  {
-  int price = 0;
-  int model = 1;
-  int i;
-  for( i = num_bits; i > 0; --i )
-	{
-	const int bit = symbol & 1;
-	price += price_bit( bm[model], bit );
-	model = ( model << 1 ) | bit;
-	symbol >>= 1;
-	}
-  return price;
-  }
-
-static inline int price_matched( const Bit_model bm[], unsigned symbol,
-								 unsigned match_byte )
-  {
-  int price = 0;
-  unsigned mask = 0x100;
-  symbol |= 0x100;
-
-  do {
-	unsigned bit, match_bit;
-	match_byte <<= 1;
-	match_bit = match_byte & mask;
-	symbol <<= 1;
-	bit = symbol & 0x100;
-	price += price_bit( bm[match_bit+(symbol>>9)+mask], bit );
-	mask &= ~(match_byte ^ symbol);	/* if( match_bit != bit ) mask = 0; */
-	}
-  while( symbol < 0x10000 );
-  return price;
-  }
-
-struct Pair			/* distance-length pair */
-  {
-  int dis;
-  int len;
-  };
-
-enum { /* bytes to keep in buffer before dictionary */
-	   before_size = max_num_trials + 1,
-	   /* bytes to keep in buffer after pos */
-	   after_size = max_num_trials + ( 2 * max_match_len ) + 1,
-	   num_prev_positions3 = 1 << 16,
-	   num_prev_positions2 = 1 << 10 };
-
-struct Matchfinder
-  {
-  unsigned long long partial_data_pos;
-  uint8_t * buffer;		/* input buffer */
-  int32_t * prev_positions;	/* last seen position of key */
-  int32_t * prev_pos_tree;	/* previous positions of key */
-  int match_len_limit;
-  int buffer_size;
-  int dictionary_size;		/* bytes to keep in buffer before pos */
-  int pos;			/* current pos in buffer */
-  int cyclic_pos;		/* cycles through [0, dictionary_size] */
-  int pos_limit;		/* when reached, a new block must be read */
-  int stream_pos;		/* first byte not yet read from file */
-  int cycles;
-  unsigned key4_mask;
-  int num_prev_positions;	/* size of prev_positions */
-  bool at_stream_end;		/* stream_pos shows real end of file */
-  bool been_flushed;
-  bool flushing;
-  };
-
-static int Mf_write_data( struct Matchfinder * const mf,
-						  const uint8_t * const inbuf, const int size )
-  {
-  const int sz = min( mf->buffer_size - mf->stream_pos, size );
-  if( !mf->at_stream_end && sz > 0 )
-	{
-	memcpy( mf->buffer + mf->stream_pos, inbuf, sz );
-	mf->stream_pos += sz;
-	}
-  return sz;
-  }
-
-static bool Mf_normalize_pos( struct Matchfinder * const mf );
-
-static inline void Mf_free( struct Matchfinder * const mf )
-  {
-  free( mf->prev_positions );
-  free( mf->buffer );
-  }
-
-static inline uint8_t Mf_peek( const struct Matchfinder * const mf, const int i )
-  { return mf->buffer[mf->pos+i]; }
-
-static inline int Mf_available_bytes( const struct Matchfinder * const mf )
-  { return mf->stream_pos - mf->pos; }
-
-static inline unsigned long long
-Mf_data_position( const struct Matchfinder * const mf )
-  { return mf->partial_data_pos + mf->pos; }
-
-static inline void Mf_finish( struct Matchfinder * const mf )
-  { mf->at_stream_end = true; mf->flushing = false; }
-
-static inline bool Mf_finished( const struct Matchfinder * const mf )
-  { return mf->at_stream_end && mf->pos >= mf->stream_pos; }
-
-static inline void Mf_set_flushing( struct Matchfinder * const mf,
-									const bool flushing )
-  { mf->flushing = flushing; }
-
-static inline bool Mf_flushing_or_end( const struct Matchfinder * const mf )
-  { return mf->at_stream_end || mf->flushing; }
-
-static inline int Mf_free_bytes( const struct Matchfinder * const mf )
-  { if( mf->at_stream_end ) return 0; return mf->buffer_size - mf->stream_pos; }
-
-static inline bool Mf_enough_available_bytes( const struct Matchfinder * const mf )
-  {
-  return ( mf->pos + after_size <= mf->stream_pos ||
-		   ( Mf_flushing_or_end( mf ) && mf->pos < mf->stream_pos ) );
-  }
-
-static inline const uint8_t *
-Mf_ptr_to_current_pos( const struct Matchfinder * const mf )
-  { return mf->buffer + mf->pos; }
-
-static inline bool Mf_dec_pos( struct Matchfinder * const mf,
-							   const int ahead )
-  {
-  if( ahead < 0 || mf->pos < ahead ) return false;
-  mf->pos -= ahead;
-  mf->cyclic_pos -= ahead;
-  if( mf->cyclic_pos < 0 ) mf->cyclic_pos += mf->dictionary_size + 1;
-  return true;
-  }
-
-static inline int Mf_true_match_len( const struct Matchfinder * const mf,
-									 const int index, const int distance,
-									 int len_limit )
-  {
-  const uint8_t * const data = mf->buffer + mf->pos + index;
-  int i = 0;
-
-  if( index + len_limit > Mf_available_bytes( mf ) )
-	len_limit = Mf_available_bytes( mf ) - index;
-  while( i < len_limit && data[i-distance] == data[i] ) ++i;
-  return i;
-  }
-
-static inline bool Mf_move_pos( struct Matchfinder * const mf )
-  {
-  if( ++mf->cyclic_pos > mf->dictionary_size ) mf->cyclic_pos = 0;
-  if( ++mf->pos >= mf->pos_limit ) return Mf_normalize_pos( mf );
-  return true;
-  }
-
-static int Mf_get_match_pairs( struct Matchfinder * const mf, struct Pair * pairs );
-
-enum { re_min_free_bytes = 2 * max_num_trials };
-
-struct Range_encoder
-  {
-  struct Circular_buffer cb;
-  uint64_t low;
-  unsigned long long partial_member_pos;
-  uint32_t range;
-  int ff_count;
-  uint8_t cache;
-  };
-
-static inline void Re_shift_low( struct Range_encoder * const renc )
-  {
-  const bool carry = ( renc->low > 0xFFFFFFFFU );
-  if( carry || renc->low < 0xFF000000U )
-	{
-	Cb_put_byte( &renc->cb, renc->cache + carry );
-	for( ; renc->ff_count > 0; --renc->ff_count )
-	  Cb_put_byte( &renc->cb, 0xFF + carry );
-	renc->cache = renc->low >> 24;
-	}
-  else ++renc->ff_count;
-  renc->low = ( renc->low & 0x00FFFFFFU ) << 8;
-  }
-
-static inline bool Re_init( struct Range_encoder * const renc )
-  {
-  if( !Cb_init( &renc->cb, 65536 + re_min_free_bytes ) ) return false;
-  renc->low = 0;
-  renc->partial_member_pos = 0;
-  renc->range = 0xFFFFFFFFU;
-  renc->ff_count = 0;
-  renc->cache = 0;
-  return true;
-  }
-
-static inline void Re_free( struct Range_encoder * const renc )
-  { Cb_free( &renc->cb ); }
-
-static inline unsigned long long
-Re_member_position( const struct Range_encoder * const renc )
-  { return renc->partial_member_pos + Cb_used_bytes( &renc->cb ) + renc->ff_count; }
-
-static inline bool Re_enough_free_bytes( const struct Range_encoder * const renc )
-  { return Cb_free_bytes( &renc->cb ) >= re_min_free_bytes; }
-
-static inline int Re_read_data( struct Range_encoder * const renc,
-								uint8_t * const out_buffer, const int out_size )
-  {
-  const int size = Cb_read_data( &renc->cb, out_buffer, out_size );
-  if( size > 0 ) renc->partial_member_pos += size;
-  return size;
-  }
-
-static inline void Re_flush( struct Range_encoder * const renc )
-  {
-  int i; for( i = 0; i < 5; ++i ) Re_shift_low( renc );
-  renc->low = 0;
-  renc->range = 0xFFFFFFFFU;
-  renc->ff_count = 0;
-  renc->cache = 0;
-  }
-
-static inline void Re_encode( struct Range_encoder * const renc,
-							  const int symbol, const int num_bits )
-  {
-  int i;
-  for( i = num_bits - 1; i >= 0; --i )
-	{
-	renc->range >>= 1;
-	if( (symbol >> i) & 1 ) renc->low += renc->range;
-	if( renc->range <= 0x00FFFFFFU )
-	  { renc->range <<= 8; Re_shift_low( renc ); }
-	}
-  }
-
-static inline void Re_encode_bit( struct Range_encoder * const renc,
-								  Bit_model * const probability, const int bit )
-  {
-  const uint32_t bound = ( renc->range >> bit_model_total_bits ) * *probability;
-  if( !bit )
-	{
-	renc->range = bound;
-	*probability += (bit_model_total - *probability) >> bit_model_move_bits;
-	}
-  else
-	{
-	renc->low += bound;
-	renc->range -= bound;
-	*probability -= *probability >> bit_model_move_bits;
-	}
-  if( renc->range <= 0x00FFFFFFU )
-	{ renc->range <<= 8; Re_shift_low( renc ); }
-  }
-
-static inline void Re_encode_tree( struct Range_encoder * const renc,
-								   Bit_model bm[], const int symbol, const int num_bits )
-  {
-  int mask = ( 1 << ( num_bits - 1 ) );
-  int model = 1;
-  int i;
-  for( i = num_bits; i > 0; --i, mask >>= 1 )
-	{
-	const int bit = ( symbol & mask );
-	Re_encode_bit( renc, &bm[model], bit );
-	model <<= 1;
-	if( bit ) model |= 1;
-	}
-  }
-
-static inline void Re_encode_tree_reversed( struct Range_encoder * const renc,
-											Bit_model bm[], int symbol, const int num_bits )
-  {
-  int model = 1;
-  int i;
-  for( i = num_bits; i > 0; --i )
-	{
-	const int bit = symbol & 1;
-	Re_encode_bit( renc, &bm[model], bit );
-	model = ( model << 1 ) | bit;
-	symbol >>= 1;
-	}
-  }
-
-static inline void Re_encode_matched( struct Range_encoder * const renc,
-									  Bit_model bm[], unsigned symbol,
-									  unsigned match_byte )
-  {
-  unsigned mask = 0x100;
-  symbol |= 0x100;
-
-  do {
-	unsigned bit, match_bit;
-	match_byte <<= 1;
-	match_bit = match_byte & mask;
-	symbol <<= 1;
-	bit = symbol & 0x100;
-	Re_encode_bit( renc, &bm[match_bit+(symbol>>9)+mask], bit );
-	mask &= ~(match_byte ^ symbol);	/* if( match_bit != bit ) mask = 0; */
-	}
-  while( symbol < 0x10000 );
-  }
-
-struct Len_encoder
-  {
-  struct Len_model lm;
-  int prices[pos_states][max_len_symbols];
-  int len_symbols;
-  int counters[pos_states];
-  };
-
-static void Lee_update_prices( struct Len_encoder * const len_encoder,
-							   const int pos_state )
-  {
-  int * const pps = len_encoder->prices[pos_state];
-  int tmp = price0( len_encoder->lm.choice1 );
-  int len = 0;
-  for( ; len < len_low_symbols && len < len_encoder->len_symbols; ++len )
-	pps[len] = tmp +
-			   price_symbol( len_encoder->lm.bm_low[pos_state], len, len_low_bits );
-  tmp = price1( len_encoder->lm.choice1 );
-  for( ; len < len_low_symbols + len_mid_symbols && len < len_encoder->len_symbols; ++len )
-	pps[len] = tmp + price0( len_encoder->lm.choice2 ) +
-			   price_symbol( len_encoder->lm.bm_mid[pos_state], len - len_low_symbols, len_mid_bits );
-  for( ; len < len_encoder->len_symbols; ++len )
-	/* using 4 slots per value makes "Lee_price" faster */
-	len_encoder->prices[3][len] = len_encoder->prices[2][len] =
-	len_encoder->prices[1][len] = len_encoder->prices[0][len] =
-	  tmp + price1( len_encoder->lm.choice2 ) +
-	  price_symbol( len_encoder->lm.bm_high, len - len_low_symbols - len_mid_symbols, len_high_bits );
-  len_encoder->counters[pos_state] = len_encoder->len_symbols;
-  }
-
-static void Lee_init( struct Len_encoder * const len_encoder,
-					  const int match_len_limit )
-  {
-  int i;
-  Lm_init( &len_encoder->lm );
-  len_encoder->len_symbols = match_len_limit + 1 - min_match_len;
-  for( i = 0; i < pos_states; ++i ) Lee_update_prices( len_encoder, i );
-  }
-
-static void Lee_encode( struct Len_encoder * const len_encoder,
-						struct Range_encoder * const renc,
-						int symbol, const int pos_state );
-
-static inline int Lee_price( const struct Len_encoder * const len_encoder,
-							 const int symbol, const int pos_state )
-  { return len_encoder->prices[pos_state][symbol - min_match_len]; }
-
-enum { infinite_price = 0x0FFFFFFF,
-	   max_marker_size = 16,
-	   num_rep_distances = 4,			/* must be 4 */
-	   single_step_trial = -2,
-	   dual_step_trial = -1 };
-
-struct Trial
-  {
-  State state;
-  int price;		/* dual use var; cumulative price, match length */
-  int dis;		/* rep index or match distance */
-  int prev_index;	/* index of prev trial in trials[] */
-  int dis2;
-  int prev_index2;	/*   -2  trial is single step */
-			/*   -1  literal + rep0 */
-			/* >= 0  rep or match + literal + rep0 */
-  int reps[num_rep_distances];
-  };
-
-static inline void Tr_update( struct Trial * const trial, const int pr,
-							  const int d, const int p_i )
-  {
-  if( pr < trial->price )
-	{
-	trial->price = pr;
-	trial->dis = d; trial->prev_index = p_i;
-	trial->prev_index2 = single_step_trial;
-	}
-  }
-
-static inline void Tr_update2( struct Trial * const trial, const int pr,
-							   const int d, const int p_i )
-  {
-  if( pr < trial->price )
-	{
-	trial->price = pr;
-	trial->dis = d; trial->prev_index = p_i;
-	trial->prev_index2 = dual_step_trial;
-	}
-  }
-
-static inline void Tr_update3( struct Trial * const trial, const int pr,
-							   const int d, const int p_i,
-							   const int d2, const int p_i2 )
-  {
-  if( pr < trial->price )
-	{
-	trial->price = pr;
-	trial->dis = d; trial->prev_index = p_i;
-	trial->dis2 = d2; trial->prev_index2 = p_i2;
-	}
-  }
-
-struct LZ_encoder
-  {
-  unsigned long long member_size_limit;
-  int pending_num_pairs;
-  uint32_t crc;
-
-  Bit_model bm_literal[1<<literal_context_bits][0x300];
-  Bit_model bm_match[states][pos_states];
-  Bit_model bm_rep[states];
-  Bit_model bm_rep0[states];
-  Bit_model bm_rep1[states];
-  Bit_model bm_rep2[states];
-  Bit_model bm_len[states][pos_states];
-  Bit_model bm_dis_slot[dis_states][1<<dis_slot_bits];
-  Bit_model bm_dis[modeled_distances-end_dis_model];
-  Bit_model bm_align[dis_align_size];
-
-  struct Matchfinder * matchfinder;
-  struct Range_encoder renc;
-  struct Len_encoder match_len_encoder;
-  struct Len_encoder rep_len_encoder;
-
-  int num_dis_slots;
-  int rep_distances[num_rep_distances];
-  struct Pair pairs[max_match_len+1];
-  struct Trial trials[max_num_trials];
-
-  int dis_slot_prices[dis_states][2*max_dictionary_bits];
-  int dis_prices[dis_states][modeled_distances];
-  int align_prices[dis_align_size];
-  int align_price_count;
-  int fill_counter;
-  State state;
-  bool member_finished;
-  };
-
-static inline bool LZe_member_finished( const struct LZ_encoder * const encoder )
-  {
-  return ( encoder->member_finished && !Cb_used_bytes( &encoder->renc.cb ) );
-  }
-
-static inline void LZe_free( struct LZ_encoder * const encoder )
-  { Re_free( &encoder->renc ); }
-
-static inline unsigned LZe_crc( const struct LZ_encoder * const encoder )
-  { return encoder->crc ^ 0xFFFFFFFFU; }
-
-	   /* move-to-front dis in/into reps */
-static inline void LZe_mtf_reps( const int dis, int reps[num_rep_distances] )
-  {
-  int i;
-  if( dis >= num_rep_distances )
-	{
-	for( i = num_rep_distances - 1; i > 0; --i ) reps[i] = reps[i-1];
-	reps[0] = dis - num_rep_distances;
-	}
-  else if( dis > 0 )
-	{
-	const int distance = reps[dis];
-	for( i = dis; i > 0; --i ) reps[i] = reps[i-1];
-	reps[0] = distance;
-	}
-  }
-
-static inline int LZe_price_rep_len1( const struct LZ_encoder * const encoder,
-									  const State state, const int pos_state )
-  {
-  return price0( encoder->bm_rep0[state] ) +
-		 price0( encoder->bm_len[state][pos_state] );
-  }
-
-static inline int LZe_price_rep( const struct LZ_encoder * const encoder,
-								 const int rep,
-								 const State state, const int pos_state )
-  {
-  int price;
-  if( rep == 0 ) return price0( encoder->bm_rep0[state] ) +
-						price1( encoder->bm_len[state][pos_state] );
-  price = price1( encoder->bm_rep0[state] );
-  if( rep == 1 )
-	price += price0( encoder->bm_rep1[state] );
-  else
-	{
-	price += price1( encoder->bm_rep1[state] );
-	price += price_bit( encoder->bm_rep2[state], rep - 2 );
-	}
-  return price;
-  }
-
-static inline int LZe_price_rep0_len( const struct LZ_encoder * const encoder,
-									  const int len,
-									  const State state, const int pos_state )
-  {
-  return LZe_price_rep( encoder, 0, state, pos_state ) +
-		 Lee_price( &encoder->rep_len_encoder, len, pos_state );
-  }
-
-static inline int LZe_price_dis( const struct LZ_encoder * const encoder,
-								 const int dis, const int dis_state )
-  {
-  if( dis < modeled_distances )
-	return encoder->dis_prices[dis_state][dis];
-  else
-	return encoder->dis_slot_prices[dis_state][get_slot( dis )] +
-		   encoder->align_prices[dis & (dis_align_size - 1)];
-  }
-
-static inline int LZe_price_pair( const struct LZ_encoder * const encoder,
-								  const int dis, const int len,
-								  const int pos_state )
-  {
-  return Lee_price( &encoder->match_len_encoder, len, pos_state ) +
-		 LZe_price_dis( encoder, dis, get_dis_state( len ) );
-  }
-
-static inline int LZe_price_literal( const struct LZ_encoder * const encoder,
-									uint8_t prev_byte, uint8_t symbol )
-  { return price_symbol( encoder->bm_literal[get_lit_state(prev_byte)], symbol, 8 ); }
-
-static inline int LZe_price_matched( const struct LZ_encoder * const encoder,
-									 uint8_t prev_byte, uint8_t symbol,
-									 uint8_t match_byte )
-  { return price_matched( encoder->bm_literal[get_lit_state(prev_byte)],
-						  symbol, match_byte ); }
-
-static inline void LZe_encode_literal( struct LZ_encoder * const encoder,
-									   uint8_t prev_byte, uint8_t symbol )
-  { Re_encode_tree( &encoder->renc,
-					encoder->bm_literal[get_lit_state(prev_byte)], symbol, 8 ); }
-
-static inline void LZe_encode_matched( struct LZ_encoder * const encoder,
-									   uint8_t prev_byte, uint8_t symbol,
-									   uint8_t match_byte )
-  { Re_encode_matched( &encoder->renc,
-					   encoder->bm_literal[get_lit_state(prev_byte)],
-					   symbol, match_byte ); }
-
-static inline void LZe_encode_pair( struct LZ_encoder * const encoder,
-									const uint32_t dis, const int len,
-									const int pos_state )
-  {
-  const int dis_slot = get_slot( dis );
-  Lee_encode( &encoder->match_len_encoder, &encoder->renc, len, pos_state );
-  Re_encode_tree( &encoder->renc, encoder->bm_dis_slot[get_dis_state(len)],
-				  dis_slot, dis_slot_bits );
-
-  if( dis_slot >= start_dis_model )
-	{
-	const int direct_bits = ( dis_slot >> 1 ) - 1;
-	const uint32_t base = ( 2 | ( dis_slot & 1 ) ) << direct_bits;
-	const uint32_t direct_dis = dis - base;
-
-	if( dis_slot < end_dis_model )
-	  Re_encode_tree_reversed( &encoder->renc,
-							   encoder->bm_dis + base - dis_slot - 1,
-							   direct_dis, direct_bits );
-	else
-	  {
-	  Re_encode( &encoder->renc, direct_dis >> dis_align_bits,
-				 direct_bits - dis_align_bits );
-	  Re_encode_tree_reversed( &encoder->renc, encoder->bm_align,
-							   direct_dis, dis_align_bits );
-	  --encoder->align_price_count;
-	  }
-	}
-  }
-
-static inline int LZe_read_match_distances( struct LZ_encoder * const encoder )
-  {
-  const int num_pairs =
-	Mf_get_match_pairs( encoder->matchfinder, encoder->pairs );
-  if( num_pairs > 0 )
-	{
-	int len = encoder->pairs[num_pairs-1].len;
-	if( len == encoder->matchfinder->match_len_limit && len < max_match_len )
-	  {
-	  len += Mf_true_match_len( encoder->matchfinder, len,
-								encoder->pairs[num_pairs-1].dis + 1,
-								max_match_len - len );
-	  encoder->pairs[num_pairs-1].len = len;
-	  }
-	}
-  return num_pairs;
-  }
-
-static inline bool LZe_move_pos( struct LZ_encoder * const encoder, int n )
-  {
-  if( --n >= 0 && !Mf_move_pos( encoder->matchfinder ) ) return false;
-  while( --n >= 0 )
-	{
-	Mf_get_match_pairs( encoder->matchfinder, 0 );
-	if( !Mf_move_pos( encoder->matchfinder ) ) return false;
-	}
-  return true;
-  }
-
-static inline void LZe_backward( struct LZ_encoder * const encoder, int cur )
-  {
-  int * const dis = &encoder->trials[cur].dis;
-  while( cur > 0 )
-	{
-	const int prev_index = encoder->trials[cur].prev_index;
-	struct Trial * const prev_trial = &encoder->trials[prev_index];
-
-	if( encoder->trials[cur].prev_index2 != single_step_trial )
-	  {
-	  prev_trial->dis = -1;
-	  prev_trial->prev_index = prev_index - 1;
-	  prev_trial->prev_index2 = single_step_trial;
-	  if( encoder->trials[cur].prev_index2 >= 0 )
-		{
-		struct Trial * const prev_trial2 = &encoder->trials[prev_index-1];
-		prev_trial2->dis = encoder->trials[cur].dis2;
-		prev_trial2->prev_index = encoder->trials[cur].prev_index2;
-		prev_trial2->prev_index2 = single_step_trial;
-		}
-	  }
-	prev_trial->price = cur - prev_index;			/* len */
-	cur = *dis; *dis = prev_trial->dis; prev_trial->dis = cur;
-	cur = prev_index;
-	}
-  }
-
-
-#line 1 "encoder.c"
-static bool Mf_normalize_pos( struct Matchfinder * const mf )
-  {
-  if( mf->pos > mf->stream_pos )
-	{ mf->pos = mf->stream_pos; return false; }
-  if( !mf->at_stream_end )
-	{
-	int i;
-	const int offset = mf->pos - mf->dictionary_size - before_size;
-	const int size = mf->stream_pos - offset;
-	memmove( mf->buffer, mf->buffer + offset, size );
-	mf->partial_data_pos += offset;
-	mf->pos -= offset;
-	mf->stream_pos -= offset;
-	for( i = 0; i < mf->num_prev_positions; ++i )
-	  if( mf->prev_positions[i] >= 0 ) mf->prev_positions[i] -= offset;
-	for( i = 0; i < 2 * ( mf->dictionary_size + 1 ); ++i )
-	  if( mf->prev_pos_tree[i] >= 0 ) mf->prev_pos_tree[i] -= offset;
-	}
-  return true;
-  }
-
-static bool Mf_init( struct Matchfinder * const mf,
-					 const int dict_size, const int match_len_limit )
-  {
-  const int buffer_size_limit = ( 2 * dict_size ) + before_size + after_size;
-  unsigned size;
-  int i;
-
-  mf->partial_data_pos = 0;
-  mf->match_len_limit = match_len_limit;
-  mf->pos = 0;
-  mf->cyclic_pos = 0;
-  mf->stream_pos = 0;
-  mf->cycles = ( match_len_limit < max_match_len ) ?
-			   16 + ( match_len_limit / 2 ) : 256;
-  mf->at_stream_end = false;
-  mf->been_flushed = false;
-  mf->flushing = false;
-
-  mf->buffer_size = max( 65536, buffer_size_limit );
-  mf->buffer = (uint8_t *)malloc( mf->buffer_size );
-  if( !mf->buffer ) return false;
-  mf->dictionary_size = dict_size;
-  mf->pos_limit = mf->buffer_size - after_size;
-  size = 1 << max( 16, real_bits( mf->dictionary_size - 1 ) - 2 );
-  if( mf->dictionary_size > 1 << 26 )		/* 64 MiB */
-	size >>= 1;
-  mf->key4_mask = size - 1;
-  size += num_prev_positions2;
-  size += num_prev_positions3;
-
-  mf->num_prev_positions = size;
-  size += ( 2 * ( mf->dictionary_size + 1 ) );
-  if( size * sizeof (int32_t) <= size ) mf->prev_positions = 0;
-  else mf->prev_positions = (int32_t *)malloc( size * sizeof (int32_t) );
-  if( !mf->prev_positions ) { free( mf->buffer ); return false; }
-  mf->prev_pos_tree = mf->prev_positions + mf->num_prev_positions;
-  for( i = 0; i < mf->num_prev_positions; ++i ) mf->prev_positions[i] = -1;
-  return true;
-  }
-
-static void Mf_adjust_distionary_size( struct Matchfinder * const mf )
-  {
-  if( mf->stream_pos < mf->dictionary_size )
-	{
-	int size;
-	mf->buffer_size =
-	mf->dictionary_size =
-	mf->pos_limit = max( min_dictionary_size, mf->stream_pos );
-	size = 1 << max( 16, real_bits( mf->dictionary_size - 1 ) - 2 );
-	if( mf->dictionary_size > 1 << 26 )
-	  size >>= 1;
-	mf->key4_mask = size - 1;
-	size += num_prev_positions2;
-	size += num_prev_positions3;
-	mf->num_prev_positions = size;
-	mf->prev_pos_tree = mf->prev_positions + mf->num_prev_positions;
-	}
-  }
-
-static void Mf_reset( struct Matchfinder * const mf )
-  {
-  int i;
-  const int size = mf->stream_pos - mf->pos;
-  if( size > 0 ) memmove( mf->buffer, mf->buffer + mf->pos, size );
-  mf->partial_data_pos = 0;
-  mf->stream_pos -= mf->pos;
-  mf->pos = 0;
-  mf->cyclic_pos = 0;
-  mf->at_stream_end = false;
-  mf->been_flushed = false;
-  mf->flushing = false;
-  for( i = 0; i < mf->num_prev_positions; ++i ) mf->prev_positions[i] = -1;
-  }
-
-static int Mf_get_match_pairs( struct Matchfinder * const mf, struct Pair * pairs )
-  {
-  int32_t * ptr0 = mf->prev_pos_tree + ( mf->cyclic_pos << 1 );
-  int32_t * ptr1 = ptr0 + 1;
-  int32_t * newptr;
-  int len = 0, len0 = 0, len1 = 0;
-  int maxlen = min_match_len - 1;
-  int num_pairs = 0;
-  const int min_pos = (mf->pos > mf->dictionary_size) ?
-					   mf->pos - mf->dictionary_size : 0;
-  const uint8_t * const data = mf->buffer + mf->pos;
-  int count, delta, key2, key3, key4, newpos;
-  unsigned tmp;
-  int len_limit = mf->match_len_limit;
-
-  if( len_limit > Mf_available_bytes( mf ) )
-	{
-	mf->been_flushed = true;
-	len_limit = Mf_available_bytes( mf );
-	if( len_limit < 4 ) { *ptr0 = *ptr1 = -1; return 0; }
-	}
-
-  tmp = crc32[data[0]] ^ data[1];
-  key2 = tmp & ( num_prev_positions2 - 1 );
-  tmp ^= (uint32_t)data[2] << 8;
-  key3 = num_prev_positions2 + ( tmp & ( num_prev_positions3 - 1 ) );
-  key4 = num_prev_positions2 + num_prev_positions3 +
-		 ( ( tmp ^ ( crc32[data[3]] << 5 ) ) & mf->key4_mask );
-
-  if( pairs )
-	{
-	int np2 = mf->prev_positions[key2];
-	int np3 = mf->prev_positions[key3];
-	if( np2 >= min_pos && mf->buffer[np2] == data[0] )
-	  {
-	  pairs[0].dis = mf->pos - np2 - 1;
-	  pairs[0].len = maxlen = 2;
-	  num_pairs = 1;
-	  }
-	if( np2 != np3 && np3 >= min_pos && mf->buffer[np3] == data[0] )
-	  {
-	  maxlen = 3;
-	  pairs[num_pairs].dis = mf->pos - np3 - 1;
-	  ++num_pairs;
-	  np2 = np3;
-	  }
-	if( num_pairs > 0 )
-	  {
-	  delta = mf->pos - np2;
-	  while( maxlen < len_limit && data[maxlen-delta] == data[maxlen] )
-		++maxlen;
-	  pairs[num_pairs-1].len = maxlen;
-	  if( maxlen >= len_limit ) pairs = 0;
-	  }
-	if( maxlen < 3 ) maxlen = 3;
-	}
-
-  mf->prev_positions[key2] = mf->pos;
-  mf->prev_positions[key3] = mf->pos;
-  newpos = mf->prev_positions[key4];
-  mf->prev_positions[key4] = mf->pos;
-
-  for( count = mf->cycles; ; )
-	{
-	if( newpos < min_pos || --count < 0 ) { *ptr0 = *ptr1 = -1; break; }
-
-	if( mf->been_flushed ) len = 0;
-	delta = mf->pos - newpos;
-	newptr = mf->prev_pos_tree +
-	  ( ( mf->cyclic_pos - delta +
-		  ( (mf->cyclic_pos >= delta) ? 0 : mf->dictionary_size + 1 ) ) << 1 );
-	if( data[len-delta] == data[len] )
-	  {
-	  while( ++len < len_limit && data[len-delta] == data[len] ) {}
-	  if( pairs && maxlen < len )
-		{
-		pairs[num_pairs].dis = delta - 1;
-		pairs[num_pairs].len = maxlen = len;
-		++num_pairs;
-		}
-	  if( len >= len_limit )
-		{
-		*ptr0 = newptr[0];
-		*ptr1 = newptr[1];
-		break;
-		}
-	  }
-	if( data[len-delta] < data[len] )
-	  {
-	  *ptr0 = newpos;
-	  ptr0 = newptr + 1;
-	  newpos = *ptr0;
-	  len0 = len; if( len1 < len ) len = len1;
-	  }
-	else
-	  {
-	  *ptr1 = newpos;
-	  ptr1 = newptr;
-	  newpos = *ptr1;
-	  len1 = len; if( len0 < len ) len = len0;
-	  }
-	}
-  return num_pairs;
-  }
-
-static void Lee_encode( struct Len_encoder * const len_encoder,
-						struct Range_encoder * const renc,
-						int symbol, const int pos_state )
-  {
-  symbol -= min_match_len;
-  if( symbol < len_low_symbols )
-	{
-	Re_encode_bit( renc, &len_encoder->lm.choice1, 0 );
-	Re_encode_tree( renc, len_encoder->lm.bm_low[pos_state], symbol, len_low_bits );
-	}
-  else
-	{
-	Re_encode_bit( renc, &len_encoder->lm.choice1, 1 );
-	if( symbol < len_low_symbols + len_mid_symbols )
-	  {
-	  Re_encode_bit( renc, &len_encoder->lm.choice2, 0 );
-	  Re_encode_tree( renc, len_encoder->lm.bm_mid[pos_state],
-					  symbol - len_low_symbols, len_mid_bits );
-	  }
-	else
-	  {
-	  Re_encode_bit( renc, &len_encoder->lm.choice2, 1 );
-	  Re_encode_tree( renc, len_encoder->lm.bm_high,
-					  symbol - len_low_symbols - len_mid_symbols, len_high_bits );
-	  }
-	}
-  if( --len_encoder->counters[pos_state] <= 0 )
-	Lee_update_prices( len_encoder, pos_state );
-  }
-
-	 /* End Of Stream mark => (dis == 0xFFFFFFFFU, len == min_match_len) */
-static bool LZe_full_flush( struct LZ_encoder * const encoder, const State state )
-  {
-  int i;
-  const int pos_state = Mf_data_position( encoder->matchfinder ) & pos_state_mask;
-  File_trailer trailer;
-  if( encoder->member_finished ||
-	  Cb_free_bytes( &encoder->renc.cb ) < max_marker_size + Ft_size )
-	return false;
-  Re_encode_bit( &encoder->renc, &encoder->bm_match[state][pos_state], 1 );
-  Re_encode_bit( &encoder->renc, &encoder->bm_rep[state], 0 );
-  LZe_encode_pair( encoder, 0xFFFFFFFFU, min_match_len, pos_state );
-  Re_flush( &encoder->renc );
-  Ft_set_data_crc( trailer, LZe_crc( encoder ) );
-  Ft_set_data_size( trailer, Mf_data_position( encoder->matchfinder ) );
-  Ft_set_member_size( trailer, Re_member_position( &encoder->renc ) + Ft_size );
-  for( i = 0; i < Ft_size; ++i )
-	Cb_put_byte( &encoder->renc.cb, trailer[i] );
-  return true;
-  }
-
-	 /* Sync Flush mark => (dis == 0xFFFFFFFFU, len == min_match_len + 1) */
-static bool LZe_sync_flush( struct LZ_encoder * const encoder )
-  {
-  const int pos_state = Mf_data_position( encoder->matchfinder ) & pos_state_mask;
-  const State state = encoder->state;
-  if( encoder->member_finished ||
-	  Cb_free_bytes( &encoder->renc.cb ) < max_marker_size )
-	return false;
-  Re_encode_bit( &encoder->renc, &encoder->bm_match[state][pos_state], 1 );
-  Re_encode_bit( &encoder->renc, &encoder->bm_rep[state], 0 );
-  LZe_encode_pair( encoder, 0xFFFFFFFFU, min_match_len + 1, pos_state );
-  Re_flush( &encoder->renc );
-  return true;
-  }
-
-static void LZe_fill_align_prices( struct LZ_encoder * const encoder )
-  {
-  int i;
-  for( i = 0; i < dis_align_size; ++i )
-	encoder->align_prices[i] =
-	  price_symbol_reversed( encoder->bm_align, i, dis_align_bits );
-  encoder->align_price_count = dis_align_size;
-  }
-
-static void LZe_fill_distance_prices( struct LZ_encoder * const encoder )
-  {
-  int dis, dis_state;
-  for( dis = start_dis_model; dis < modeled_distances; ++dis )
-	{
-	const int dis_slot = dis_slots[dis];
-	const int direct_bits = ( dis_slot >> 1 ) - 1;
-	const int base = ( 2 | ( dis_slot & 1 ) ) << direct_bits;
-	const int price =
-	  price_symbol_reversed( encoder->bm_dis + base - dis_slot - 1,
-							 dis - base, direct_bits );
-	for( dis_state = 0; dis_state < dis_states; ++dis_state )
-	  encoder->dis_prices[dis_state][dis] = price;
-	}
-
-  for( dis_state = 0; dis_state < dis_states; ++dis_state )
-	{
-	int * const dsp = encoder->dis_slot_prices[dis_state];
-	int * const dp = encoder->dis_prices[dis_state];
-	const Bit_model * const bmds = encoder->bm_dis_slot[dis_state];
-	int slot = 0;
-	for( ; slot < end_dis_model && slot < encoder->num_dis_slots; ++slot )
-	  dsp[slot] = price_symbol( bmds, slot, dis_slot_bits );
-	for( ; slot < encoder->num_dis_slots; ++slot )
-	  dsp[slot] = price_symbol( bmds, slot, dis_slot_bits ) +
-				  (((( slot >> 1 ) - 1 ) - dis_align_bits ) << price_shift_bits );
-
-	for( dis = 0; dis < start_dis_model; ++dis )
-	  dp[dis] = dsp[dis];
-	for( ; dis < modeled_distances; ++dis )
-	  dp[dis] += dsp[dis_slots[dis]];
-	}
-  }
-
-static bool LZe_init( struct LZ_encoder * const encoder,
-					  struct Matchfinder * const mf,
-					  const File_header header,
-					  const unsigned long long member_size )
-  {
-  int i;
-  encoder->member_size_limit = member_size - Ft_size - max_marker_size;
-  encoder->pending_num_pairs = 0;
-  encoder->crc = 0xFFFFFFFFU;
-
-  Bm_array_init( encoder->bm_literal[0], (1 << literal_context_bits) * 0x300 );
-  Bm_array_init( encoder->bm_match[0], states * pos_states );
-  Bm_array_init( encoder->bm_rep, states );
-  Bm_array_init( encoder->bm_rep0, states );
-  Bm_array_init( encoder->bm_rep1, states );
-  Bm_array_init( encoder->bm_rep2, states );
-  Bm_array_init( encoder->bm_len[0], states * pos_states );
-  Bm_array_init( encoder->bm_dis_slot[0], dis_states * (1 << dis_slot_bits) );
-  Bm_array_init( encoder->bm_dis, modeled_distances - end_dis_model );
-  Bm_array_init( encoder->bm_align, dis_align_size );
-
-  encoder->matchfinder = mf;
-  if( !Re_init( &encoder->renc ) ) return false;
-  Lee_init( &encoder->match_len_encoder, encoder->matchfinder->match_len_limit );
-  Lee_init( &encoder->rep_len_encoder, encoder->matchfinder->match_len_limit );
-  encoder->num_dis_slots =
-	2 * real_bits( encoder->matchfinder->dictionary_size - 1 );
-
-  for( i = 0; i < num_rep_distances; ++i ) encoder->rep_distances[i] = 0;
-  encoder->align_price_count = 0;
-  encoder->fill_counter = 0;
-  encoder->state = 0;
-  encoder->member_finished = false;
-
-  for( i = 0; i < Fh_size; ++i )
-	Cb_put_byte( &encoder->renc.cb, header[i] );
-  return true;
-  }
-
-/* Return value == number of bytes advanced (ahead).
-   trials[0]..trials[ahead-1] contain the steps to encode.
-   ( trials[0].dis == -1 && trials[0].price == 1 ) means literal.
-*/
-static int LZe_sequence_optimizer( struct LZ_encoder * const encoder,
-								   const int reps[num_rep_distances],
-								   const State state )
-  {
-  int main_len, num_pairs, i, rep, cur = 0, num_trials, len;
-  int replens[num_rep_distances];
-  int rep_index = 0;
-
-  if( encoder->pending_num_pairs > 0 )		/* from previous call */
-	{
-	num_pairs = encoder->pending_num_pairs;
-	encoder->pending_num_pairs = 0;
-	}
-  else
-	num_pairs = LZe_read_match_distances( encoder );
-  main_len = ( num_pairs > 0 ) ? encoder->pairs[num_pairs-1].len : 0;
-
-  for( i = 0; i < num_rep_distances; ++i )
-	{
-	replens[i] =
-	  Mf_true_match_len( encoder->matchfinder, 0, reps[i] + 1, max_match_len );
-	if( replens[i] > replens[rep_index] ) rep_index = i;
-	}
-  if( replens[rep_index] >= encoder->matchfinder->match_len_limit )
-	{
-	encoder->trials[0].dis = rep_index;
-	encoder->trials[0].price = replens[rep_index];
-	if( !LZe_move_pos( encoder, replens[rep_index] ) ) return 0;
-	return replens[rep_index];
-	}
-
-  if( main_len >= encoder->matchfinder->match_len_limit )
-	{
-	encoder->trials[0].dis = encoder->pairs[num_pairs-1].dis + num_rep_distances;
-	encoder->trials[0].price = main_len;
-	if( !LZe_move_pos( encoder, main_len ) ) return 0;
-	return main_len;
-	}
-
-  {
-  const int pos_state = Mf_data_position( encoder->matchfinder ) & pos_state_mask;
-  const int match_price = price1( encoder->bm_match[state][pos_state] );
-  const int rep_match_price = match_price + price1( encoder->bm_rep[state] );
-  const uint8_t prev_byte = Mf_peek( encoder->matchfinder, -1 );
-  const uint8_t cur_byte = Mf_peek( encoder->matchfinder, 0 );
-  const uint8_t match_byte = Mf_peek( encoder->matchfinder, -reps[0]-1 );
-
-  encoder->trials[0].state = state;
-  encoder->trials[1].dis = -1;
-  encoder->trials[1].price = price0( encoder->bm_match[state][pos_state] );
-  if( St_is_char( state ) )
-	encoder->trials[1].price +=
-	  LZe_price_literal( encoder, prev_byte, cur_byte );
-  else
-	encoder->trials[1].price +=
-	  LZe_price_matched( encoder, prev_byte, cur_byte, match_byte );
-
-  if( match_byte == cur_byte )
-	Tr_update( &encoder->trials[1], rep_match_price +
-			   LZe_price_rep_len1( encoder, state, pos_state ), 0, 0 );
-
-  num_trials = max( main_len, replens[rep_index] );
-
-  if( num_trials < min_match_len )
-	{
-	encoder->trials[0].dis = encoder->trials[1].dis;
-	encoder->trials[0].price = 1;
-	if( !Mf_move_pos( encoder->matchfinder ) ) return 0;
-	return 1;
-	}
-
-  for( i = 0; i < num_rep_distances; ++i )
-	encoder->trials[0].reps[i] = reps[i];
-  encoder->trials[1].prev_index = 0;
-  encoder->trials[1].prev_index2 = single_step_trial;
-
-  for( len = min_match_len; len <= num_trials; ++len )
-	encoder->trials[len].price = infinite_price;
-
-  for( rep = 0; rep < num_rep_distances; ++rep )
-	{
-	int price;
-	if( replens[rep] < min_match_len ) continue;
-	price = rep_match_price + LZe_price_rep( encoder, rep, state, pos_state );
-
-	for( len = min_match_len; len <= replens[rep]; ++len )
-	  Tr_update( &encoder->trials[len], price +
-				 Lee_price( &encoder->rep_len_encoder, len, pos_state ),
-				 rep, 0 );
-	}
-
-  if( main_len > replens[0] )
-	{
-	const int normal_match_price = match_price + price0( encoder->bm_rep[state] );
-	i = 0, len = max( replens[0] + 1, min_match_len );
-	while( len > encoder->pairs[i].len ) ++i;
-	while( true )
-	  {
-	  const int dis = encoder->pairs[i].dis;
-	  Tr_update( &encoder->trials[len], normal_match_price +
-				 LZe_price_pair( encoder, dis, len, pos_state ),
-				 dis + num_rep_distances, 0 );
-	  if( ++len > encoder->pairs[i].len && ++i >= num_pairs ) break;
-	  }
-	}
-  }
-
-  if( !Mf_move_pos( encoder->matchfinder ) ) return 0;
-
-  while( true )				/* price optimization loop */
-	{
-	struct Trial *cur_trial, *next_trial;
-	int newlen, pos_state, prev_index, prev_index2, available_bytes, len_limit;
-	int start_len = min_match_len;
-	int next_price, match_price, rep_match_price;
-	State cur_state;
-	uint8_t prev_byte, cur_byte, match_byte;
-
-	if( ++cur >= num_trials )		/* no more initialized trials */
-	  {
-	  LZe_backward( encoder, cur );
-	  return cur;
-	  }
-
-	num_pairs = LZe_read_match_distances( encoder );
-	newlen = ( num_pairs > 0 ) ? encoder->pairs[num_pairs-1].len : 0;
-	if( newlen >= encoder->matchfinder->match_len_limit )
-	  {
-	  encoder->pending_num_pairs = num_pairs;
-	  LZe_backward( encoder, cur );
-	  return cur;
-	  }
-
-	/* give final values to current trial */
-	cur_trial = &encoder->trials[cur];
-	prev_index = cur_trial->prev_index;
-	prev_index2 = cur_trial->prev_index2;
-
-	if( prev_index2 != single_step_trial )
-	  {
-	  --prev_index;
-	  if( prev_index2 >= 0 )
-		{
-		cur_state = encoder->trials[prev_index2].state;
-		if( cur_trial->dis2 < num_rep_distances )
-		  cur_state = St_set_rep( cur_state );
-		else
-		  cur_state = St_set_match( cur_state );
-		}
-	  else
-		cur_state = encoder->trials[prev_index].state;
-	  cur_state = St_set_char( cur_state );
-	  }
-	else
-	  cur_state = encoder->trials[prev_index].state;
-
-	if( prev_index == cur - 1 )
-	  {
-	  if( cur_trial->dis == 0 )
-		cur_state = St_set_short_rep( cur_state );
-	  else
-		cur_state = St_set_char( cur_state );
-	  for( i = 0; i < num_rep_distances; ++i )
-		cur_trial->reps[i] = encoder->trials[prev_index].reps[i];
-	  }
-	else
-	  {
-	  int dis;
-	  if( prev_index2 >= 0 )
-		{
-		dis = cur_trial->dis2;
-		prev_index = prev_index2;
-		cur_state = St_set_rep( cur_state );
-		}
-	  else
-		{
-		dis = cur_trial->dis;
-		if( dis < num_rep_distances )
-		  cur_state = St_set_rep( cur_state );
-		else
-		  cur_state = St_set_match( cur_state );
-		}
-	  for( i = 0; i < num_rep_distances; ++i )
-		cur_trial->reps[i] = encoder->trials[prev_index].reps[i];
-	  LZe_mtf_reps( dis, cur_trial->reps );
-	  }
-	cur_trial->state = cur_state;
-
-	pos_state = Mf_data_position( encoder->matchfinder ) & pos_state_mask;
-	prev_byte = Mf_peek( encoder->matchfinder, -1 );
-	cur_byte = Mf_peek( encoder->matchfinder, 0 );
-	match_byte = Mf_peek( encoder->matchfinder, -cur_trial->reps[0]-1 );
-
-	next_price = cur_trial->price +
-				 price0( encoder->bm_match[cur_state][pos_state] );
-	if( St_is_char( cur_state ) )
-	  next_price += LZe_price_literal( encoder, prev_byte, cur_byte );
-	else
-	  next_price += LZe_price_matched( encoder, prev_byte, cur_byte, match_byte );
-	if( !Mf_move_pos( encoder->matchfinder ) ) return 0;
-
-	/* try last updates to next trial */
-	next_trial = &encoder->trials[cur+1];
-
-	Tr_update( next_trial, next_price, -1, cur );
-
-	match_price = cur_trial->price + price1( encoder->bm_match[cur_state][pos_state] );
-	rep_match_price = match_price + price1( encoder->bm_rep[cur_state] );
-
-	if( match_byte == cur_byte && next_trial->dis != 0 )
-	  {
-	  const int price = rep_match_price +
-						LZe_price_rep_len1( encoder, cur_state, pos_state );
-	  if( price <= next_trial->price )
-		{
-		next_trial->price = price;
-		next_trial->dis = 0;
-		next_trial->prev_index = cur;
-		next_trial->prev_index2 = single_step_trial;
-		}
-	  }
-
-	available_bytes = min( Mf_available_bytes( encoder->matchfinder ) + 1,
-						   max_num_trials - 1 - cur );
-	if( available_bytes < min_match_len ) continue;
-
-	len_limit = min( encoder->matchfinder->match_len_limit, available_bytes );
-
-	/* try literal + rep0 */
-	if( match_byte != cur_byte && next_trial->prev_index != cur )
-	  {
-	  const uint8_t * const data = Mf_ptr_to_current_pos( encoder->matchfinder ) - 1;
-	  const int dis = cur_trial->reps[0] + 1;
-	  const int limit = min( encoder->matchfinder->match_len_limit + 1,
-							 available_bytes );
-	  len = 1;
-	  while( len < limit && data[len-dis] == data[len] ) ++len;
-	  if( --len >= min_match_len )
-		{
-		const int pos_state2 = ( pos_state + 1 ) & pos_state_mask;
-		const State state2 = St_set_char( cur_state );
-		const int price = next_price +
-				  price1( encoder->bm_match[state2][pos_state2] ) +
-				  price1( encoder->bm_rep[state2] ) +
-				  LZe_price_rep0_len( encoder, len, state2, pos_state2 );
-		while( num_trials < cur + 1 + len )
-		  encoder->trials[++num_trials].price = infinite_price;
-		Tr_update2( &encoder->trials[cur+1+len], price, 0, cur + 1 );
-		}
-	  }
-
-	/* try rep distances */
-	for( rep = 0; rep < num_rep_distances; ++rep )
-	  {
-	  const uint8_t * const data = Mf_ptr_to_current_pos( encoder->matchfinder ) - 1;
-	  int price;
-	  const int dis = cur_trial->reps[rep] + 1;
-
-	  if( data[-dis] != data[0] || data[1-dis] != data[1] ) continue;
-	  for( len = min_match_len; len < len_limit; ++len )
-		if( data[len-dis] != data[len] ) break;
-	  while( num_trials < cur + len )
-		encoder->trials[++num_trials].price = infinite_price;
-	  price = rep_match_price +
-			  LZe_price_rep( encoder, rep, cur_state, pos_state );
-	  for( i = min_match_len; i <= len; ++i )
-		Tr_update( &encoder->trials[cur+i], price +
-				   Lee_price( &encoder->rep_len_encoder, i, pos_state ),
-				   rep, cur );
-
-	  if( rep == 0 ) start_len = len + 1;	/* discard shorter matches */
-
-	  /* try rep + literal + rep0 */
-	  {
-	  int len2 = len + 1, pos_state2;
-	  const int limit = min( encoder->matchfinder->match_len_limit + len2,
-							 available_bytes );
-	  State state2;
-	  while( len2 < limit && data[len2-dis] == data[len2] ) ++len2;
-	  len2 -= len + 1;
-	  if( len2 < min_match_len ) continue;
-
-	  pos_state2 = ( pos_state + len ) & pos_state_mask;
-	  state2 = St_set_rep( cur_state );
-	  price += Lee_price( &encoder->rep_len_encoder, len, pos_state ) +
-			   price0( encoder->bm_match[state2][pos_state2] ) +
-			   LZe_price_matched( encoder, data[len-1], data[len], data[len-dis] );
-	  pos_state2 = ( pos_state2 + 1 ) & pos_state_mask;
-	  state2 = St_set_char( state2 );
-	  price += price1( encoder->bm_match[state2][pos_state2] ) +
-			   price1( encoder->bm_rep[state2] ) +
-			   LZe_price_rep0_len( encoder, len2, state2, pos_state2 );
-	  while( num_trials < cur + len + 1 + len2 )
-		encoder->trials[++num_trials].price = infinite_price;
-	  Tr_update3( &encoder->trials[cur+len+1+len2], price, 0, cur + len + 1,
-				  rep, cur );
-	  }
-	  }
-
-	/* try matches */
-	if( newlen >= start_len && newlen <= len_limit )
-	  {
-	  int dis;
-	  const int normal_match_price = match_price +
-									 price0( encoder->bm_rep[cur_state] );
-
-	  while( num_trials < cur + newlen )
-		encoder->trials[++num_trials].price = infinite_price;
-
-	  i = 0;
-	  while( start_len > encoder->pairs[i].len ) ++i;
-	  dis = encoder->pairs[i].dis;
-	  for( len = start_len; ; ++len )
-		{
-		int price = normal_match_price +
-					LZe_price_pair( encoder, dis, len, pos_state );
-
-		Tr_update( &encoder->trials[cur+len], price, dis + num_rep_distances, cur );
-
-		/* try match + literal + rep0 */
-		if( len == encoder->pairs[i].len )
-		  {
-		  const uint8_t * const data = Mf_ptr_to_current_pos( encoder->matchfinder ) - 1;
-		  const int dis2 = dis + 1;
-		  int len2 = len + 1;
-		  const int limit = min( encoder->matchfinder->match_len_limit + len2,
-								 available_bytes );
-		  while( len2 < limit && data[len2-dis2] == data[len2] ) ++len2;
-		  len2 -= len + 1;
-		  if( len2 >= min_match_len )
-			{
-			int pos_state2 = ( pos_state + len ) & pos_state_mask;
-			State state2 = St_set_match( cur_state );
-			price += price0( encoder->bm_match[state2][pos_state2] ) +
-					 LZe_price_matched( encoder, data[len-1], data[len], data[len-dis2] );
-			pos_state2 = ( pos_state2 + 1 ) & pos_state_mask;
-			state2 = St_set_char( state2 );
-			price += price1( encoder->bm_match[state2][pos_state2] ) +
-					 price1( encoder->bm_rep[state2] ) +
-					 LZe_price_rep0_len( encoder, len2, state2, pos_state2 );
-
-			while( num_trials < cur + len + 1 + len2 )
-			  encoder->trials[++num_trials].price = infinite_price;
-			Tr_update3( &encoder->trials[cur+len+1+len2], price, 0,
-						cur + len + 1, dis + num_rep_distances, cur );
-			}
-		  if( ++i >= num_pairs ) break;
-		  dis = encoder->pairs[i].dis;
-		  }
-		}
-	  }
-	}
-  }
-
-static bool LZe_encode_member( struct LZ_encoder * const encoder )
-  {
-  const int fill_count =
-	( encoder->matchfinder->match_len_limit > 12 ) ? 128 : 512;
-  int ahead, i;
-  State * const state = &encoder->state;
-
-  if( encoder->member_finished ) return true;
-  if( Re_member_position( &encoder->renc ) >= encoder->member_size_limit )
-	{
-	if( LZe_full_flush( encoder, *state ) ) encoder->member_finished = true;
-	return true;
-	}
-
-  if( Mf_data_position( encoder->matchfinder ) == 0 &&
-	  !Mf_finished( encoder->matchfinder ) )	/* encode first byte */
-	{
-	const uint8_t prev_byte = 0;
-	uint8_t cur_byte;
-	if( Mf_available_bytes( encoder->matchfinder ) < max_match_len &&
-		!Mf_flushing_or_end( encoder->matchfinder ) )
-	  return true;
-	cur_byte = Mf_peek( encoder->matchfinder, 0 );
-	Re_encode_bit( &encoder->renc, &encoder->bm_match[*state][0], 0 );
-	LZe_encode_literal( encoder, prev_byte, cur_byte );
-	CRC32_update_byte( &encoder->crc, cur_byte );
-	Mf_get_match_pairs( encoder->matchfinder, 0 );
-	if( !Mf_move_pos( encoder->matchfinder ) ) return false;
-	}
-
-  while( !Mf_finished( encoder->matchfinder ) )
-	{
-	if( !Mf_enough_available_bytes( encoder->matchfinder ) ||
-		!Re_enough_free_bytes( &encoder->renc ) ) return true;
-	if( encoder->pending_num_pairs == 0 )
-	  {
-	  if( encoder->fill_counter <= 0 )
-		{ LZe_fill_distance_prices( encoder ); encoder->fill_counter = fill_count; }
-	  if( encoder->align_price_count <= 0 )
-		LZe_fill_align_prices( encoder );
-	  }
-
-	ahead = LZe_sequence_optimizer( encoder, encoder->rep_distances, *state );
-	if( ahead <= 0 ) return false;		/* can't happen */
-
-	for( i = 0; ; )
-	  {
-	  const int pos_state =
-		( Mf_data_position( encoder->matchfinder ) - ahead ) & pos_state_mask;
-	  const int dis = encoder->trials[i].dis;
-	  const int len = encoder->trials[i].price;
-
-	  bool bit = ( dis < 0 && len == 1 );
-	  Re_encode_bit( &encoder->renc,
-					 &encoder->bm_match[*state][pos_state], !bit );
-	  if( bit )					/* literal byte */
-		{
-		const uint8_t prev_byte = Mf_peek( encoder->matchfinder, -ahead-1 );
-		const uint8_t cur_byte = Mf_peek( encoder->matchfinder, -ahead );
-		CRC32_update_byte( &encoder->crc, cur_byte );
-		if( St_is_char( *state ) )
-		  LZe_encode_literal( encoder, prev_byte, cur_byte );
-		else
-		  {
-		  const uint8_t match_byte =
-			Mf_peek( encoder->matchfinder, -ahead-encoder->rep_distances[0]-1 );
-		  LZe_encode_matched( encoder, prev_byte, cur_byte, match_byte );
-		  }
-		*state = St_set_char( *state );
-		}
-	  else					/* match or repeated match */
-		{
-		CRC32_update_buf( &encoder->crc, Mf_ptr_to_current_pos( encoder->matchfinder ) - ahead, len );
-		LZe_mtf_reps( dis, encoder->rep_distances );
-		bit = ( dis < num_rep_distances );
-		Re_encode_bit( &encoder->renc, &encoder->bm_rep[*state], bit );
-		if( bit )
-		  {
-		  bit = ( dis == 0 );
-		  Re_encode_bit( &encoder->renc, &encoder->bm_rep0[*state], !bit );
-		  if( bit )
-			Re_encode_bit( &encoder->renc, &encoder->bm_len[*state][pos_state], len > 1 );
-		  else
-			{
-			Re_encode_bit( &encoder->renc, &encoder->bm_rep1[*state], dis > 1 );
-			if( dis > 1 )
-			  Re_encode_bit( &encoder->renc, &encoder->bm_rep2[*state], dis > 2 );
-			}
-		  if( len == 1 ) *state = St_set_short_rep( *state );
-		  else
-			{
-			Lee_encode( &encoder->rep_len_encoder, &encoder->renc, len, pos_state );
-			*state = St_set_rep( *state );
-			}
-		  }
-		else
-		  {
-		  LZe_encode_pair( encoder, dis - num_rep_distances, len, pos_state );
-		  --encoder->fill_counter;
-		  *state = St_set_match( *state );
-		  }
-		}
-	  ahead -= len; i += len;
-	  if( Re_member_position( &encoder->renc ) >= encoder->member_size_limit )
-		{
-		if( !Mf_dec_pos( encoder->matchfinder, ahead ) ) return false;
-		if( LZe_full_flush( encoder, *state ) ) encoder->member_finished = true;
-		return true;
-		}
-	  if( ahead <= 0 ) break;
-	  }
-	}
-  if( LZe_full_flush( encoder, *state ) ) encoder->member_finished = true;
-  return true;
-  }
-
-struct LZ_Encoder
-  {
-  unsigned long long partial_in_size;
-  unsigned long long partial_out_size;
-  struct Matchfinder * matchfinder;
-  struct LZ_encoder * lz_encoder;
-  enum LZ_Errno lz_errno;
-  int flush_pending;
-  File_header member_header;
-  bool fatal;
-  };
-
-static void LZ_Encoder_init( struct LZ_Encoder * const e,
-							 const File_header header )
-  {
-  int i;
-  e->partial_in_size = 0;
-  e->partial_out_size = 0;
-  e->matchfinder = 0;
-  e->lz_encoder = 0;
-  e->lz_errno = LZ_ok;
-  e->flush_pending = 0;
-  for( i = 0; i < Fh_size; ++i ) e->member_header[i] = header[i];
-  e->fatal = false;
-  }
-
-struct LZ_Decoder
-  {
-  unsigned long long partial_in_size;
-  unsigned long long partial_out_size;
-  struct Range_decoder * rdec;
-  struct LZ_decoder * lz_decoder;
-  enum LZ_Errno lz_errno;
-  File_header member_header;		/* header of current member */
-  bool fatal;
-  bool seeking;
-  };
-
-static void LZ_Decoder_init( struct LZ_Decoder * const d )
-  {
-  int i;
-  d->partial_in_size = 0;
-  d->partial_out_size = 0;
-  d->rdec = 0;
-  d->lz_decoder = 0;
-  d->lz_errno = LZ_ok;
-  for( i = 0; i < Fh_size; ++i ) d->member_header[i] = 0;
-  d->fatal = false;
-  d->seeking = false;
-  }
-
-static bool verify_encoder( struct LZ_Encoder * const e )
-  {
-  if( !e ) return false;
-  if( !e->matchfinder || !e->lz_encoder )
-	{ e->lz_errno = LZ_bad_argument; return false; }
-  return true;
-  }
-
-static bool verify_decoder( struct LZ_Decoder * const d )
-  {
-  if( !d ) return false;
-  if( !d->rdec )
-	{ d->lz_errno = LZ_bad_argument; return false; }
-  return true;
-  }
-
-/*------------------------- Misc Functions -------------------------*/
-
-const char * LZ_version( void ) { return LZ_version_string; }
-
-const char * LZ_strerror( const enum LZ_Errno lz_errno )
-  {
-  switch( lz_errno )
-	{
-	case LZ_ok            : return "ok";
-	case LZ_bad_argument  : return "bad argument";
-	case LZ_mem_error     : return "not enough memory";
-	case LZ_sequence_error: return "sequence error";
-	case LZ_header_error  : return "header error";
-	case LZ_unexpected_eof: return "unexpected eof";
-	case LZ_data_error    : return "data error";
-	case LZ_library_error : return "library error";
-	}
-  return "invalid error code";
-  }
-
-int LZ_min_dictionary_bits( void ) { return min_dictionary_bits; }
-int LZ_min_dictionary_size( void ) { return min_dictionary_size; }
-int LZ_max_dictionary_bits( void ) { return max_dictionary_bits; }
-int LZ_max_dictionary_size( void ) { return max_dictionary_size; }
-int LZ_min_match_len_limit( void ) { return min_match_len_limit; }
-int LZ_max_match_len_limit( void ) { return max_match_len; }
-
-/*---------------------- Compression Functions ----------------------*/
-
-struct LZ_Encoder * LZ_compress_open( const int dictionary_size,
-									  const int match_len_limit,
-									  const unsigned long long member_size )
-  {
-  File_header header;
-  const bool error = ( !Fh_set_dictionary_size( header, dictionary_size ) ||
-					   match_len_limit < min_match_len_limit ||
-					   match_len_limit > max_match_len ||
-					   member_size < min_dictionary_size );
-
-  struct LZ_Encoder * const e =
-	(struct LZ_Encoder *)malloc( sizeof (struct LZ_Encoder) );
-  if( !e ) return 0;
-  Fh_set_magic( header );
-  LZ_Encoder_init( e, header );
-  if( error ) e->lz_errno = LZ_bad_argument;
-  else
-	{
-	e->matchfinder = (struct Matchfinder *)malloc( sizeof (struct Matchfinder) );
-	if( e->matchfinder )
-	  {
-	  e->lz_encoder = (struct LZ_encoder *)malloc( sizeof (struct LZ_encoder) );
-	  if( e->lz_encoder )
-		{
-		if( Mf_init( e->matchfinder,
-					 Fh_get_dictionary_size( header ), match_len_limit ) )
-		  {
-		  if( LZe_init( e->lz_encoder, e->matchfinder, header, member_size ) )
-			return e;
-		  Mf_free( e->matchfinder );
-		  }
-		free( e->lz_encoder ); e->lz_encoder = 0;
-		}
-	  free( e->matchfinder ); e->matchfinder = 0;
-	  }
-	e->lz_errno = LZ_mem_error;
-	}
-  e->fatal = true;
-  return e;
-  }
-
-int LZ_compress_close( struct LZ_Encoder * const e )
-  {
-  if( !e ) return -1;
-  if( e->lz_encoder )
-	{ LZe_free( e->lz_encoder ); free( e->lz_encoder ); }
-  if( e->matchfinder )
-   { Mf_free( e->matchfinder ); free( e->matchfinder ); }
-  free( e );
-  return 0;
-  }
-
-int LZ_compress_finish( struct LZ_Encoder * const e )
-  {
-  if( !verify_encoder( e ) || e->fatal ) return -1;
-  Mf_finish( e->matchfinder );
-  e->flush_pending = 0;
-  /* if (open --> write --> finish) use same dictionary size as lzip. */
-  /* this does not save any memory. */
-  if( Mf_data_position( e->matchfinder ) == 0 &&
-	  LZ_compress_total_out_size( e ) == Fh_size )
-	Mf_adjust_distionary_size( e->matchfinder );
-  return 0;
-  }
-
-int LZ_compress_restart_member( struct LZ_Encoder * const e,
-								const unsigned long long member_size )
-  {
-  if( !verify_encoder( e ) || e->fatal ) return -1;
-  if( !LZe_member_finished( e->lz_encoder ) )
-	{ e->lz_errno = LZ_sequence_error; return -1; }
-  if( member_size < min_dictionary_size )
-	{ e->lz_errno = LZ_bad_argument; return -1; }
-
-  e->partial_in_size += Mf_data_position( e->matchfinder );
-  e->partial_out_size += Re_member_position( &e->lz_encoder->renc );
-  Mf_reset( e->matchfinder );
-
-  LZe_free( e->lz_encoder );
-  if( !LZe_init( e->lz_encoder, e->matchfinder, e->member_header, member_size ) )
-	{
-	LZe_free( e->lz_encoder ); free( e->lz_encoder ); e->lz_encoder = 0;
-	e->lz_errno = LZ_mem_error; e->fatal = true;
-	return -1;
-	}
-  e->lz_errno = LZ_ok;
-  return 0;
-  }
-
-int LZ_compress_sync_flush( struct LZ_Encoder * const e )
-  {
-  if( !verify_encoder( e ) || e->fatal ) return -1;
-  if( e->flush_pending <= 0 && !Mf_flushing_or_end( e->matchfinder ) )
-	{
-	e->flush_pending = 2;	/* 2 consecutive markers guarantee decoding */
-	Mf_set_flushing( e->matchfinder, true );
-	if( !LZe_encode_member( e->lz_encoder ) )
-	  { e->lz_errno = LZ_library_error; e->fatal = true; return -1; }
-	while( e->flush_pending > 0 && LZe_sync_flush( e->lz_encoder ) )
-	  { if( --e->flush_pending <= 0 ) Mf_set_flushing( e->matchfinder, false ); }
-	}
-  return 0;
-  }
-
-int LZ_compress_read( struct LZ_Encoder * const e,
-					  uint8_t * const buffer, const int size )
-  {
-  if( !verify_encoder( e ) || e->fatal ) return -1;
-  if( !LZe_encode_member( e->lz_encoder ) )
-	{ e->lz_errno = LZ_library_error; e->fatal = true; return -1; }
-  while( e->flush_pending > 0 && LZe_sync_flush( e->lz_encoder ) )
-	{ if( --e->flush_pending <= 0 ) Mf_set_flushing( e->matchfinder, false ); }
-  return Re_read_data( &e->lz_encoder->renc, buffer, size );
-  }
-
-int LZ_compress_write( struct LZ_Encoder * const e,
-					   const uint8_t * const buffer, const int size )
-  {
-  if( !verify_encoder( e ) || e->fatal ) return -1;
-  if( e->flush_pending > 0 || size < 0 ) return 0;
-  return Mf_write_data( e->matchfinder, buffer, size );
-  }
-
-int LZ_compress_write_size( struct LZ_Encoder * const e )
-  {
-  if( !verify_encoder( e ) || e->fatal ) return -1;
-  if( e->flush_pending > 0 ) return 0;
-  return Mf_free_bytes( e->matchfinder );
-  }
-
-enum LZ_Errno LZ_compress_errno( struct LZ_Encoder * const e )
-  {
-  if( !e ) return LZ_bad_argument;
-  return e->lz_errno;
-  }
-
-int LZ_compress_finished( struct LZ_Encoder * const e )
-  {
-  if( !verify_encoder( e ) ) return -1;
-  return ( e->flush_pending <= 0 && Mf_finished( e->matchfinder ) &&
-		   LZe_member_finished( e->lz_encoder ) );
-  }
-
-int LZ_compress_member_finished( struct LZ_Encoder * const e )
-  {
-  if( !verify_encoder( e ) ) return -1;
-  return LZe_member_finished( e->lz_encoder );
-  }
-
-unsigned long long LZ_compress_data_position( struct LZ_Encoder * const e )
-  {
-  if( !verify_encoder( e ) ) return 0;
-  return Mf_data_position( e->matchfinder );
-  }
-
-unsigned long long LZ_compress_member_position( struct LZ_Encoder * const e )
-  {
-  if( !verify_encoder( e ) ) return 0;
-  return Re_member_position( &e->lz_encoder->renc );
-  }
-
-unsigned long long LZ_compress_total_in_size( struct LZ_Encoder * const e )
-  {
-  if( !verify_encoder( e ) ) return 0;
-  return e->partial_in_size + Mf_data_position( e->matchfinder );
-  }
-
-unsigned long long LZ_compress_total_out_size( struct LZ_Encoder * const e )
-  {
-  if( !verify_encoder( e ) ) return 0;
-  return e->partial_out_size + Re_member_position( &e->lz_encoder->renc );
-  }
-
-/*--------------------- Decompression Functions ---------------------*/
-
-struct LZ_Decoder * LZ_decompress_open( void )
-  {
-  struct LZ_Decoder * const d =
-	(struct LZ_Decoder *)malloc( sizeof (struct LZ_Decoder) );
-  if( !d ) return 0;
-  LZ_Decoder_init( d );
-
-  d->rdec = (struct Range_decoder *)malloc( sizeof (struct Range_decoder) );
-  if( !d->rdec || !Rd_init( d->rdec ) )
-	{
-	if( d->rdec ) { Rd_free( d->rdec ); free( d->rdec ); d->rdec = 0; }
-	d->lz_errno = LZ_mem_error; d->fatal = true;
-	}
-  return d;
-  }
-
-int LZ_decompress_close( struct LZ_Decoder * const d )
-  {
-  if( !d ) return -1;
-  if( d->lz_decoder )
-	{ LZd_free( d->lz_decoder ); free( d->lz_decoder ); }
-  if( d->rdec ) { Rd_free( d->rdec ); free( d->rdec ); }
-  free( d );
-  return 0;
-  }
-
-int LZ_decompress_finish( struct LZ_Decoder * const d )
-  {
-  if( !verify_decoder( d ) || d->fatal ) return -1;
-  if( d->seeking ) { d->seeking = false; Rd_purge( d->rdec ); }
-  else Rd_finish( d->rdec );
-  return 0;
-  }
-
-int LZ_decompress_reset( struct LZ_Decoder * const d )
-  {
-  if( !verify_decoder( d ) ) return -1;
-  if( d->lz_decoder )
-	{ LZd_free( d->lz_decoder ); free( d->lz_decoder ); d->lz_decoder = 0; }
-  d->partial_in_size = 0;
-  d->partial_out_size = 0;
-  Rd_reset( d->rdec );
-  d->lz_errno = LZ_ok;
-  d->fatal = false;
-  d->seeking = false;
-  return 0;
-  }
-
-int LZ_decompress_sync_to_member( struct LZ_Decoder * const d )
-  {
-  if( !verify_decoder( d ) ) return -1;
-  if( d->lz_decoder )
-	{ LZd_free( d->lz_decoder ); free( d->lz_decoder ); d->lz_decoder = 0; }
-  if( Rd_find_header( d->rdec ) ) d->seeking = false;
-  else
-	{
-	if( !d->rdec->at_stream_end ) d->seeking = true;
-	else { d->seeking = false; Rd_purge( d->rdec ); }
-	}
-  d->lz_errno = LZ_ok;
-  d->fatal = false;
-  return 0;
-  }
-
-int LZ_decompress_read( struct LZ_Decoder * const d,
-						uint8_t * const buffer, const int size )
-  {
-  int result;
-  if( !verify_decoder( d ) || d->fatal ) return -1;
-  if( d->seeking ) return 0;
-
-  if( d->lz_decoder && LZd_member_finished( d->lz_decoder ) )
-	{
-	d->partial_in_size += d->rdec->member_position;
-	d->partial_out_size += LZd_data_position( d->lz_decoder );
-	LZd_free( d->lz_decoder ); free( d->lz_decoder ); d->lz_decoder = 0;
-	}
-  if( !d->lz_decoder )
-	{
-	if( Rd_available_bytes( d->rdec ) < 5 + Fh_size )
-	  {
-	  if( !d->rdec->at_stream_end || Rd_finished( d->rdec ) ) return 0;
-	  /* set position at EOF */
-	  d->partial_in_size += Rd_available_bytes( d->rdec );
-	  if( Rd_available_bytes( d->rdec ) <= Fh_size ||
-		  !Rd_read_header( d->rdec, d->member_header ) )
-		d->lz_errno = LZ_header_error;
-	  else
-		d->lz_errno = LZ_unexpected_eof;
-	  d->fatal = true;
-	  return -1;
-	  }
-	if( !Rd_read_header( d->rdec, d->member_header ) )
-	  {
-	  d->lz_errno = LZ_header_error;
-	  d->fatal = true;
-	  return -1;
-	  }
-	d->lz_decoder = (struct LZ_decoder *)malloc( sizeof (struct LZ_decoder) );
-	if( !d->lz_decoder || !LZd_init( d->lz_decoder, d->member_header, d->rdec ) )
-	  {					/* not enough free memory */
-	  if( d->lz_decoder )
-		{ LZd_free( d->lz_decoder ); free( d->lz_decoder ); d->lz_decoder = 0; }
-	  d->lz_errno = LZ_mem_error;
-	  d->fatal = true;
-	  return -1;
-	  }
-	}
-  result = LZd_decode_member( d->lz_decoder );
-  if( result != 0 )
-	{
-	if( result == 2 ) d->lz_errno = LZ_unexpected_eof;
-	else d->lz_errno = LZ_data_error;
-	d->fatal = true;
-	return -1;
-	}
-  return Cb_read_data( &d->lz_decoder->cb, buffer, size );
-  }
-
-int LZ_decompress_write( struct LZ_Decoder * const d,
-						 const uint8_t * const buffer, const int size )
-  {
-  int result;
-  if( !verify_decoder( d ) || d->fatal ) return -1;
-
-  result = Rd_write_data( d->rdec, buffer, size );
-  while( d->seeking )
-	{
-	int size2;
-	if( Rd_find_header( d->rdec ) ) d->seeking = false;
-	if( result >= size ) break;
-	size2 = Rd_write_data( d->rdec, buffer + result, size - result );
-	if( size2 > 0 ) result += size2;
-	else break;
-	}
-  return result;
-  }
-
-int LZ_decompress_write_size( struct LZ_Decoder * const d )
-  {
-  if( !verify_decoder( d ) || d->fatal ) return -1;
-  return Rd_free_bytes( d->rdec );
-  }
-
-enum LZ_Errno LZ_decompress_errno( struct LZ_Decoder * const d )
-  {
-  if( !d ) return LZ_bad_argument;
-  return d->lz_errno;
-  }
-
-int LZ_decompress_finished( struct LZ_Decoder * const d )
-  {
-  if( !verify_decoder( d ) ) return -1;
-  return ( Rd_finished( d->rdec ) &&
-		   ( !d->lz_decoder || LZd_member_finished( d->lz_decoder ) ) );
-  }
-
-int LZ_decompress_member_finished( struct LZ_Decoder * const d )
-  {
-  if( !verify_decoder( d ) ) return -1;
-  return ( d->lz_decoder && LZd_member_finished( d->lz_decoder ) );
-  }
-
-int LZ_decompress_member_version( struct LZ_Decoder * const d )
-  {
-  if( !verify_decoder( d ) ) return -1;
-  return Fh_version( d->member_header );
-  }
-
-int LZ_decompress_dictionary_size( struct LZ_Decoder * const d )
-  {
-  if( !verify_decoder( d ) ) return -1;
-  return Fh_get_dictionary_size( d->member_header );
-  }
-
-unsigned LZ_decompress_data_crc( struct LZ_Decoder * const d )
-  {
-  if( verify_decoder( d ) && d->lz_decoder )
-	return LZd_crc( d->lz_decoder );
-  return 0;
-  }
-
-unsigned long long LZ_decompress_data_position( struct LZ_Decoder * const d )
-  {
-  if( verify_decoder( d ) && d->lz_decoder )
-	return LZd_data_position( d->lz_decoder );
-  return 0;
-  }
-
-unsigned long long LZ_decompress_member_position( struct LZ_Decoder * const d )
-  {
-  if( verify_decoder( d ) && d->lz_decoder )
-	return d->rdec->member_position;
-  return 0;
-  }
-
-unsigned long long LZ_decompress_total_in_size( struct LZ_Decoder * const d )
-  {
-  if( !verify_decoder( d ) ) return 0;
-  if( d->lz_decoder )
-	return d->partial_in_size + d->rdec->member_position;
-  return d->partial_in_size;
-  }
-
-unsigned long long LZ_decompress_total_out_size( struct LZ_Decoder * const d )
-  {
-  if( !verify_decoder( d ) ) return 0;
-  if( d->lz_decoder )
-	return d->partial_out_size + LZd_data_position( d->lz_decoder );
-  return d->partial_out_size;
-  }
-
-
 // lz4 defines 'inline' and 'restrict' which is later required by shoco
 
 #line 1 "lz4.c"
@@ -9865,6 +7005,6520 @@ size_t shoco_decompress(const char * const restrict original, size_t complen, ch
   return o - out;
 }
 
+// easylzma
+
+#line 1 "common_internal.c"
+
+#line 1 "common_internal.h"
+#ifndef __ELZMA_COMMON_INTERNAL_H__
+#define __ELZMA_COMMON_INTERNAL_H__
+
+/** a structure which may be cast and passed into Igor's allocate
+ *  routines */
+struct elzma_alloc_struct {
+	void *(*Alloc)(void *p, size_t size);
+	void (*Free)(void *p, void *address); /* address can be 0 */
+
+	elzma_malloc clientMallocFunc;
+	void * clientMallocContext;
+
+	elzma_free clientFreeFunc;
+	void * clientFreeContext;
+};
+
+/* initialize an allocation structure, may be called safely multiple
+ * times */
+void init_alloc_struct(struct elzma_alloc_struct * allocStruct,
+					   elzma_malloc clientMallocFunc,
+					   void * clientMallocContext,
+					   elzma_free clientFreeFunc,
+					   void * clientFreeContext);
+
+/** superset representation of a compressed file header */
+struct elzma_file_header {
+	unsigned char pb;
+	unsigned char lp;
+	unsigned char lc;
+	unsigned char isStreamed;
+	long long unsigned int uncompressedSize;
+	unsigned int dictSize;
+};
+
+/** superset representation of a compressed file footer */
+struct elzma_file_footer {
+	unsigned int crc32;
+	long long unsigned int uncompressedSize;
+};
+
+/** a structure which encapsulates information about the particular
+ *  file header and footer in use (lzip vs lzma vs (eventually) xz.
+ *  The intention of this structure is to simplify compression and
+ *  decompression logic by abstracting the file format details a bit.  */
+struct elzma_format_handler
+{
+	unsigned int header_size;
+	void (*init_header)(struct elzma_file_header * hdr);
+	int (*parse_header)(const unsigned char * hdrBuf,
+						struct elzma_file_header * hdr);
+	int (*serialize_header)(unsigned char * hdrBuf,
+							const struct elzma_file_header * hdr);
+
+	unsigned int footer_size;
+	int (*serialize_footer)(struct elzma_file_footer * ftr,
+							unsigned char * ftrBuf);
+	int (*parse_footer)(const unsigned char * ftrBuf,
+						struct elzma_file_footer * ftr);
+};
+
+#endif
+
+static void *elzmaAlloc(void *p, size_t size) {
+	struct elzma_alloc_struct * as = (struct elzma_alloc_struct *) p;
+	if (as->clientMallocFunc) {
+		return as->clientMallocFunc(as->clientMallocContext, size);
+	}
+	return malloc(size);
+}
+
+static void elzmaFree(void *p, void *address) {
+	struct elzma_alloc_struct * as = (struct elzma_alloc_struct *) p;
+	if (as->clientFreeFunc) {
+		as->clientFreeFunc(as->clientMallocContext, address);
+	} else {
+		free(address);
+	}
+}
+
+void
+init_alloc_struct(struct elzma_alloc_struct * as,
+				  elzma_malloc clientMallocFunc,
+				  void * clientMallocContext,
+				  elzma_free clientFreeFunc,
+				  void * clientFreeContext)
+{
+	as->Alloc = elzmaAlloc;
+	as->Free = elzmaFree;
+	as->clientMallocFunc = clientMallocFunc;
+	as->clientMallocContext = clientMallocContext;
+	as->clientFreeFunc = clientFreeFunc;
+	as->clientFreeContext = clientFreeContext;
+}
+
+
+
+#line 1 "compress.c"
+
+#line 1 "lzma_header.h"
+#ifndef __EASYLZMA_LZMA_HEADER__
+#define __EASYLZMA_LZMA_HEADER__
+
+/* LZMA-Alone header format gleaned from reading Igor's code */
+
+void initializeLZMAFormatHandler(struct elzma_format_handler * hand);
+
+#endif
+
+
+#line 1 "lzip_header.h"
+#ifndef __EASYLZMA_LZIP_HEADER__
+#define __EASYLZMA_LZIP_HEADER__
+
+/* lzip file format documented here:
+ * http://download.savannah.gnu.org/releases-noredirect/lzip/manual/ */
+
+void initializeLZIPFormatHandler(struct elzma_format_handler * hand);
+
+#endif
+
+
+#line 1 "Types.h"
+#ifndef __7Z_TYPES_H
+#define __7Z_TYPES_H
+
+#include <stddef.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
+#ifndef EXTERN_C_BEGIN
+#ifdef __cplusplus
+#define EXTERN_C_BEGIN extern "C" {
+#define EXTERN_C_END }
+#else
+#define EXTERN_C_BEGIN
+#define EXTERN_C_END
+#endif
+#endif
+
+EXTERN_C_BEGIN
+
+#define SZ_OK 0
+
+#define SZ_ERROR_DATA 1
+#define SZ_ERROR_MEM 2
+#define SZ_ERROR_CRC 3
+#define SZ_ERROR_UNSUPPORTED 4
+#define SZ_ERROR_PARAM 5
+#define SZ_ERROR_INPUT_EOF 6
+#define SZ_ERROR_OUTPUT_EOF 7
+#define SZ_ERROR_READ 8
+#define SZ_ERROR_WRITE 9
+#define SZ_ERROR_PROGRESS 10
+#define SZ_ERROR_FAIL 11
+#define SZ_ERROR_THREAD 12
+
+#define SZ_ERROR_ARCHIVE 16
+#define SZ_ERROR_NO_ARCHIVE 17
+
+typedef int SRes;
+
+#ifdef _WIN32
+typedef DWORD WRes;
+#else
+typedef int WRes;
+#endif
+
+#ifndef RINOK
+#define RINOK(x) { int __result__ = (x); if (__result__ != 0) return __result__; }
+#endif
+
+typedef unsigned char Byte;
+typedef short Int16;
+typedef unsigned short UInt16;
+
+#ifdef _LZMA_UINT32_IS_ULONG
+typedef long Int32;
+typedef unsigned long UInt32;
+#else
+typedef int Int32;
+typedef unsigned int UInt32;
+#endif
+
+#ifdef _SZ_NO_INT_64
+
+/* define _SZ_NO_INT_64, if your compiler doesn't support 64-bit integers.
+   NOTES: Some code will work incorrectly in that case! */
+
+typedef long Int64;
+typedef unsigned long UInt64;
+
+#else
+
+#if defined(_MSC_VER) || defined(__BORLANDC__)
+typedef __int64 Int64;
+typedef unsigned __int64 UInt64;
+#define UINT64_CONST(n) n
+#else
+typedef long long int Int64;
+typedef unsigned long long int UInt64;
+#define UINT64_CONST(n) n ## ULL
+#endif
+
+#endif
+
+#ifdef _LZMA_NO_SYSTEM_SIZE_T
+typedef UInt32 SizeT;
+#else
+typedef size_t SizeT;
+#endif
+
+typedef int Bool;
+#define True 1
+#define False 0
+
+#ifdef _WIN32
+#define MY_STD_CALL __stdcall
+#else
+#define MY_STD_CALL
+#endif
+
+#ifdef _MSC_VER
+
+#if _MSC_VER >= 1300
+#define MY_NO_INLINE __declspec(noinline)
+#else
+#define MY_NO_INLINE
+#endif
+
+#define MY_CDECL __cdecl
+#define MY_FAST_CALL __fastcall
+
+#else
+
+#define MY_CDECL
+#define MY_FAST_CALL
+
+#endif
+
+/* The following interfaces use first parameter as pointer to structure */
+
+typedef struct
+{
+  Byte (*Read)(void *p); /* reads one byte, returns 0 in case of EOF or error */
+} IByteIn;
+
+typedef struct
+{
+  void (*Write)(void *p, Byte b);
+} IByteOut;
+
+typedef struct
+{
+  SRes (*Read)(void *p, void *buf, size_t *size);
+	/* if (input(*size) != 0 && output(*size) == 0) means end_of_stream.
+	   (output(*size) < input(*size)) is allowed */
+} ISeqInStream;
+
+/* it can return SZ_ERROR_INPUT_EOF */
+SRes SeqInStream_Read(ISeqInStream *stream, void *buf, size_t size);
+SRes SeqInStream_Read2(ISeqInStream *stream, void *buf, size_t size, SRes errorType);
+SRes SeqInStream_ReadByte(ISeqInStream *stream, Byte *buf);
+
+typedef struct
+{
+  size_t (*Write)(void *p, const void *buf, size_t size);
+	/* Returns: result - the number of actually written bytes.
+	   (result < size) means error */
+} ISeqOutStream;
+
+typedef enum
+{
+  SZ_SEEK_SET = 0,
+  SZ_SEEK_CUR = 1,
+  SZ_SEEK_END = 2
+} ESzSeek;
+
+typedef struct
+{
+  SRes (*Read)(void *p, void *buf, size_t *size);  /* same as ISeqInStream::Read */
+  SRes (*Seek)(void *p, Int64 *pos, ESzSeek origin);
+} ISeekInStream;
+
+typedef struct
+{
+  SRes (*Look)(void *p, const void **buf, size_t *size);
+	/* if (input(*size) != 0 && output(*size) == 0) means end_of_stream.
+	   (output(*size) > input(*size)) is not allowed
+	   (output(*size) < input(*size)) is allowed */
+  SRes (*Skip)(void *p, size_t offset);
+	/* offset must be <= output(*size) of Look */
+
+  SRes (*Read)(void *p, void *buf, size_t *size);
+	/* reads directly (without buffer). It's same as ISeqInStream::Read */
+  SRes (*Seek)(void *p, Int64 *pos, ESzSeek origin);
+} ILookInStream;
+
+SRes LookInStream_LookRead(ILookInStream *stream, void *buf, size_t *size);
+SRes LookInStream_SeekTo(ILookInStream *stream, UInt64 offset);
+
+/* reads via ILookInStream::Read */
+SRes LookInStream_Read2(ILookInStream *stream, void *buf, size_t size, SRes errorType);
+SRes LookInStream_Read(ILookInStream *stream, void *buf, size_t size);
+
+#define LookToRead_BUF_SIZE (1 << 14)
+
+typedef struct
+{
+  ILookInStream s;
+  ISeekInStream *realStream;
+  size_t pos;
+  size_t size;
+  Byte buf[LookToRead_BUF_SIZE];
+} CLookToRead;
+
+void LookToRead_CreateVTable(CLookToRead *p, int lookahead);
+void LookToRead_Init(CLookToRead *p);
+
+typedef struct
+{
+  ISeqInStream s;
+  ILookInStream *realStream;
+} CSecToLook;
+
+void SecToLook_CreateVTable(CSecToLook *p);
+
+typedef struct
+{
+  ISeqInStream s;
+  ILookInStream *realStream;
+} CSecToRead;
+
+void SecToRead_CreateVTable(CSecToRead *p);
+
+typedef struct
+{
+  SRes (*Progress)(void *p, UInt64 inSize, UInt64 outSize);
+	/* Returns: result. (result != SZ_OK) means break.
+	   Value (UInt64)(Int64)-1 for size means unknown value. */
+} ICompressProgress;
+
+typedef struct
+{
+  void *(*Alloc)(void *p, size_t size);
+  void (*Free)(void *p, void *address); /* address can be 0 */
+} ISzAlloc;
+
+#define IAlloc_Alloc(p, size) (p)->Alloc((p), size)
+#define IAlloc_Free(p, a) (p)->Free((p), a)
+
+#ifdef _WIN32
+
+#define CHAR_PATH_SEPARATOR '\\'
+#define WCHAR_PATH_SEPARATOR L'\\'
+#define STRING_PATH_SEPARATOR "\\"
+#define WSTRING_PATH_SEPARATOR L"\\"
+
+#else
+
+#define CHAR_PATH_SEPARATOR '/'
+#define WCHAR_PATH_SEPARATOR L'/'
+#define STRING_PATH_SEPARATOR "/"
+#define WSTRING_PATH_SEPARATOR L"/"
+
+#endif
+
+EXTERN_C_END
+
+#endif
+
+
+#line 1 "LzmaEnc.h"
+#ifndef __LZMA_ENC_H
+#define __LZMA_ENC_H
+
+EXTERN_C_BEGIN
+
+#define LZMA_PROPS_SIZE 5
+
+typedef struct _CLzmaEncProps
+{
+  int level;       /*  0 <= level <= 9 */
+  UInt32 dictSize; /* (1 << 12) <= dictSize <= (1 << 27) for 32-bit version
+					  (1 << 12) <= dictSize <= (1 << 30) for 64-bit version
+					   default = (1 << 24) */
+  UInt32 reduceSize; /* estimated size of data that will be compressed. default = 0xFFFFFFFF.
+						Encoder uses this value to reduce dictionary size */
+  int lc;          /* 0 <= lc <= 8, default = 3 */
+  int lp;          /* 0 <= lp <= 4, default = 0 */
+  int pb;          /* 0 <= pb <= 4, default = 2 */
+  int algo;        /* 0 - fast, 1 - normal, default = 1 */
+  int fb;          /* 5 <= fb <= 273, default = 32 */
+  int btMode;      /* 0 - hashChain Mode, 1 - binTree mode - normal, default = 1 */
+  int numHashBytes; /* 2, 3 or 4, default = 4 */
+  UInt32 mc;        /* 1 <= mc <= (1 << 30), default = 32 */
+  unsigned writeEndMark;  /* 0 - do not write EOPM, 1 - write EOPM, default = 0 */
+  int numThreads;  /* 1 or 2, default = 2 */
+} CLzmaEncProps;
+
+void LzmaEncProps_Init(CLzmaEncProps *p);
+void LzmaEncProps_Normalize(CLzmaEncProps *p);
+UInt32 LzmaEncProps_GetDictSize(const CLzmaEncProps *props2);
+
+/* ---------- CLzmaEncHandle Interface ---------- */
+
+/* LzmaEnc_* functions can return the following exit codes:
+Returns:
+  SZ_OK           - OK
+  SZ_ERROR_MEM    - Memory allocation error
+  SZ_ERROR_PARAM  - Incorrect paramater in props
+  SZ_ERROR_WRITE  - Write callback error.
+  SZ_ERROR_PROGRESS - some break from progress callback
+  SZ_ERROR_THREAD - errors in multithreading functions (only for Mt version)
+*/
+
+typedef void * CLzmaEncHandle;
+
+CLzmaEncHandle LzmaEnc_Create(ISzAlloc *alloc);
+void LzmaEnc_Destroy(CLzmaEncHandle p, ISzAlloc *alloc, ISzAlloc *allocBig);
+SRes LzmaEnc_SetProps(CLzmaEncHandle p, const CLzmaEncProps *props);
+SRes LzmaEnc_WriteProperties(CLzmaEncHandle p, Byte *properties, SizeT *size);
+SRes LzmaEnc_Encode(CLzmaEncHandle p, ISeqOutStream *outStream, ISeqInStream *inStream,
+	ICompressProgress *progress, ISzAlloc *alloc, ISzAlloc *allocBig);
+SRes LzmaEnc_MemEncode(CLzmaEncHandle p, Byte *dest, SizeT *destLen, const Byte *src, SizeT srcLen,
+	int writeEndMark, ICompressProgress *progress, ISzAlloc *alloc, ISzAlloc *allocBig);
+
+/* ---------- One Call Interface ---------- */
+
+/* LzmaEncode
+Return code:
+  SZ_OK               - OK
+  SZ_ERROR_MEM        - Memory allocation error
+  SZ_ERROR_PARAM      - Incorrect paramater
+  SZ_ERROR_OUTPUT_EOF - output buffer overflow
+  SZ_ERROR_THREAD     - errors in multithreading functions (only for Mt version)
+*/
+
+SRes LzmaEncode(Byte *dest, SizeT *destLen, const Byte *src, SizeT srcLen,
+	const CLzmaEncProps *props, Byte *propsEncoded, SizeT *propsSize, int writeEndMark,
+	ICompressProgress *progress, ISzAlloc *alloc, ISzAlloc *allocBig);
+
+EXTERN_C_END
+
+#endif
+
+
+#line 1 "7zCrc.h"
+#ifndef __7Z_CRC_H
+#define __7Z_CRC_H
+
+#include <stddef.h>
+
+extern UInt32 g_CrcTable[];
+
+void MY_FAST_CALL CrcGenerateTable(void);
+
+#define CRC_INIT_VAL 0xFFFFFFFF
+#define CRC_GET_DIGEST(crc) ((crc) ^ 0xFFFFFFFF)
+#define CRC_UPDATE_BYTE(crc, b) (g_CrcTable[((crc) ^ (b)) & 0xFF] ^ ((crc) >> 8))
+
+UInt32 MY_FAST_CALL CrcUpdate(UInt32 crc, const void *data, size_t size);
+UInt32 MY_FAST_CALL CrcCalc(const void *data, size_t size);
+
+#endif
+
+#include <string.h>
+
+struct _elzma_compress_handle {
+	CLzmaEncProps props;
+	CLzmaEncHandle encHand;
+	unsigned long long uncompressedSize;
+	elzma_file_format format;
+	struct elzma_alloc_struct allocStruct;
+	struct elzma_format_handler formatHandler;
+};
+
+elzma_compress_handle
+elzma_compress_alloc()
+{
+	elzma_compress_handle hand = (elzma_compress_handle)malloc(sizeof(struct _elzma_compress_handle));
+	memset((void *) hand, 0, sizeof(struct _elzma_compress_handle));
+
+	/* "reasonable" defaults for props */
+	LzmaEncProps_Init(&(hand->props));
+	hand->props.lc = 3;
+	hand->props.lp = 0;
+	hand->props.pb = 2;
+	hand->props.level = 9; // default: 5, max: 9
+	hand->props.algo = 1;
+	hand->props.fb = 32; // default: 32, max: 273
+	hand->props.dictSize = 1 << 22; // default: 1<<24 16MiB
+	hand->props.btMode = 1;
+	hand->props.numHashBytes = 4;
+	hand->props.mc = 32;
+	hand->props.numThreads = 1;
+	hand->props.writeEndMark = 1;
+
+	init_alloc_struct(&(hand->allocStruct), NULL, NULL, NULL, NULL);
+
+	/* default format is LZMA-Alone */
+	initializeLZMAFormatHandler(&(hand->formatHandler));
+
+	return hand;
+}
+
+void
+elzma_compress_free(elzma_compress_handle * hand)
+{
+	if (hand && *hand) {
+		if ((*hand)->encHand) {
+			LzmaEnc_Destroy((*hand)->encHand,
+							(ISzAlloc *) &((*hand)->allocStruct),
+							(ISzAlloc *) &((*hand)->allocStruct));
+		}
+
+	}
+	*hand = NULL;
+}
+
+int
+elzma_compress_config(elzma_compress_handle hand,
+					  unsigned char lc,
+					  unsigned char lp,
+					  unsigned char pb,
+					  unsigned char level,
+					  unsigned int dictionarySize,
+					  elzma_file_format format,
+					  unsigned long long uncompressedSize)
+{
+	/* XXX: validate arguments are in valid ranges */
+
+	hand->props.lc = lc;
+	hand->props.lp = lp;
+	hand->props.pb = pb;
+	hand->props.level = level;
+	hand->props.dictSize = dictionarySize;
+	hand->uncompressedSize = uncompressedSize;
+	hand->format = format;
+
+	/* default of LZMA-Alone is set at alloc time, and there are only
+	 * two possible formats */
+	if (format == ELZMA_lzip) {
+		initializeLZIPFormatHandler(&(hand->formatHandler));
+	}
+
+	return ELZMA_E_OK;
+}
+
+/* use Igor's stream hooks for compression. */
+struct elzmaInStream
+{
+	SRes (*ReadPtr)(void *p, void *buf, size_t *size);
+	elzma_read_callback inputStream;
+	void * inputContext;
+	unsigned int crc32;
+	unsigned int crc32a;
+	unsigned int crc32b;
+	unsigned int crc32c;
+	int calculateCRC;
+};
+
+static SRes elzmaReadFunc(void *p, void *buf, size_t *size)
+{
+	int rv;
+	struct elzmaInStream * is = (struct elzmaInStream *) p;
+	rv = is->inputStream(is->inputContext, buf, size);
+	if (rv == 0 && *size > 0 && is->calculateCRC) {
+		is->crc32 = CrcUpdate(is->crc32, buf, *size);
+	}
+	return rv;
+}
+
+struct elzmaOutStream {
+	size_t (*WritePtr)(void *p, const void *buf, size_t size);
+	elzma_write_callback outputStream;
+	void * outputContext;
+};
+
+static size_t elzmaWriteFunc(void *p, const void *buf, size_t size)
+{
+	struct elzmaOutStream * os = (struct elzmaOutStream *) p;
+	return os->outputStream(os->outputContext, buf, size);
+}
+
+/* use Igor's stream hooks for compression. */
+struct elzmaProgressStruct
+{
+	SRes (*Progress)(void *p, UInt64 inSize, UInt64 outSize);
+	long long unsigned int uncompressedSize;
+	elzma_progress_callback progressCallback;
+	void * progressContext;
+
+};
+
+#include <stdio.h>
+static SRes elzmaProgress(void *p, UInt64 inSize, UInt64 outSize)
+{
+	struct elzmaProgressStruct * ps = (struct elzmaProgressStruct *) p;
+	if (ps->progressCallback) {
+		ps->progressCallback(ps->progressContext, inSize,
+							 ps->uncompressedSize);
+	}
+	return SZ_OK;
+}
+
+void elzma_compress_set_allocation_callbacks(
+	elzma_compress_handle hand,
+	elzma_malloc mallocFunc, void * mallocFuncContext,
+	elzma_free freeFunc, void * freeFuncContext)
+{
+	if (hand) {
+		init_alloc_struct(&(hand->allocStruct),
+						  mallocFunc, mallocFuncContext,
+						  freeFunc, freeFuncContext);
+	}
+}
+
+int
+elzma_compress_run(elzma_compress_handle hand,
+				   elzma_read_callback inputStream, void * inputContext,
+				   elzma_write_callback outputStream, void * outputContext,
+				   elzma_progress_callback progressCallback,
+				   void * progressContext)
+{
+	struct elzmaInStream inStreamStruct;
+	struct elzmaOutStream outStreamStruct;
+	struct elzmaProgressStruct progressStruct;
+	SRes r;
+
+	CrcGenerateTable();
+
+	if (hand == NULL || inputStream == NULL) return ELZMA_E_BAD_PARAMS;
+
+	/* initialize stream structrures */
+	inStreamStruct.ReadPtr = elzmaReadFunc;
+	inStreamStruct.inputStream = inputStream;
+	inStreamStruct.inputContext = inputContext;
+	inStreamStruct.crc32 = CRC_INIT_VAL;
+	inStreamStruct.calculateCRC =
+		(hand->formatHandler.serialize_footer != NULL);
+
+	outStreamStruct.WritePtr = elzmaWriteFunc;
+	outStreamStruct.outputStream = outputStream;
+	outStreamStruct.outputContext = outputContext;
+
+	progressStruct.Progress = elzmaProgress;
+	progressStruct.uncompressedSize = hand->uncompressedSize;
+	progressStruct.progressCallback = progressCallback;
+	progressStruct.progressContext = progressContext;
+
+	/* create an encoding object */
+	hand->encHand = LzmaEnc_Create((ISzAlloc *) &(hand->allocStruct));
+
+	if (hand->encHand == NULL) {
+		return ELZMA_E_COMPRESS_ERROR;
+	}
+
+	/* inintialize with compression parameters */
+	if (SZ_OK != LzmaEnc_SetProps(hand->encHand, &(hand->props)))
+	{
+		return ELZMA_E_BAD_PARAMS;
+	}
+
+	/* verify format is sane */
+	if (ELZMA_lzma != hand->format && ELZMA_lzip != hand->format) {
+		return ELZMA_E_UNSUPPORTED_FORMAT;
+	}
+
+	/* now write the compression header header */
+	{
+		unsigned char * hdr = (unsigned char *)
+			hand->allocStruct.Alloc(&(hand->allocStruct),
+									hand->formatHandler.header_size);
+
+		struct elzma_file_header h;
+		size_t wt;
+
+		hand->formatHandler.init_header(&h);
+		h.pb = (unsigned char) hand->props.pb;
+		h.lp = (unsigned char) hand->props.lp;
+		h.lc = (unsigned char) hand->props.lc;
+		h.dictSize = hand->props.dictSize;
+		h.isStreamed = (unsigned char) (hand->uncompressedSize == 0);
+		h.uncompressedSize = hand->uncompressedSize;
+
+		hand->formatHandler.serialize_header(hdr, &h);
+
+		wt = outputStream(outputContext, (void *) hdr,
+						  hand->formatHandler.header_size);
+
+		hand->allocStruct.Free(&(hand->allocStruct), hdr);
+
+		if (wt != hand->formatHandler.header_size) {
+			return ELZMA_E_OUTPUT_ERROR;
+		}
+	}
+
+	/* begin LZMA encoding */
+	/* XXX: expose encoding progress */
+	r = LzmaEnc_Encode(hand->encHand,
+					   (ISeqOutStream *) &outStreamStruct,
+					   (ISeqInStream *) &inStreamStruct,
+					   (ICompressProgress *) &progressStruct,
+					   (ISzAlloc *) &(hand->allocStruct),
+					   (ISzAlloc *) &(hand->allocStruct));
+
+	if (r != SZ_OK) return ELZMA_E_COMPRESS_ERROR;
+
+	/* support a footer! (lzip) */
+	if (hand->formatHandler.serialize_footer != NULL &&
+		hand->formatHandler.footer_size > 0)
+	{
+		size_t wt;
+		unsigned char * ftrBuf = (unsigned char *)
+			hand->allocStruct.Alloc(&(hand->allocStruct),
+									hand->formatHandler.footer_size);
+		struct elzma_file_footer ftr;
+		ftr.crc32 = inStreamStruct.crc32 ^ 0xFFFFFFFF;
+		ftr.uncompressedSize = hand->uncompressedSize;
+
+		hand->formatHandler.serialize_footer(&ftr, ftrBuf);
+
+		wt = outputStream(outputContext, (void *) ftrBuf,
+						  hand->formatHandler.footer_size);
+
+		hand->allocStruct.Free(&(hand->allocStruct), ftrBuf);
+
+		if (wt != hand->formatHandler.footer_size) {
+			return ELZMA_E_OUTPUT_ERROR;
+		}
+	}
+
+	return ELZMA_E_OK;
+}
+
+unsigned int
+elzma_get_dict_size(unsigned long long size)
+{
+	int i = 13; /* 16k dict is minimum */
+
+	/* now we'll find the closes power of two with a max at 16< *
+	 * if the size is greater than 8m, we'll divide by two, all of this
+	 * is based on a quick set of emperical tests on hopefully
+	 * representative sample data */
+	if ( size > ( 1 << 23 ) ) size >>= 1;
+
+	while (size >> i) i++;
+
+	if (i > 23) return 1 << 23;
+
+	/* now 1 << i is greater than size, let's return either 1<<i or 1<<(i-1),
+	 * whichever is closer to size */
+	return 1 << ((((1 << i) - size) > (size - (1 << (i-1)))) ? i-1 : i);
+}
+
+
+#line 1 "decompress.c"
+
+#line 1 "LzmaDec.h"
+#ifndef __LZMA_DEC_H
+#define __LZMA_DEC_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* #define _LZMA_PROB32 */
+/* _LZMA_PROB32 can increase the speed on some CPUs,
+   but memory usage for CLzmaDec::probs will be doubled in that case */
+
+#ifdef _LZMA_PROB32
+#define CLzmaProb UInt32
+#else
+#define CLzmaProb UInt16
+#endif
+
+/* ---------- LZMA Properties ---------- */
+
+#define LZMA_PROPS_SIZE 5
+
+typedef struct _CLzmaProps
+{
+  unsigned lc, lp, pb;
+  UInt32 dicSize;
+} CLzmaProps;
+
+/* LzmaProps_Decode - decodes properties
+Returns:
+  SZ_OK
+  SZ_ERROR_UNSUPPORTED - Unsupported properties
+*/
+
+SRes LzmaProps_Decode(CLzmaProps *p, const Byte *data, unsigned size);
+
+/* ---------- LZMA Decoder state ---------- */
+
+/* LZMA_REQUIRED_INPUT_MAX = number of required input bytes for worst case.
+   Num bits = log2((2^11 / 31) ^ 22) + 26 < 134 + 26 = 160; */
+
+#define LZMA_REQUIRED_INPUT_MAX 20
+
+typedef struct
+{
+  CLzmaProps prop;
+  CLzmaProb *probs;
+  Byte *dic;
+  const Byte *buf;
+  UInt32 range, code;
+  SizeT dicPos;
+  SizeT dicBufSize;
+  UInt32 processedPos;
+  UInt32 checkDicSize;
+  unsigned state;
+  UInt32 reps[4];
+  unsigned remainLen;
+  int needFlush;
+  int needInitState;
+  UInt32 numProbs;
+  unsigned tempBufSize;
+  Byte tempBuf[LZMA_REQUIRED_INPUT_MAX];
+} CLzmaDec;
+
+#define LzmaDec_Construct(p) { (p)->dic = 0; (p)->probs = 0; }
+
+void LzmaDec_Init(CLzmaDec *p);
+
+/* There are two types of LZMA streams:
+	 0) Stream with end mark. That end mark adds about 6 bytes to compressed size.
+	 1) Stream without end mark. You must know exact uncompressed size to decompress such stream. */
+
+typedef enum
+{
+  LZMA_FINISH_ANY,   /* finish at any point */
+  LZMA_FINISH_END    /* block must be finished at the end */
+} ELzmaFinishMode;
+
+/* ELzmaFinishMode has meaning only if the decoding reaches output limit !!!
+
+   You must use LZMA_FINISH_END, when you know that current output buffer
+   covers last bytes of block. In other cases you must use LZMA_FINISH_ANY.
+
+   If LZMA decoder sees end marker before reaching output limit, it returns SZ_OK,
+   and output value of destLen will be less than output buffer size limit.
+   You can check status result also.
+
+   You can use multiple checks to test data integrity after full decompression:
+	 1) Check Result and "status" variable.
+	 2) Check that output(destLen) = uncompressedSize, if you know real uncompressedSize.
+	 3) Check that output(srcLen) = compressedSize, if you know real compressedSize.
+		You must use correct finish mode in that case. */
+
+typedef enum
+{
+  LZMA_STATUS_NOT_SPECIFIED,               /* use main error code instead */
+  LZMA_STATUS_FINISHED_WITH_MARK,          /* stream was finished with end mark. */
+  LZMA_STATUS_NOT_FINISHED,                /* stream was not finished */
+  LZMA_STATUS_NEEDS_MORE_INPUT,            /* you must provide more input bytes */
+  LZMA_STATUS_MAYBE_FINISHED_WITHOUT_MARK  /* there is probability that stream was finished without end mark */
+} ELzmaStatus;
+
+/* ELzmaStatus is used only as output value for function call */
+
+/* ---------- Interfaces ---------- */
+
+/* There are 3 levels of interfaces:
+	 1) Dictionary Interface
+	 2) Buffer Interface
+	 3) One Call Interface
+   You can select any of these interfaces, but don't mix functions from different
+   groups for same object. */
+
+/* There are two variants to allocate state for Dictionary Interface:
+	 1) LzmaDec_Allocate / LzmaDec_Free
+	 2) LzmaDec_AllocateProbs / LzmaDec_FreeProbs
+   You can use variant 2, if you set dictionary buffer manually.
+   For Buffer Interface you must always use variant 1.
+
+LzmaDec_Allocate* can return:
+  SZ_OK
+  SZ_ERROR_MEM         - Memory allocation error
+  SZ_ERROR_UNSUPPORTED - Unsupported properties
+*/
+
+SRes LzmaDec_AllocateProbs(CLzmaDec *p, const Byte *props, unsigned propsSize, ISzAlloc *alloc);
+void LzmaDec_FreeProbs(CLzmaDec *p, ISzAlloc *alloc);
+
+SRes LzmaDec_Allocate(CLzmaDec *state, const Byte *prop, unsigned propsSize, ISzAlloc *alloc);
+void LzmaDec_Free(CLzmaDec *state, ISzAlloc *alloc);
+
+/* ---------- Dictionary Interface ---------- */
+
+/* You can use it, if you want to eliminate the overhead for data copying from
+   dictionary to some other external buffer.
+   You must work with CLzmaDec variables directly in this interface.
+
+   STEPS:
+	 LzmaDec_Constr()
+	 LzmaDec_Allocate()
+	 for (each new stream)
+	 {
+	   LzmaDec_Init()
+	   while (it needs more decompression)
+	   {
+		 LzmaDec_DecodeToDic()
+		 use data from CLzmaDec::dic and update CLzmaDec::dicPos
+	   }
+	 }
+	 LzmaDec_Free()
+*/
+
+/* LzmaDec_DecodeToDic
+
+   The decoding to internal dictionary buffer (CLzmaDec::dic).
+   You must manually update CLzmaDec::dicPos, if it reaches CLzmaDec::dicBufSize !!!
+
+finishMode:
+  It has meaning only if the decoding reaches output limit (dicLimit).
+  LZMA_FINISH_ANY - Decode just dicLimit bytes.
+  LZMA_FINISH_END - Stream must be finished after dicLimit.
+
+Returns:
+  SZ_OK
+	status:
+	  LZMA_STATUS_FINISHED_WITH_MARK
+	  LZMA_STATUS_NOT_FINISHED
+	  LZMA_STATUS_NEEDS_MORE_INPUT
+	  LZMA_STATUS_MAYBE_FINISHED_WITHOUT_MARK
+  SZ_ERROR_DATA - Data error
+*/
+
+SRes LzmaDec_DecodeToDic(CLzmaDec *p, SizeT dicLimit,
+	const Byte *src, SizeT *srcLen, ELzmaFinishMode finishMode, ELzmaStatus *status);
+
+/* ---------- Buffer Interface ---------- */
+
+/* It's zlib-like interface.
+   See LzmaDec_DecodeToDic description for information about STEPS and return results,
+   but you must use LzmaDec_DecodeToBuf instead of LzmaDec_DecodeToDic and you don't need
+   to work with CLzmaDec variables manually.
+
+finishMode:
+  It has meaning only if the decoding reaches output limit (*destLen).
+  LZMA_FINISH_ANY - Decode just destLen bytes.
+  LZMA_FINISH_END - Stream must be finished after (*destLen).
+*/
+
+SRes LzmaDec_DecodeToBuf(CLzmaDec *p, Byte *dest, SizeT *destLen,
+	const Byte *src, SizeT *srcLen, ELzmaFinishMode finishMode, ELzmaStatus *status);
+
+/* ---------- One Call Interface ---------- */
+
+/* LzmaDecode
+
+finishMode:
+  It has meaning only if the decoding reaches output limit (*destLen).
+  LZMA_FINISH_ANY - Decode just destLen bytes.
+  LZMA_FINISH_END - Stream must be finished after (*destLen).
+
+Returns:
+  SZ_OK
+	status:
+	  LZMA_STATUS_FINISHED_WITH_MARK
+	  LZMA_STATUS_NOT_FINISHED
+	  LZMA_STATUS_MAYBE_FINISHED_WITHOUT_MARK
+  SZ_ERROR_DATA - Data error
+  SZ_ERROR_MEM  - Memory allocation error
+  SZ_ERROR_UNSUPPORTED - Unsupported properties
+  SZ_ERROR_INPUT_EOF - It needs more bytes in input buffer (src).
+*/
+
+SRes LzmaDecode(Byte *dest, SizeT *destLen, const Byte *src, SizeT *srcLen,
+	const Byte *propData, unsigned propSize, ELzmaFinishMode finishMode,
+	ELzmaStatus *status, ISzAlloc *alloc);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif
+
+#include <string.h>
+#include <assert.h>
+
+#define ELZMA_DECOMPRESS_INPUT_BUFSIZE (1024 * 64)
+#define ELZMA_DECOMPRESS_OUTPUT_BUFSIZE (1024 * 256)
+
+/** an opaque handle to an lzma decompressor */
+struct _elzma_decompress_handle {
+	char inbuf[ELZMA_DECOMPRESS_INPUT_BUFSIZE];
+	char outbuf[ELZMA_DECOMPRESS_OUTPUT_BUFSIZE];
+	struct elzma_alloc_struct allocStruct;
+};
+
+elzma_decompress_handle
+elzma_decompress_alloc()
+{
+	elzma_decompress_handle hand = (elzma_decompress_handle)
+		malloc(sizeof(struct _elzma_decompress_handle));
+	memset((void *) hand, 0, sizeof(struct _elzma_decompress_handle));
+	init_alloc_struct(&(hand->allocStruct), NULL, NULL, NULL, NULL);
+	return hand;
+}
+
+void elzma_decompress_set_allocation_callbacks(
+	elzma_decompress_handle hand,
+	elzma_malloc mallocFunc, void * mallocFuncContext,
+	elzma_free freeFunc, void * freeFuncContext)
+{
+	if (hand) {
+		init_alloc_struct(&(hand->allocStruct),
+						  mallocFunc, mallocFuncContext,
+						  freeFunc, freeFuncContext);
+	}
+}
+
+void
+elzma_decompress_free(elzma_decompress_handle * hand)
+{
+	if (*hand) free(*hand);
+	*hand = NULL;
+}
+
+int
+elzma_decompress_run(elzma_decompress_handle hand,
+					 elzma_read_callback inputStream, void * inputContext,
+					 elzma_write_callback outputStream, void * outputContext,
+					 elzma_file_format format)
+{
+	unsigned long long int totalRead = 0; /* total amount read from stream */
+	unsigned int crc32 = CRC_INIT_VAL; /* running crc32 (lzip case) */
+	CLzmaDec dec;
+	unsigned int errorCode = ELZMA_E_OK;
+	struct elzma_format_handler formatHandler;
+	struct elzma_file_header h;
+	struct elzma_file_footer f;
+
+	/* switch between supported formats */
+	if (format == ELZMA_lzma) {
+		initializeLZMAFormatHandler(&formatHandler);
+	} else if (format == ELZMA_lzip) {
+		CrcGenerateTable();
+		initializeLZIPFormatHandler(&formatHandler);
+	} else {
+		return ELZMA_E_BAD_PARAMS;
+	}
+
+	/* initialize footer */
+	f.crc32 = 0;
+	f.uncompressedSize = 0;
+
+	/* initialize decoder memory */
+	memset((void *) &dec, 0, sizeof(dec));
+	LzmaDec_Init(&dec);
+
+	/* decode the header. */
+	{
+		unsigned char * hdr = (unsigned char *)
+			hand->allocStruct.Alloc(&(hand->allocStruct),
+									formatHandler.header_size);
+
+		size_t sz = formatHandler.header_size;
+
+		formatHandler.init_header(&h);
+
+		if (inputStream(inputContext, hdr, &sz) != 0 ||
+			sz != formatHandler.header_size)
+		{
+			hand->allocStruct.Free(&(hand->allocStruct), hdr);
+			return ELZMA_E_INPUT_ERROR;
+		}
+
+		if (0 != formatHandler.parse_header(hdr, &h)) {
+			hand->allocStruct.Free(&(hand->allocStruct), hdr);
+			return ELZMA_E_CORRUPT_HEADER;
+		}
+
+		/* the LzmaDec_Allocate call requires 5 bytes which have
+		 * compression properties encoded in them.  In the case of
+		 * lzip, the header format does not already contain what
+		 * LzmaDec_Allocate expects, so we must craft it, silly */
+		{
+			unsigned char propsBuf[13];
+			const unsigned char * propsPtr = hdr;
+
+			if (format == ELZMA_lzip) {
+				struct elzma_format_handler lzmaHand;
+				initializeLZMAFormatHandler(&lzmaHand);
+				lzmaHand.serialize_header(propsBuf, &h);
+				propsPtr = propsBuf;
+			}
+
+			/* now we're ready to allocate the decoder */
+			LzmaDec_Allocate(&dec, propsPtr, 5,
+							 (ISzAlloc *) &(hand->allocStruct));
+		}
+
+		hand->allocStruct.Free(&(hand->allocStruct), hdr);
+	}
+
+	/* perform the decoding */
+	for (;;)
+	{
+		size_t dstLen = ELZMA_DECOMPRESS_OUTPUT_BUFSIZE;
+		size_t srcLen = ELZMA_DECOMPRESS_INPUT_BUFSIZE;
+		size_t amt = 0;
+		size_t bufOff = 0;
+		ELzmaStatus stat;
+
+		if (0 != inputStream(inputContext, hand->inbuf, &srcLen))
+		{
+			errorCode = ELZMA_E_INPUT_ERROR;
+			goto decompressEnd;
+		}
+
+		/* handle the case where the input prematurely finishes */
+		if (srcLen == 0) {
+			errorCode = ELZMA_E_INSUFFICIENT_INPUT;
+			goto decompressEnd;
+		}
+
+		amt = srcLen;
+
+		/* handle the case where a single read buffer of compressed bytes
+		 * will translate into multiple buffers of uncompressed bytes,
+		 * with this inner loop */
+		stat = LZMA_STATUS_NOT_SPECIFIED;
+
+		while (bufOff < srcLen) {
+			SRes r = LzmaDec_DecodeToBuf(&dec, (Byte *) hand->outbuf, &dstLen,
+										 ((Byte *) hand->inbuf + bufOff), &amt,
+										 LZMA_FINISH_ANY, &stat);
+
+			/* XXX deal with result code more granularly*/
+			if (r != SZ_OK) {
+				errorCode = ELZMA_E_DECOMPRESS_ERROR;
+				goto decompressEnd;
+			}
+
+			/* write what we've read */
+			{
+				size_t wt;
+
+				/* if decoding lzip, update our crc32 value */
+				if (format == ELZMA_lzip && dstLen > 0) {
+					crc32 = CrcUpdate(crc32, hand->outbuf, dstLen);
+
+				}
+				totalRead += dstLen;
+
+				wt = outputStream(outputContext, hand->outbuf, dstLen);
+				if (wt != dstLen) {
+					errorCode = ELZMA_E_OUTPUT_ERROR;
+					goto decompressEnd;
+				}
+			}
+
+			/* do we have more data on the input buffer? */
+			bufOff += amt;
+			assert( bufOff <= srcLen );
+			if (bufOff >= srcLen) break;
+			amt = srcLen - bufOff;
+
+			/* with lzip, we will have the footer left on the buffer! */
+			if (stat == LZMA_STATUS_FINISHED_WITH_MARK) {
+				break;
+			}
+		}
+
+		/* now check status */
+		if (stat == LZMA_STATUS_FINISHED_WITH_MARK) {
+			/* read a footer if one is expected and
+			 * present */
+			if (formatHandler.footer_size > 0 &&
+				amt >= formatHandler.footer_size &&
+				formatHandler.parse_footer != NULL)
+			{
+				formatHandler.parse_footer(
+					(unsigned char *) hand->inbuf + bufOff, &f);
+			}
+
+			break;
+		}
+		/* for LZMA utils,  we don't always have a finished mark */
+		if (!h.isStreamed && totalRead >= h.uncompressedSize) {
+			break;
+		}
+	}
+
+	/* finish the calculated crc32 */
+	crc32 ^= 0xFFFFFFFF;
+
+	/* if we have a footer, check that the calculated crc32 matches
+	 * the encoded crc32, and that the sizes match */
+	if (formatHandler.footer_size)
+	{
+		if (f.crc32 != crc32) {
+			errorCode = ELZMA_E_CRC32_MISMATCH;
+		} else if (f.uncompressedSize != totalRead) {
+			errorCode = ELZMA_E_SIZE_MISMATCH;
+		}
+	}
+	else if (!h.isStreamed)
+	{
+		/* if the format does not support a footer and has an uncompressed
+		 * size in the header, let's compare that with how much we actually
+		 * read */
+		if (h.uncompressedSize != totalRead) {
+			errorCode = ELZMA_E_SIZE_MISMATCH;
+		}
+	}
+
+  decompressEnd:
+	LzmaDec_Free(&dec, (ISzAlloc *) &(hand->allocStruct));
+
+	return errorCode;
+}
+
+
+#line 1 "lzip_header.c"
+#include <string.h>
+
+#define ELZMA_LZIP_HEADER_SIZE 6
+#define ELZMA_LZIP_FOOTER_SIZE 12
+
+static
+void initLzipHeader(struct elzma_file_header * hdr)
+{
+	memset((void *) hdr, 0, sizeof(struct elzma_file_header));
+}
+
+static
+int parseLzipHeader(const unsigned char * hdrBuf,
+					struct elzma_file_header * hdr)
+{
+	if (0 != strncmp("LZIP", (char *) hdrBuf, 4)) return 1;
+	/* XXX: ignore version for now */
+	hdr->pb = 2;
+	hdr->lp = 0;
+	hdr->lc = 3;
+	/* unknown at this point */
+	hdr->isStreamed = 1;
+	hdr->uncompressedSize = 0;
+	hdr->dictSize = 1 << (hdrBuf[5] & 0x1F);
+	return 0;
+}
+
+static int
+serializeLzipHeader(unsigned char * hdrBuf,
+					const struct elzma_file_header * hdr)
+{
+	hdrBuf[0] = 'L';
+	hdrBuf[1] = 'Z';
+	hdrBuf[2] = 'I';
+	hdrBuf[3] = 'P';
+	hdrBuf[4] = 0;
+	{
+		int r = 0;
+		while ((hdr->dictSize >> r) != 0) r++;
+		hdrBuf[5] = (unsigned char) (r-1) & 0x1F;
+	}
+	return 0;
+}
+
+static int
+serializeLzipFooter(struct elzma_file_footer * ftr,
+					unsigned char * ftrBuf)
+{
+	unsigned int i = 0;
+
+	/* first crc32 */
+	for (i = 0; i < 4; i++) {
+		*(ftrBuf++) = (unsigned char) (ftr->crc32 >> (i * 8));
+	}
+
+	/* next data size */
+	for (i = 0; i < 8; i++) {
+		*(ftrBuf++) = (unsigned char) (ftr->uncompressedSize >> (i * 8));
+	}
+
+	/* write version 0 files, omit member length for now*/
+
+	return 0;
+}
+
+static int
+parseLzipFooter(const unsigned char * ftrBuf,
+				struct elzma_file_footer * ftr)
+{
+	unsigned int i = 0;
+	ftr->crc32 = 0;
+	ftr->uncompressedSize = 0;
+
+	/* first crc32 */
+	for (i = 0; i < 4; i++)
+	{
+		ftr->crc32 += ((unsigned int) *(ftrBuf++) << (i * 8));
+	}
+
+	/* next data size */
+	for (i = 0; i < 8; i++) {
+		ftr->uncompressedSize +=
+			(unsigned long long) *(ftrBuf++) << (i * 8);
+	}
+	/* read version 0 files, omit member length for now*/
+
+	return 0;
+}
+
+void
+initializeLZIPFormatHandler(struct elzma_format_handler * hand)
+{
+	hand->header_size = ELZMA_LZIP_HEADER_SIZE;
+	hand->init_header = initLzipHeader;
+	hand->parse_header = parseLzipHeader;
+	hand->serialize_header = serializeLzipHeader;
+	hand->footer_size = ELZMA_LZIP_FOOTER_SIZE;
+	hand->serialize_footer = serializeLzipFooter;
+	hand->parse_footer = parseLzipFooter;
+}
+
+
+#line 1 "lzma_header.c"
+/* XXX: clean this up, it's mostly lifted from pavel */
+
+#include <string.h>
+#include <assert.h>
+
+#define ELZMA_LZMA_HEADER_SIZE 13
+#define ELZMA_LZMA_PROPSBUF_SIZE 5
+
+/****************
+  Header parsing
+ ****************/
+
+#ifndef UINT64_MAX
+#define UINT64_MAX ((unsigned long long) -1)
+#endif
+
+/* Parse the properties byte */
+static char
+lzmadec_header_properties (
+	unsigned char *pb, unsigned char *lp, unsigned char *lc, const unsigned char c)
+{
+/*	 pb, lp and lc are encoded into a single byte.  */
+	if (c > (9 * 5 * 5))
+		return -1;
+	*pb = c / (9 * 5);        /* 0 <= pb <= 4 */
+	*lp = (c % (9 * 5)) / 9;  /* 0 <= lp <= 4 */
+	*lc = c % 9;              /* 0 <= lc <= 8 */
+
+	assert (*pb < 5 && *lp < 5 && *lc < 9);
+	return 0;
+}
+
+/* Parse the dictionary size (4 bytes, little endian) */
+static char
+lzmadec_header_dictionary (unsigned int *size, const unsigned char *buffer)
+{
+	unsigned int i;
+	*size = 0;
+	for (i = 0; i < 4; i++)
+		*size += (unsigned int)(*buffer++) << (i * 8);
+	/* The dictionary size is limited to 256 MiB (checked from
+	 * LZMA SDK 4.30) */
+	if (*size > (1 << 28))
+		return -1;
+	return 0;
+}
+
+/* Parse the uncompressed size field (8 bytes, little endian) */
+static void
+lzmadec_header_uncompressed (unsigned long long *size,
+							 unsigned char *is_streamed,
+							 const unsigned char *buffer)
+{
+	unsigned int i;
+
+	/* Streamed files have all 64 bits set in the size field.
+	 * We don't know the uncompressed size beforehand. */
+	*is_streamed = 1;  /* Assume streamed. */
+	*size = 0;
+	for (i = 0; i < 8; i++) {
+		*size += (unsigned long long)buffer[i] << (i * 8);
+		if (buffer[i] != 255)
+			*is_streamed = 0;
+	}
+	assert ((*is_streamed == 1 && *size == UINT64_MAX)
+			|| (*is_streamed == 0 && *size < UINT64_MAX));
+}
+
+static void
+initLzmaHeader(struct elzma_file_header * hdr)
+{
+	memset((void *) hdr, 0, sizeof(struct elzma_file_header));
+}
+
+static int
+parseLzmaHeader(const unsigned char * hdrBuf,
+				struct elzma_file_header * hdr)
+{
+	if (lzmadec_header_properties(&(hdr->pb), &(hdr->lp), &(hdr->lc),
+								  *hdrBuf) ||
+		lzmadec_header_dictionary(&(hdr->dictSize), hdrBuf + 1))
+	{
+		return 1;
+	}
+	lzmadec_header_uncompressed(&(hdr->uncompressedSize),
+								&(hdr->isStreamed),
+								hdrBuf + 5);
+
+	return 0;
+}
+
+static int
+serializeLzmaHeader(unsigned char * hdrBuf,
+					const struct elzma_file_header * hdr)
+{
+	unsigned int i;
+
+	memset((void *) hdrBuf, 0, ELZMA_LZMA_HEADER_SIZE);
+
+	/* encode lc, pb, and lp */
+	*hdrBuf++ = hdr->lc + (hdr->pb * 45) + (hdr->lp * 45 * 9);
+
+	/* encode dictionary size */
+	for (i = 0; i < 4; i++) {
+		*(hdrBuf++) = (unsigned char) (hdr->dictSize >> (i * 8));
+	}
+
+	/* encode uncompressed size */
+	for (i = 0; i < 8; i++) {
+		if (hdr->isStreamed) {
+			*(hdrBuf++) = 0xff;
+		} else {
+			*(hdrBuf++) = (unsigned char) (hdr->uncompressedSize >> (i * 8));
+		}
+	}
+
+	return 0;
+}
+
+void
+initializeLZMAFormatHandler(struct elzma_format_handler * hand)
+{
+	hand->header_size = ELZMA_LZMA_HEADER_SIZE;
+	hand->init_header = initLzmaHeader;
+	hand->parse_header = parseLzmaHeader;
+	hand->serialize_header = serializeLzmaHeader;
+	hand->footer_size = 0;
+	hand->serialize_footer = NULL;
+}
+
+// lzma sdk
+#define _7ZIP_ST
+
+#line 1 "7zCrc.c"
+#define kCrcPoly 0xEDB88320
+UInt32 g_CrcTable[256];
+
+void MY_FAST_CALL CrcGenerateTable(void)
+{
+  UInt32 i;
+  for (i = 0; i < 256; i++)
+  {
+	UInt32 r = i;
+	int j;
+	for (j = 0; j < 8; j++)
+	  r = (r >> 1) ^ (kCrcPoly & ~((r & 1) - 1));
+	g_CrcTable[i] = r;
+  }
+}
+
+UInt32 MY_FAST_CALL CrcUpdate(UInt32 v, const void *data, size_t size)
+{
+  const Byte *p = (const Byte *)data;
+  for (; size > 0 ; size--, p++)
+	v = CRC_UPDATE_BYTE(v, *p);
+  return v;
+}
+
+UInt32 MY_FAST_CALL CrcCalc(const void *data, size_t size)
+{
+  return CrcUpdate(CRC_INIT_VAL, data, size) ^ 0xFFFFFFFF;
+}
+
+
+
+#line 1 "Alloc.c"
+#ifdef _WIN32
+#include <windows.h>
+#endif
+#include <stdlib.h>
+
+
+#line 1 "Alloc.h"
+#ifndef __COMMON_ALLOC_H
+#define __COMMON_ALLOC_H
+
+#include <stddef.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+void *MyAlloc(size_t size);
+void MyFree(void *address);
+
+#ifdef _WIN32
+
+void SetLargePageSize();
+
+void *MidAlloc(size_t size);
+void MidFree(void *address);
+void *BigAlloc(size_t size);
+void BigFree(void *address);
+
+#else
+
+#define MidAlloc(size) MyAlloc(size)
+#define MidFree(address) MyFree(address)
+#define BigAlloc(size) MyAlloc(size)
+#define BigFree(address) MyFree(address)
+
+#endif
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif
+
+/* #define _SZ_ALLOC_DEBUG */
+
+/* use _SZ_ALLOC_DEBUG to debug alloc/free operations */
+#ifdef _SZ_ALLOC_DEBUG
+#include <stdio.h>
+int g_allocCount = 0;
+int g_allocCountMid = 0;
+int g_allocCountBig = 0;
+#endif
+
+void *MyAlloc(size_t size)
+{
+  if (size == 0)
+	return 0;
+  #ifdef _SZ_ALLOC_DEBUG
+  {
+	void *p = malloc(size);
+	fprintf(stderr, "\nAlloc %10d bytes, count = %10d,  addr = %8X", size, g_allocCount++, (unsigned)p);
+	return p;
+  }
+  #else
+  return malloc(size);
+  #endif
+}
+
+void MyFree(void *address)
+{
+  #ifdef _SZ_ALLOC_DEBUG
+  if (address != 0)
+	fprintf(stderr, "\nFree; count = %10d,  addr = %8X", --g_allocCount, (unsigned)address);
+  #endif
+  free(address);
+}
+
+#ifdef _WIN32
+
+void *MidAlloc(size_t size)
+{
+  if (size == 0)
+	return 0;
+  #ifdef _SZ_ALLOC_DEBUG
+  fprintf(stderr, "\nAlloc_Mid %10d bytes;  count = %10d", size, g_allocCountMid++);
+  #endif
+  return VirtualAlloc(0, size, MEM_COMMIT, PAGE_READWRITE);
+}
+
+void MidFree(void *address)
+{
+  #ifdef _SZ_ALLOC_DEBUG
+  if (address != 0)
+	fprintf(stderr, "\nFree_Mid; count = %10d", --g_allocCountMid);
+  #endif
+  if (address == 0)
+	return;
+  VirtualFree(address, 0, MEM_RELEASE);
+}
+
+#ifndef MEM_LARGE_PAGES
+#undef _7ZIP_LARGE_PAGES
+#endif
+
+#ifdef _7ZIP_LARGE_PAGES
+SIZE_T g_LargePageSize = 0;
+typedef SIZE_T (WINAPI *GetLargePageMinimumP)();
+#endif
+
+void SetLargePageSize()
+{
+  #ifdef _7ZIP_LARGE_PAGES
+  SIZE_T size = 0;
+  GetLargePageMinimumP largePageMinimum = (GetLargePageMinimumP)
+		GetProcAddress(GetModuleHandle(TEXT("kernel32.dll")), "GetLargePageMinimum");
+  if (largePageMinimum == 0)
+	return;
+  size = largePageMinimum();
+  if (size == 0 || (size & (size - 1)) != 0)
+	return;
+  g_LargePageSize = size;
+  #endif
+}
+
+void *BigAlloc(size_t size)
+{
+  if (size == 0)
+	return 0;
+  #ifdef _SZ_ALLOC_DEBUG
+  fprintf(stderr, "\nAlloc_Big %10d bytes;  count = %10d", size, g_allocCountBig++);
+  #endif
+
+  #ifdef _7ZIP_LARGE_PAGES
+  if (g_LargePageSize != 0 && g_LargePageSize <= (1 << 30) && size >= (1 << 18))
+  {
+	void *res = VirtualAlloc(0, (size + g_LargePageSize - 1) & (~(g_LargePageSize - 1)),
+		MEM_COMMIT | MEM_LARGE_PAGES, PAGE_READWRITE);
+	if (res != 0)
+	  return res;
+  }
+  #endif
+  return VirtualAlloc(0, size, MEM_COMMIT, PAGE_READWRITE);
+}
+
+void BigFree(void *address)
+{
+  #ifdef _SZ_ALLOC_DEBUG
+  if (address != 0)
+	fprintf(stderr, "\nFree_Big; count = %10d", --g_allocCountBig);
+  #endif
+
+  if (address == 0)
+	return;
+  VirtualFree(address, 0, MEM_RELEASE);
+}
+
+#endif
+
+
+#line 1 "Bra.c"
+
+#line 1 "Bra.h"
+#ifndef __BRA_H
+#define __BRA_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/*
+These functions convert relative addresses to absolute addresses
+in CALL instructions to increase the compression ratio.
+
+  In:
+	data     - data buffer
+	size     - size of data
+	ip       - current virtual Instruction Pinter (IP) value
+	state    - state variable for x86 converter
+	encoding - 0 (for decoding), 1 (for encoding)
+
+  Out:
+	state    - state variable for x86 converter
+
+  Returns:
+	The number of processed bytes. If you call these functions with multiple calls,
+	you must start next call with first byte after block of processed bytes.
+
+  Type   Endian  Alignment  LookAhead
+
+  x86    little      1          4
+  ARMT   little      2          2
+  ARM    little      4          0
+  PPC     big        4          0
+  SPARC   big        4          0
+  IA64   little     16          0
+
+  size must be >= Alignment + LookAhead, if it's not last block.
+  If (size < Alignment + LookAhead), converter returns 0.
+
+  Example:
+
+	UInt32 ip = 0;
+	for ()
+	{
+	  ; size must be >= Alignment + LookAhead, if it's not last block
+	  SizeT processed = Convert(data, size, ip, 1);
+	  data += processed;
+	  size -= processed;
+	  ip += processed;
+	}
+*/
+
+#define x86_Convert_Init(state) { state = 0; }
+SizeT x86_Convert(Byte *data, SizeT size, UInt32 ip, UInt32 *state, int encoding);
+SizeT ARM_Convert(Byte *data, SizeT size, UInt32 ip, int encoding);
+SizeT ARMT_Convert(Byte *data, SizeT size, UInt32 ip, int encoding);
+SizeT PPC_Convert(Byte *data, SizeT size, UInt32 ip, int encoding);
+SizeT SPARC_Convert(Byte *data, SizeT size, UInt32 ip, int encoding);
+SizeT IA64_Convert(Byte *data, SizeT size, UInt32 ip, int encoding);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif
+
+SizeT ARM_Convert(Byte *data, SizeT size, UInt32 ip, int encoding)
+{
+  SizeT i;
+  if (size < 4)
+	return 0;
+  size -= 4;
+  ip += 8;
+  for (i = 0; i <= size; i += 4)
+  {
+	if (data[i + 3] == 0xEB)
+	{
+	  UInt32 dest;
+	  UInt32 src = ((UInt32)data[i + 2] << 16) | ((UInt32)data[i + 1] << 8) | (data[i + 0]);
+	  src <<= 2;
+	  if (encoding)
+		dest = ip + (UInt32)i + src;
+	  else
+		dest = src - (ip + (UInt32)i);
+	  dest >>= 2;
+	  data[i + 2] = (Byte)(dest >> 16);
+	  data[i + 1] = (Byte)(dest >> 8);
+	  data[i + 0] = (Byte)dest;
+	}
+  }
+  return i;
+}
+
+SizeT ARMT_Convert(Byte *data, SizeT size, UInt32 ip, int encoding)
+{
+  SizeT i;
+  if (size < 4)
+	return 0;
+  size -= 4;
+  ip += 4;
+  for (i = 0; i <= size; i += 2)
+  {
+	if ((data[i + 1] & 0xF8) == 0xF0 &&
+		(data[i + 3] & 0xF8) == 0xF8)
+	{
+	  UInt32 dest;
+	  UInt32 src =
+		(((UInt32)data[i + 1] & 0x7) << 19) |
+		((UInt32)data[i + 0] << 11) |
+		(((UInt32)data[i + 3] & 0x7) << 8) |
+		(data[i + 2]);
+
+	  src <<= 1;
+	  if (encoding)
+		dest = ip + (UInt32)i + src;
+	  else
+		dest = src - (ip + (UInt32)i);
+	  dest >>= 1;
+
+	  data[i + 1] = (Byte)(0xF0 | ((dest >> 19) & 0x7));
+	  data[i + 0] = (Byte)(dest >> 11);
+	  data[i + 3] = (Byte)(0xF8 | ((dest >> 8) & 0x7));
+	  data[i + 2] = (Byte)dest;
+	  i += 2;
+	}
+  }
+  return i;
+}
+
+SizeT PPC_Convert(Byte *data, SizeT size, UInt32 ip, int encoding)
+{
+  SizeT i;
+  if (size < 4)
+	return 0;
+  size -= 4;
+  for (i = 0; i <= size; i += 4)
+  {
+	if ((data[i] >> 2) == 0x12 && (data[i + 3] & 3) == 1)
+	{
+	  UInt32 src = ((UInt32)(data[i + 0] & 3) << 24) |
+		((UInt32)data[i + 1] << 16) |
+		((UInt32)data[i + 2] << 8) |
+		((UInt32)data[i + 3] & (~3));
+
+	  UInt32 dest;
+	  if (encoding)
+		dest = ip + (UInt32)i + src;
+	  else
+		dest = src - (ip + (UInt32)i);
+	  data[i + 0] = (Byte)(0x48 | ((dest >> 24) &  0x3));
+	  data[i + 1] = (Byte)(dest >> 16);
+	  data[i + 2] = (Byte)(dest >> 8);
+	  data[i + 3] &= 0x3;
+	  data[i + 3] |= dest;
+	}
+  }
+  return i;
+}
+
+SizeT SPARC_Convert(Byte *data, SizeT size, UInt32 ip, int encoding)
+{
+  UInt32 i;
+  if (size < 4)
+	return 0;
+  size -= 4;
+  for (i = 0; i <= size; i += 4)
+  {
+	if ((data[i] == 0x40 && (data[i + 1] & 0xC0) == 0x00) ||
+		(data[i] == 0x7F && (data[i + 1] & 0xC0) == 0xC0))
+	{
+	  UInt32 src =
+		((UInt32)data[i + 0] << 24) |
+		((UInt32)data[i + 1] << 16) |
+		((UInt32)data[i + 2] << 8) |
+		((UInt32)data[i + 3]);
+	  UInt32 dest;
+
+	  src <<= 2;
+	  if (encoding)
+		dest = ip + i + src;
+	  else
+		dest = src - (ip + i);
+	  dest >>= 2;
+
+	  dest = (((0 - ((dest >> 22) & 1)) << 22) & 0x3FFFFFFF) | (dest & 0x3FFFFF) | 0x40000000;
+
+	  data[i + 0] = (Byte)(dest >> 24);
+	  data[i + 1] = (Byte)(dest >> 16);
+	  data[i + 2] = (Byte)(dest >> 8);
+	  data[i + 3] = (Byte)dest;
+	}
+  }
+  return i;
+}
+
+
+#line 1 "Bra86.c"
+#define Test86MSByte(b) ((b) == 0 || (b) == 0xFF)
+
+const Byte kMaskToAllowedStatus[8] = {1, 1, 1, 0, 1, 0, 0, 0};
+const Byte kMaskToBitNumber[8] = {0, 1, 2, 2, 3, 3, 3, 3};
+
+SizeT x86_Convert(Byte *data, SizeT size, UInt32 ip, UInt32 *state, int encoding)
+{
+  SizeT bufferPos = 0, prevPosT;
+  UInt32 prevMask = *state & 0x7;
+  if (size < 5)
+	return 0;
+  ip += 5;
+  prevPosT = (SizeT)0 - 1;
+
+  for (;;)
+  {
+	Byte *p = data + bufferPos;
+	Byte *limit = data + size - 4;
+	for (; p < limit; p++)
+	  if ((*p & 0xFE) == 0xE8)
+		break;
+	bufferPos = (SizeT)(p - data);
+	if (p >= limit)
+	  break;
+	prevPosT = bufferPos - prevPosT;
+	if (prevPosT > 3)
+	  prevMask = 0;
+	else
+	{
+	  prevMask = (prevMask << ((int)prevPosT - 1)) & 0x7;
+	  if (prevMask != 0)
+	  {
+		Byte b = p[4 - kMaskToBitNumber[prevMask]];
+		if (!kMaskToAllowedStatus[prevMask] || Test86MSByte(b))
+		{
+		  prevPosT = bufferPos;
+		  prevMask = ((prevMask << 1) & 0x7) | 1;
+		  bufferPos++;
+		  continue;
+		}
+	  }
+	}
+	prevPosT = bufferPos;
+
+	if (Test86MSByte(p[4]))
+	{
+	  UInt32 src = ((UInt32)p[4] << 24) | ((UInt32)p[3] << 16) | ((UInt32)p[2] << 8) | ((UInt32)p[1]);
+	  UInt32 dest;
+	  for (;;)
+	  {
+		Byte b;
+		int index;
+		if (encoding)
+		  dest = (ip + (UInt32)bufferPos) + src;
+		else
+		  dest = src - (ip + (UInt32)bufferPos);
+		if (prevMask == 0)
+		  break;
+		index = kMaskToBitNumber[prevMask] * 8;
+		b = (Byte)(dest >> (24 - index));
+		if (!Test86MSByte(b))
+		  break;
+		src = dest ^ ((1 << (32 - index)) - 1);
+	  }
+	  p[4] = (Byte)(~(((dest >> 24) & 1) - 1));
+	  p[3] = (Byte)(dest >> 16);
+	  p[2] = (Byte)(dest >> 8);
+	  p[1] = (Byte)dest;
+	  bufferPos += 5;
+	}
+	else
+	{
+	  prevMask = ((prevMask << 1) & 0x7) | 1;
+	  bufferPos++;
+	}
+  }
+  prevPosT = bufferPos - prevPosT;
+  *state = ((prevPosT > 3) ? 0 : ((prevMask << ((int)prevPosT - 1)) & 0x7));
+  return bufferPos;
+}
+
+
+#line 1 "BraIA64.c"
+static const Byte kBranchTable[32] =
+{
+  0, 0, 0, 0, 0, 0, 0, 0,
+  0, 0, 0, 0, 0, 0, 0, 0,
+  4, 4, 6, 6, 0, 0, 7, 7,
+  4, 4, 0, 0, 4, 4, 0, 0
+};
+
+SizeT IA64_Convert(Byte *data, SizeT size, UInt32 ip, int encoding)
+{
+  SizeT i;
+  if (size < 16)
+	return 0;
+  size -= 16;
+  for (i = 0; i <= size; i += 16)
+  {
+	UInt32 instrTemplate = data[i] & 0x1F;
+	UInt32 mask = kBranchTable[instrTemplate];
+	UInt32 bitPos = 5;
+	int slot;
+	for (slot = 0; slot < 3; slot++, bitPos += 41)
+	{
+	  UInt32 bytePos, bitRes;
+	  UInt64 instruction, instNorm;
+	  int j;
+	  if (((mask >> slot) & 1) == 0)
+		continue;
+	  bytePos = (bitPos >> 3);
+	  bitRes = bitPos & 0x7;
+	  instruction = 0;
+	  for (j = 0; j < 6; j++)
+		instruction += (UInt64)data[i + j + bytePos] << (8 * j);
+
+	  instNorm = instruction >> bitRes;
+	  if (((instNorm >> 37) & 0xF) == 0x5 && ((instNorm >> 9) & 0x7) == 0)
+	  {
+		UInt32 src = (UInt32)((instNorm >> 13) & 0xFFFFF);
+		UInt32 dest;
+		src |= ((UInt32)(instNorm >> 36) & 1) << 20;
+
+		src <<= 4;
+
+		if (encoding)
+		  dest = ip + (UInt32)i + src;
+		else
+		  dest = src - (ip + (UInt32)i);
+
+		dest >>= 4;
+
+		instNorm &= ~((UInt64)(0x8FFFFF) << 13);
+		instNorm |= ((UInt64)(dest & 0xFFFFF) << 13);
+		instNorm |= ((UInt64)(dest & 0x100000) << (36 - 20));
+
+		instruction &= (1 << bitRes) - 1;
+		instruction |= (instNorm << bitRes);
+		for (j = 0; j < 6; j++)
+		  data[i + j + bytePos] = (Byte)(instruction >> (8 * j));
+	  }
+	}
+  }
+  return i;
+}
+
+
+#line 1 "LzFind.c"
+#include <string.h>
+
+
+#line 1 "LzFind.h"
+#ifndef __LZ_FIND_H
+#define __LZ_FIND_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef UInt32 CLzRef;
+
+typedef struct _CMatchFinder
+{
+  Byte *buffer;
+  UInt32 pos;
+  UInt32 posLimit;
+  UInt32 streamPos;
+  UInt32 lenLimit;
+
+  UInt32 cyclicBufferPos;
+  UInt32 cyclicBufferSize; /* it must be = (historySize + 1) */
+
+  UInt32 matchMaxLen;
+  CLzRef *hash;
+  CLzRef *son;
+  UInt32 hashMask;
+  UInt32 cutValue;
+
+  Byte *bufferBase;
+  ISeqInStream *stream;
+  int streamEndWasReached;
+
+  UInt32 blockSize;
+  UInt32 keepSizeBefore;
+  UInt32 keepSizeAfter;
+
+  UInt32 numHashBytes;
+  int directInput;
+  size_t directInputRem;
+  int btMode;
+  int bigHash;
+  UInt32 historySize;
+  UInt32 fixedHashSize;
+  UInt32 hashSizeSum;
+  UInt32 numSons;
+  SRes result;
+  UInt32 crc[256];
+} CMatchFinder;
+
+#define Inline_MatchFinder_GetPointerToCurrentPos(p) ((p)->buffer)
+#define Inline_MatchFinder_GetIndexByte(p, index) ((p)->buffer[(Int32)(index)])
+
+#define Inline_MatchFinder_GetNumAvailableBytes(p) ((p)->streamPos - (p)->pos)
+
+int MatchFinder_NeedMove(CMatchFinder *p);
+Byte *MatchFinder_GetPointerToCurrentPos(CMatchFinder *p);
+void MatchFinder_MoveBlock(CMatchFinder *p);
+void MatchFinder_ReadIfRequired(CMatchFinder *p);
+
+void MatchFinder_Construct(CMatchFinder *p);
+
+/* Conditions:
+	 historySize <= 3 GB
+	 keepAddBufferBefore + matchMaxLen + keepAddBufferAfter < 511MB
+*/
+int MatchFinder_Create(CMatchFinder *p, UInt32 historySize,
+	UInt32 keepAddBufferBefore, UInt32 matchMaxLen, UInt32 keepAddBufferAfter,
+	ISzAlloc *alloc);
+void MatchFinder_Free(CMatchFinder *p, ISzAlloc *alloc);
+void MatchFinder_Normalize3(UInt32 subValue, CLzRef *items, UInt32 numItems);
+void MatchFinder_ReduceOffsets(CMatchFinder *p, UInt32 subValue);
+
+UInt32 * GetMatchesSpec1(UInt32 lenLimit, UInt32 curMatch, UInt32 pos, const Byte *buffer, CLzRef *son,
+	UInt32 _cyclicBufferPos, UInt32 _cyclicBufferSize, UInt32 _cutValue,
+	UInt32 *distances, UInt32 maxLen);
+
+/*
+Conditions:
+  Mf_GetNumAvailableBytes_Func must be called before each Mf_GetMatchLen_Func.
+  Mf_GetPointerToCurrentPos_Func's result must be used only before any other function
+*/
+
+typedef void (*Mf_Init_Func)(void *object);
+typedef Byte (*Mf_GetIndexByte_Func)(void *object, Int32 index);
+typedef UInt32 (*Mf_GetNumAvailableBytes_Func)(void *object);
+typedef const Byte * (*Mf_GetPointerToCurrentPos_Func)(void *object);
+typedef UInt32 (*Mf_GetMatches_Func)(void *object, UInt32 *distances);
+typedef void (*Mf_Skip_Func)(void *object, UInt32);
+
+typedef struct _IMatchFinder
+{
+  Mf_Init_Func Init;
+  Mf_GetIndexByte_Func GetIndexByte;
+  Mf_GetNumAvailableBytes_Func GetNumAvailableBytes;
+  Mf_GetPointerToCurrentPos_Func GetPointerToCurrentPos;
+  Mf_GetMatches_Func GetMatches;
+  Mf_Skip_Func Skip;
+} IMatchFinder;
+
+void MatchFinder_CreateVTable(CMatchFinder *p, IMatchFinder *vTable);
+
+void MatchFinder_Init(CMatchFinder *p);
+UInt32 Bt3Zip_MatchFinder_GetMatches(CMatchFinder *p, UInt32 *distances);
+UInt32 Hc3Zip_MatchFinder_GetMatches(CMatchFinder *p, UInt32 *distances);
+void Bt3Zip_MatchFinder_Skip(CMatchFinder *p, UInt32 num);
+void Hc3Zip_MatchFinder_Skip(CMatchFinder *p, UInt32 num);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif
+
+
+#line 1 "LzHash.h"
+#ifndef __LZ_HASH_H
+#define __LZ_HASH_H
+
+#define kHash2Size (1 << 10)
+#define kHash3Size (1 << 16)
+#define kHash4Size (1 << 20)
+
+#define kFix3HashSize (kHash2Size)
+#define kFix4HashSize (kHash2Size + kHash3Size)
+#define kFix5HashSize (kHash2Size + kHash3Size + kHash4Size)
+
+#define HASH2_CALC hashValue = cur[0] | ((UInt32)cur[1] << 8);
+
+#define HASH3_CALC { \
+  UInt32 temp = p->crc[cur[0]] ^ cur[1]; \
+  hash2Value = temp & (kHash2Size - 1); \
+  hashValue = (temp ^ ((UInt32)cur[2] << 8)) & p->hashMask; }
+
+#define HASH4_CALC { \
+  UInt32 temp = p->crc[cur[0]] ^ cur[1]; \
+  hash2Value = temp & (kHash2Size - 1); \
+  hash3Value = (temp ^ ((UInt32)cur[2] << 8)) & (kHash3Size - 1); \
+  hashValue = (temp ^ ((UInt32)cur[2] << 8) ^ (p->crc[cur[3]] << 5)) & p->hashMask; }
+
+#define HASH5_CALC { \
+  UInt32 temp = p->crc[cur[0]] ^ cur[1]; \
+  hash2Value = temp & (kHash2Size - 1); \
+  hash3Value = (temp ^ ((UInt32)cur[2] << 8)) & (kHash3Size - 1); \
+  hash4Value = (temp ^ ((UInt32)cur[2] << 8) ^ (p->crc[cur[3]] << 5)); \
+  hashValue = (hash4Value ^ (p->crc[cur[4]] << 3)) & p->hashMask; \
+  hash4Value &= (kHash4Size - 1); }
+
+/* #define HASH_ZIP_CALC hashValue = ((cur[0] | ((UInt32)cur[1] << 8)) ^ p->crc[cur[2]]) & 0xFFFF; */
+#define HASH_ZIP_CALC hashValue = ((cur[2] | ((UInt32)cur[0] << 8)) ^ p->crc[cur[1]]) & 0xFFFF;
+
+#define MT_HASH2_CALC \
+  hash2Value = (p->crc[cur[0]] ^ cur[1]) & (kHash2Size - 1);
+
+#define MT_HASH3_CALC { \
+  UInt32 temp = p->crc[cur[0]] ^ cur[1]; \
+  hash2Value = temp & (kHash2Size - 1); \
+  hash3Value = (temp ^ ((UInt32)cur[2] << 8)) & (kHash3Size - 1); }
+
+#define MT_HASH4_CALC { \
+  UInt32 temp = p->crc[cur[0]] ^ cur[1]; \
+  hash2Value = temp & (kHash2Size - 1); \
+  hash3Value = (temp ^ ((UInt32)cur[2] << 8)) & (kHash3Size - 1); \
+  hash4Value = (temp ^ ((UInt32)cur[2] << 8) ^ (p->crc[cur[3]] << 5)) & (kHash4Size - 1); }
+
+#endif
+
+#define kEmptyHashValue 0
+#define kMaxValForNormalize ((UInt32)0xFFFFFFFF)
+#define kNormalizeStepMin (1 << 10) /* it must be power of 2 */
+#define kNormalizeMask (~(kNormalizeStepMin - 1))
+#define kMaxHistorySize ((UInt32)3 << 30)
+
+#define kStartMaxLen 3
+
+static void LzInWindow_Free(CMatchFinder *p, ISzAlloc *alloc)
+{
+  if (!p->directInput)
+  {
+	alloc->Free(alloc, p->bufferBase);
+	p->bufferBase = 0;
+  }
+}
+
+/* keepSizeBefore + keepSizeAfter + keepSizeReserv must be < 4G) */
+
+static int LzInWindow_Create(CMatchFinder *p, UInt32 keepSizeReserv, ISzAlloc *alloc)
+{
+  UInt32 blockSize = p->keepSizeBefore + p->keepSizeAfter + keepSizeReserv;
+  if (p->directInput)
+  {
+	p->blockSize = blockSize;
+	return 1;
+  }
+  if (p->bufferBase == 0 || p->blockSize != blockSize)
+  {
+	LzInWindow_Free(p, alloc);
+	p->blockSize = blockSize;
+	p->bufferBase = (Byte *)alloc->Alloc(alloc, (size_t)blockSize);
+  }
+  return (p->bufferBase != 0);
+}
+
+Byte *MatchFinder_GetPointerToCurrentPos(CMatchFinder *p) { return p->buffer; }
+Byte MatchFinder_GetIndexByte(CMatchFinder *p, Int32 index) { return p->buffer[index]; }
+
+UInt32 MatchFinder_GetNumAvailableBytes(CMatchFinder *p) { return p->streamPos - p->pos; }
+
+void MatchFinder_ReduceOffsets(CMatchFinder *p, UInt32 subValue)
+{
+  p->posLimit -= subValue;
+  p->pos -= subValue;
+  p->streamPos -= subValue;
+}
+
+static void MatchFinder_ReadBlock(CMatchFinder *p)
+{
+  if (p->streamEndWasReached || p->result != SZ_OK)
+	return;
+  if (p->directInput)
+  {
+	UInt32 curSize = 0xFFFFFFFF - p->streamPos;
+	if (curSize > p->directInputRem)
+	  curSize = (UInt32)p->directInputRem;
+	p->directInputRem -= curSize;
+	p->streamPos += curSize;
+	if (p->directInputRem == 0)
+	  p->streamEndWasReached = 1;
+	return;
+  }
+  for (;;)
+  {
+	Byte *dest = p->buffer + (p->streamPos - p->pos);
+	size_t size = (p->bufferBase + p->blockSize - dest);
+	if (size == 0)
+	  return;
+	p->result = p->stream->Read(p->stream, dest, &size);
+	if (p->result != SZ_OK)
+	  return;
+	if (size == 0)
+	{
+	  p->streamEndWasReached = 1;
+	  return;
+	}
+	p->streamPos += (UInt32)size;
+	if (p->streamPos - p->pos > p->keepSizeAfter)
+	  return;
+  }
+}
+
+void MatchFinder_MoveBlock(CMatchFinder *p)
+{
+  memmove(p->bufferBase,
+	p->buffer - p->keepSizeBefore,
+	(size_t)(p->streamPos - p->pos + p->keepSizeBefore));
+  p->buffer = p->bufferBase + p->keepSizeBefore;
+}
+
+int MatchFinder_NeedMove(CMatchFinder *p)
+{
+  if (p->directInput)
+	return 0;
+  /* if (p->streamEndWasReached) return 0; */
+  return ((size_t)(p->bufferBase + p->blockSize - p->buffer) <= p->keepSizeAfter);
+}
+
+void MatchFinder_ReadIfRequired(CMatchFinder *p)
+{
+  if (p->streamEndWasReached)
+	return;
+  if (p->keepSizeAfter >= p->streamPos - p->pos)
+	MatchFinder_ReadBlock(p);
+}
+
+static void MatchFinder_CheckAndMoveAndRead(CMatchFinder *p)
+{
+  if (MatchFinder_NeedMove(p))
+	MatchFinder_MoveBlock(p);
+  MatchFinder_ReadBlock(p);
+}
+
+static void MatchFinder_SetDefaultSettings(CMatchFinder *p)
+{
+  p->cutValue = 32;
+  p->btMode = 1;
+  p->numHashBytes = 4;
+  p->bigHash = 0;
+}
+
+#define kCrcPoly 0xEDB88320
+
+void MatchFinder_Construct(CMatchFinder *p)
+{
+  UInt32 i;
+  p->bufferBase = 0;
+  p->directInput = 0;
+  p->hash = 0;
+  MatchFinder_SetDefaultSettings(p);
+
+  for (i = 0; i < 256; i++)
+  {
+	UInt32 r = i;
+	int j;
+	for (j = 0; j < 8; j++)
+	  r = (r >> 1) ^ (kCrcPoly & ~((r & 1) - 1));
+	p->crc[i] = r;
+  }
+}
+
+static void MatchFinder_FreeThisClassMemory(CMatchFinder *p, ISzAlloc *alloc)
+{
+  alloc->Free(alloc, p->hash);
+  p->hash = 0;
+}
+
+void MatchFinder_Free(CMatchFinder *p, ISzAlloc *alloc)
+{
+  MatchFinder_FreeThisClassMemory(p, alloc);
+  LzInWindow_Free(p, alloc);
+}
+
+static CLzRef* AllocRefs(UInt32 num, ISzAlloc *alloc)
+{
+  size_t sizeInBytes = (size_t)num * sizeof(CLzRef);
+  if (sizeInBytes / sizeof(CLzRef) != num)
+	return 0;
+  return (CLzRef *)alloc->Alloc(alloc, sizeInBytes);
+}
+
+int MatchFinder_Create(CMatchFinder *p, UInt32 historySize,
+	UInt32 keepAddBufferBefore, UInt32 matchMaxLen, UInt32 keepAddBufferAfter,
+	ISzAlloc *alloc)
+{
+  UInt32 sizeReserv;
+  if (historySize > kMaxHistorySize)
+  {
+	MatchFinder_Free(p, alloc);
+	return 0;
+  }
+  sizeReserv = historySize >> 1;
+  if (historySize > ((UInt32)2 << 30))
+	sizeReserv = historySize >> 2;
+  sizeReserv += (keepAddBufferBefore + matchMaxLen + keepAddBufferAfter) / 2 + (1 << 19);
+
+  p->keepSizeBefore = historySize + keepAddBufferBefore + 1;
+  p->keepSizeAfter = matchMaxLen + keepAddBufferAfter;
+  /* we need one additional byte, since we use MoveBlock after pos++ and before dictionary using */
+  if (LzInWindow_Create(p, sizeReserv, alloc))
+  {
+	UInt32 newCyclicBufferSize = historySize + 1;
+	UInt32 hs;
+	p->matchMaxLen = matchMaxLen;
+	{
+	  p->fixedHashSize = 0;
+	  if (p->numHashBytes == 2)
+		hs = (1 << 16) - 1;
+	  else
+	  {
+		hs = historySize - 1;
+		hs |= (hs >> 1);
+		hs |= (hs >> 2);
+		hs |= (hs >> 4);
+		hs |= (hs >> 8);
+		hs >>= 1;
+		hs |= 0xFFFF; /* don't change it! It's required for Deflate */
+		if (hs > (1 << 24))
+		{
+		  if (p->numHashBytes == 3)
+			hs = (1 << 24) - 1;
+		  else
+			hs >>= 1;
+		}
+	  }
+	  p->hashMask = hs;
+	  hs++;
+	  if (p->numHashBytes > 2) p->fixedHashSize += kHash2Size;
+	  if (p->numHashBytes > 3) p->fixedHashSize += kHash3Size;
+	  if (p->numHashBytes > 4) p->fixedHashSize += kHash4Size;
+	  hs += p->fixedHashSize;
+	}
+
+	{
+	  UInt32 prevSize = p->hashSizeSum + p->numSons;
+	  UInt32 newSize;
+	  p->historySize = historySize;
+	  p->hashSizeSum = hs;
+	  p->cyclicBufferSize = newCyclicBufferSize;
+	  p->numSons = (p->btMode ? newCyclicBufferSize * 2 : newCyclicBufferSize);
+	  newSize = p->hashSizeSum + p->numSons;
+	  if (p->hash != 0 && prevSize == newSize)
+		return 1;
+	  MatchFinder_FreeThisClassMemory(p, alloc);
+	  p->hash = AllocRefs(newSize, alloc);
+	  if (p->hash != 0)
+	  {
+		p->son = p->hash + p->hashSizeSum;
+		return 1;
+	  }
+	}
+  }
+  MatchFinder_Free(p, alloc);
+  return 0;
+}
+
+static void MatchFinder_SetLimits(CMatchFinder *p)
+{
+  UInt32 limit = kMaxValForNormalize - p->pos;
+  UInt32 limit2 = p->cyclicBufferSize - p->cyclicBufferPos;
+  if (limit2 < limit)
+	limit = limit2;
+  limit2 = p->streamPos - p->pos;
+  if (limit2 <= p->keepSizeAfter)
+  {
+	if (limit2 > 0)
+	  limit2 = 1;
+  }
+  else
+	limit2 -= p->keepSizeAfter;
+  if (limit2 < limit)
+	limit = limit2;
+  {
+	UInt32 lenLimit = p->streamPos - p->pos;
+	if (lenLimit > p->matchMaxLen)
+	  lenLimit = p->matchMaxLen;
+	p->lenLimit = lenLimit;
+  }
+  p->posLimit = p->pos + limit;
+}
+
+void MatchFinder_Init(CMatchFinder *p)
+{
+  UInt32 i;
+  for (i = 0; i < p->hashSizeSum; i++)
+	p->hash[i] = kEmptyHashValue;
+  p->cyclicBufferPos = 0;
+  p->buffer = p->bufferBase;
+  p->pos = p->streamPos = p->cyclicBufferSize;
+  p->result = SZ_OK;
+  p->streamEndWasReached = 0;
+  MatchFinder_ReadBlock(p);
+  MatchFinder_SetLimits(p);
+}
+
+static UInt32 MatchFinder_GetSubValue(CMatchFinder *p)
+{
+  return (p->pos - p->historySize - 1) & kNormalizeMask;
+}
+
+void MatchFinder_Normalize3(UInt32 subValue, CLzRef *items, UInt32 numItems)
+{
+  UInt32 i;
+  for (i = 0; i < numItems; i++)
+  {
+	UInt32 value = items[i];
+	if (value <= subValue)
+	  value = kEmptyHashValue;
+	else
+	  value -= subValue;
+	items[i] = value;
+  }
+}
+
+static void MatchFinder_Normalize(CMatchFinder *p)
+{
+  UInt32 subValue = MatchFinder_GetSubValue(p);
+  MatchFinder_Normalize3(subValue, p->hash, p->hashSizeSum + p->numSons);
+  MatchFinder_ReduceOffsets(p, subValue);
+}
+
+static void MatchFinder_CheckLimits(CMatchFinder *p)
+{
+  if (p->pos == kMaxValForNormalize)
+	MatchFinder_Normalize(p);
+  if (!p->streamEndWasReached && p->keepSizeAfter == p->streamPos - p->pos)
+	MatchFinder_CheckAndMoveAndRead(p);
+  if (p->cyclicBufferPos == p->cyclicBufferSize)
+	p->cyclicBufferPos = 0;
+  MatchFinder_SetLimits(p);
+}
+
+static UInt32 * Hc_GetMatchesSpec(UInt32 lenLimit, UInt32 curMatch, UInt32 pos, const Byte *cur, CLzRef *son,
+	UInt32 _cyclicBufferPos, UInt32 _cyclicBufferSize, UInt32 cutValue,
+	UInt32 *distances, UInt32 maxLen)
+{
+  son[_cyclicBufferPos] = curMatch;
+  for (;;)
+  {
+	UInt32 delta = pos - curMatch;
+	if (cutValue-- == 0 || delta >= _cyclicBufferSize)
+	  return distances;
+	{
+	  const Byte *pb = cur - delta;
+	  curMatch = son[_cyclicBufferPos - delta + ((delta > _cyclicBufferPos) ? _cyclicBufferSize : 0)];
+	  if (pb[maxLen] == cur[maxLen] && *pb == *cur)
+	  {
+		UInt32 len = 0;
+		while (++len != lenLimit)
+		  if (pb[len] != cur[len])
+			break;
+		if (maxLen < len)
+		{
+		  *distances++ = maxLen = len;
+		  *distances++ = delta - 1;
+		  if (len == lenLimit)
+			return distances;
+		}
+	  }
+	}
+  }
+}
+
+UInt32 * GetMatchesSpec1(UInt32 lenLimit, UInt32 curMatch, UInt32 pos, const Byte *cur, CLzRef *son,
+	UInt32 _cyclicBufferPos, UInt32 _cyclicBufferSize, UInt32 cutValue,
+	UInt32 *distances, UInt32 maxLen)
+{
+  CLzRef *ptr0 = son + (_cyclicBufferPos << 1) + 1;
+  CLzRef *ptr1 = son + (_cyclicBufferPos << 1);
+  UInt32 len0 = 0, len1 = 0;
+  for (;;)
+  {
+	UInt32 delta = pos - curMatch;
+	if (cutValue-- == 0 || delta >= _cyclicBufferSize)
+	{
+	  *ptr0 = *ptr1 = kEmptyHashValue;
+	  return distances;
+	}
+	{
+	  CLzRef *pair = son + ((_cyclicBufferPos - delta + ((delta > _cyclicBufferPos) ? _cyclicBufferSize : 0)) << 1);
+	  const Byte *pb = cur - delta;
+	  UInt32 len = (len0 < len1 ? len0 : len1);
+	  if (pb[len] == cur[len])
+	  {
+		if (++len != lenLimit && pb[len] == cur[len])
+		  while (++len != lenLimit)
+			if (pb[len] != cur[len])
+			  break;
+		if (maxLen < len)
+		{
+		  *distances++ = maxLen = len;
+		  *distances++ = delta - 1;
+		  if (len == lenLimit)
+		  {
+			*ptr1 = pair[0];
+			*ptr0 = pair[1];
+			return distances;
+		  }
+		}
+	  }
+	  if (pb[len] < cur[len])
+	  {
+		*ptr1 = curMatch;
+		ptr1 = pair + 1;
+		curMatch = *ptr1;
+		len1 = len;
+	  }
+	  else
+	  {
+		*ptr0 = curMatch;
+		ptr0 = pair;
+		curMatch = *ptr0;
+		len0 = len;
+	  }
+	}
+  }
+}
+
+static void SkipMatchesSpec(UInt32 lenLimit, UInt32 curMatch, UInt32 pos, const Byte *cur, CLzRef *son,
+	UInt32 _cyclicBufferPos, UInt32 _cyclicBufferSize, UInt32 cutValue)
+{
+  CLzRef *ptr0 = son + (_cyclicBufferPos << 1) + 1;
+  CLzRef *ptr1 = son + (_cyclicBufferPos << 1);
+  UInt32 len0 = 0, len1 = 0;
+  for (;;)
+  {
+	UInt32 delta = pos - curMatch;
+	if (cutValue-- == 0 || delta >= _cyclicBufferSize)
+	{
+	  *ptr0 = *ptr1 = kEmptyHashValue;
+	  return;
+	}
+	{
+	  CLzRef *pair = son + ((_cyclicBufferPos - delta + ((delta > _cyclicBufferPos) ? _cyclicBufferSize : 0)) << 1);
+	  const Byte *pb = cur - delta;
+	  UInt32 len = (len0 < len1 ? len0 : len1);
+	  if (pb[len] == cur[len])
+	  {
+		while (++len != lenLimit)
+		  if (pb[len] != cur[len])
+			break;
+		{
+		  if (len == lenLimit)
+		  {
+			*ptr1 = pair[0];
+			*ptr0 = pair[1];
+			return;
+		  }
+		}
+	  }
+	  if (pb[len] < cur[len])
+	  {
+		*ptr1 = curMatch;
+		ptr1 = pair + 1;
+		curMatch = *ptr1;
+		len1 = len;
+	  }
+	  else
+	  {
+		*ptr0 = curMatch;
+		ptr0 = pair;
+		curMatch = *ptr0;
+		len0 = len;
+	  }
+	}
+  }
+}
+
+#define MOVE_POS \
+  ++p->cyclicBufferPos; \
+  p->buffer++; \
+  if (++p->pos == p->posLimit) MatchFinder_CheckLimits(p);
+
+#define MOVE_POS_RET MOVE_POS return offset;
+
+static void MatchFinder_MovePos(CMatchFinder *p) { MOVE_POS; }
+
+#define GET_MATCHES_HEADER2(minLen, ret_op) \
+  UInt32 lenLimit; UInt32 hashValue; const Byte *cur; UInt32 curMatch; \
+  lenLimit = p->lenLimit; { if (lenLimit < minLen) { MatchFinder_MovePos(p); ret_op; }} \
+  cur = p->buffer;
+
+#define GET_MATCHES_HEADER(minLen) GET_MATCHES_HEADER2(minLen, return 0)
+#define SKIP_HEADER(minLen)        GET_MATCHES_HEADER2(minLen, continue)
+
+#define MF_PARAMS(p) p->pos, p->buffer, p->son, p->cyclicBufferPos, p->cyclicBufferSize, p->cutValue
+
+#define GET_MATCHES_FOOTER(offset, maxLen) \
+  offset = (UInt32)(GetMatchesSpec1(lenLimit, curMatch, MF_PARAMS(p), \
+  distances + offset, maxLen) - distances); MOVE_POS_RET;
+
+#define SKIP_FOOTER \
+  SkipMatchesSpec(lenLimit, curMatch, MF_PARAMS(p)); MOVE_POS;
+
+static UInt32 Bt2_MatchFinder_GetMatches(CMatchFinder *p, UInt32 *distances)
+{
+  UInt32 offset;
+  GET_MATCHES_HEADER(2)
+  HASH2_CALC;
+  curMatch = p->hash[hashValue];
+  p->hash[hashValue] = p->pos;
+  offset = 0;
+  GET_MATCHES_FOOTER(offset, 1)
+}
+
+UInt32 Bt3Zip_MatchFinder_GetMatches(CMatchFinder *p, UInt32 *distances)
+{
+  UInt32 offset;
+  GET_MATCHES_HEADER(3)
+  HASH_ZIP_CALC;
+  curMatch = p->hash[hashValue];
+  p->hash[hashValue] = p->pos;
+  offset = 0;
+  GET_MATCHES_FOOTER(offset, 2)
+}
+
+static UInt32 Bt3_MatchFinder_GetMatches(CMatchFinder *p, UInt32 *distances)
+{
+  UInt32 hash2Value, delta2, maxLen, offset;
+  GET_MATCHES_HEADER(3)
+
+  HASH3_CALC;
+
+  delta2 = p->pos - p->hash[hash2Value];
+  curMatch = p->hash[kFix3HashSize + hashValue];
+
+  p->hash[hash2Value] =
+  p->hash[kFix3HashSize + hashValue] = p->pos;
+
+  maxLen = 2;
+  offset = 0;
+  if (delta2 < p->cyclicBufferSize && *(cur - delta2) == *cur)
+  {
+	for (; maxLen != lenLimit; maxLen++)
+	  if (cur[(ptrdiff_t)maxLen - delta2] != cur[maxLen])
+		break;
+	distances[0] = maxLen;
+	distances[1] = delta2 - 1;
+	offset = 2;
+	if (maxLen == lenLimit)
+	{
+	  SkipMatchesSpec(lenLimit, curMatch, MF_PARAMS(p));
+	  MOVE_POS_RET;
+	}
+  }
+  GET_MATCHES_FOOTER(offset, maxLen)
+}
+
+static UInt32 Bt4_MatchFinder_GetMatches(CMatchFinder *p, UInt32 *distances)
+{
+  UInt32 hash2Value, hash3Value, delta2, delta3, maxLen, offset;
+  GET_MATCHES_HEADER(4)
+
+  HASH4_CALC;
+
+  delta2 = p->pos - p->hash[                hash2Value];
+  delta3 = p->pos - p->hash[kFix3HashSize + hash3Value];
+  curMatch = p->hash[kFix4HashSize + hashValue];
+
+  p->hash[                hash2Value] =
+  p->hash[kFix3HashSize + hash3Value] =
+  p->hash[kFix4HashSize + hashValue] = p->pos;
+
+  maxLen = 1;
+  offset = 0;
+  if (delta2 < p->cyclicBufferSize && *(cur - delta2) == *cur)
+  {
+	distances[0] = maxLen = 2;
+	distances[1] = delta2 - 1;
+	offset = 2;
+  }
+  if (delta2 != delta3 && delta3 < p->cyclicBufferSize && *(cur - delta3) == *cur)
+  {
+	maxLen = 3;
+	distances[offset + 1] = delta3 - 1;
+	offset += 2;
+	delta2 = delta3;
+  }
+  if (offset != 0)
+  {
+	for (; maxLen != lenLimit; maxLen++)
+	  if (cur[(ptrdiff_t)maxLen - delta2] != cur[maxLen])
+		break;
+	distances[offset - 2] = maxLen;
+	if (maxLen == lenLimit)
+	{
+	  SkipMatchesSpec(lenLimit, curMatch, MF_PARAMS(p));
+	  MOVE_POS_RET;
+	}
+  }
+  if (maxLen < 3)
+	maxLen = 3;
+  GET_MATCHES_FOOTER(offset, maxLen)
+}
+
+static UInt32 Hc4_MatchFinder_GetMatches(CMatchFinder *p, UInt32 *distances)
+{
+  UInt32 hash2Value, hash3Value, delta2, delta3, maxLen, offset;
+  GET_MATCHES_HEADER(4)
+
+  HASH4_CALC;
+
+  delta2 = p->pos - p->hash[                hash2Value];
+  delta3 = p->pos - p->hash[kFix3HashSize + hash3Value];
+  curMatch = p->hash[kFix4HashSize + hashValue];
+
+  p->hash[                hash2Value] =
+  p->hash[kFix3HashSize + hash3Value] =
+  p->hash[kFix4HashSize + hashValue] = p->pos;
+
+  maxLen = 1;
+  offset = 0;
+  if (delta2 < p->cyclicBufferSize && *(cur - delta2) == *cur)
+  {
+	distances[0] = maxLen = 2;
+	distances[1] = delta2 - 1;
+	offset = 2;
+  }
+  if (delta2 != delta3 && delta3 < p->cyclicBufferSize && *(cur - delta3) == *cur)
+  {
+	maxLen = 3;
+	distances[offset + 1] = delta3 - 1;
+	offset += 2;
+	delta2 = delta3;
+  }
+  if (offset != 0)
+  {
+	for (; maxLen != lenLimit; maxLen++)
+	  if (cur[(ptrdiff_t)maxLen - delta2] != cur[maxLen])
+		break;
+	distances[offset - 2] = maxLen;
+	if (maxLen == lenLimit)
+	{
+	  p->son[p->cyclicBufferPos] = curMatch;
+	  MOVE_POS_RET;
+	}
+  }
+  if (maxLen < 3)
+	maxLen = 3;
+  offset = (UInt32)(Hc_GetMatchesSpec(lenLimit, curMatch, MF_PARAMS(p),
+	distances + offset, maxLen) - (distances));
+  MOVE_POS_RET
+}
+
+UInt32 Hc3Zip_MatchFinder_GetMatches(CMatchFinder *p, UInt32 *distances)
+{
+  UInt32 offset;
+  GET_MATCHES_HEADER(3)
+  HASH_ZIP_CALC;
+  curMatch = p->hash[hashValue];
+  p->hash[hashValue] = p->pos;
+  offset = (UInt32)(Hc_GetMatchesSpec(lenLimit, curMatch, MF_PARAMS(p),
+	distances, 2) - (distances));
+  MOVE_POS_RET
+}
+
+static void Bt2_MatchFinder_Skip(CMatchFinder *p, UInt32 num)
+{
+  do
+  {
+	SKIP_HEADER(2)
+	HASH2_CALC;
+	curMatch = p->hash[hashValue];
+	p->hash[hashValue] = p->pos;
+	SKIP_FOOTER
+  }
+  while (--num != 0);
+}
+
+void Bt3Zip_MatchFinder_Skip(CMatchFinder *p, UInt32 num)
+{
+  do
+  {
+	SKIP_HEADER(3)
+	HASH_ZIP_CALC;
+	curMatch = p->hash[hashValue];
+	p->hash[hashValue] = p->pos;
+	SKIP_FOOTER
+  }
+  while (--num != 0);
+}
+
+static void Bt3_MatchFinder_Skip(CMatchFinder *p, UInt32 num)
+{
+  do
+  {
+	UInt32 hash2Value;
+	SKIP_HEADER(3)
+	HASH3_CALC;
+	curMatch = p->hash[kFix3HashSize + hashValue];
+	p->hash[hash2Value] =
+	p->hash[kFix3HashSize + hashValue] = p->pos;
+	SKIP_FOOTER
+  }
+  while (--num != 0);
+}
+
+static void Bt4_MatchFinder_Skip(CMatchFinder *p, UInt32 num)
+{
+  do
+  {
+	UInt32 hash2Value, hash3Value;
+	SKIP_HEADER(4)
+	HASH4_CALC;
+	curMatch = p->hash[kFix4HashSize + hashValue];
+	p->hash[                hash2Value] =
+	p->hash[kFix3HashSize + hash3Value] = p->pos;
+	p->hash[kFix4HashSize + hashValue] = p->pos;
+	SKIP_FOOTER
+  }
+  while (--num != 0);
+}
+
+static void Hc4_MatchFinder_Skip(CMatchFinder *p, UInt32 num)
+{
+  do
+  {
+	UInt32 hash2Value, hash3Value;
+	SKIP_HEADER(4)
+	HASH4_CALC;
+	curMatch = p->hash[kFix4HashSize + hashValue];
+	p->hash[                hash2Value] =
+	p->hash[kFix3HashSize + hash3Value] =
+	p->hash[kFix4HashSize + hashValue] = p->pos;
+	p->son[p->cyclicBufferPos] = curMatch;
+	MOVE_POS
+  }
+  while (--num != 0);
+}
+
+void Hc3Zip_MatchFinder_Skip(CMatchFinder *p, UInt32 num)
+{
+  do
+  {
+	SKIP_HEADER(3)
+	HASH_ZIP_CALC;
+	curMatch = p->hash[hashValue];
+	p->hash[hashValue] = p->pos;
+	p->son[p->cyclicBufferPos] = curMatch;
+	MOVE_POS
+  }
+  while (--num != 0);
+}
+
+void MatchFinder_CreateVTable(CMatchFinder *p, IMatchFinder *vTable)
+{
+  vTable->Init = (Mf_Init_Func)MatchFinder_Init;
+  vTable->GetIndexByte = (Mf_GetIndexByte_Func)MatchFinder_GetIndexByte;
+  vTable->GetNumAvailableBytes = (Mf_GetNumAvailableBytes_Func)MatchFinder_GetNumAvailableBytes;
+  vTable->GetPointerToCurrentPos = (Mf_GetPointerToCurrentPos_Func)MatchFinder_GetPointerToCurrentPos;
+  if (!p->btMode)
+  {
+	vTable->GetMatches = (Mf_GetMatches_Func)Hc4_MatchFinder_GetMatches;
+	vTable->Skip = (Mf_Skip_Func)Hc4_MatchFinder_Skip;
+  }
+  else if (p->numHashBytes == 2)
+  {
+	vTable->GetMatches = (Mf_GetMatches_Func)Bt2_MatchFinder_GetMatches;
+	vTable->Skip = (Mf_Skip_Func)Bt2_MatchFinder_Skip;
+  }
+  else if (p->numHashBytes == 3)
+  {
+	vTable->GetMatches = (Mf_GetMatches_Func)Bt3_MatchFinder_GetMatches;
+	vTable->Skip = (Mf_Skip_Func)Bt3_MatchFinder_Skip;
+  }
+  else
+  {
+	vTable->GetMatches = (Mf_GetMatches_Func)Bt4_MatchFinder_GetMatches;
+	vTable->Skip = (Mf_Skip_Func)Bt4_MatchFinder_Skip;
+  }
+}
+
+
+#line 1 "LzmaDec.c"
+#include <string.h>
+
+#define kNumTopBits 24
+#define kTopValue ((UInt32)1 << kNumTopBits)
+
+#define kNumBitModelTotalBits 11
+#define kBitModelTotal (1 << kNumBitModelTotalBits)
+#define kNumMoveBits 5
+
+#define RC_INIT_SIZE 5
+
+#define NORMALIZE if (range < kTopValue) { range <<= 8; code = (code << 8) | (*buf++); }
+
+#define IF_BIT_0(p) ttt = *(p); NORMALIZE; bound = (range >> kNumBitModelTotalBits) * ttt; if (code < bound)
+#define UPDATE_0(p) range = bound; *(p) = (CLzmaProb)(ttt + ((kBitModelTotal - ttt) >> kNumMoveBits));
+#define UPDATE_1(p) range -= bound; code -= bound; *(p) = (CLzmaProb)(ttt - (ttt >> kNumMoveBits));
+#define GET_BIT2(p, i, A0, A1) IF_BIT_0(p) \
+  { UPDATE_0(p); i = (i + i); A0; } else \
+  { UPDATE_1(p); i = (i + i) + 1; A1; }
+#define GET_BIT(p, i) GET_BIT2(p, i, ; , ;)
+
+#define TREE_GET_BIT(probs, i) { GET_BIT((probs + i), i); }
+#define TREE_DECODE(probs, limit, i) \
+  { i = 1; do { TREE_GET_BIT(probs, i); } while (i < limit); i -= limit; }
+
+/* #define _LZMA_SIZE_OPT */
+
+#ifdef _LZMA_SIZE_OPT
+#define TREE_6_DECODE(probs, i) TREE_DECODE(probs, (1 << 6), i)
+#else
+#define TREE_6_DECODE(probs, i) \
+  { i = 1; \
+  TREE_GET_BIT(probs, i); \
+  TREE_GET_BIT(probs, i); \
+  TREE_GET_BIT(probs, i); \
+  TREE_GET_BIT(probs, i); \
+  TREE_GET_BIT(probs, i); \
+  TREE_GET_BIT(probs, i); \
+  i -= 0x40; }
+#endif
+
+#define NORMALIZE_CHECK if (range < kTopValue) { if (buf >= bufLimit) return DUMMY_ERROR; range <<= 8; code = (code << 8) | (*buf++); }
+
+#define IF_BIT_0_CHECK(p) ttt = *(p); NORMALIZE_CHECK; bound = (range >> kNumBitModelTotalBits) * ttt; if (code < bound)
+#define UPDATE_0_CHECK range = bound;
+#define UPDATE_1_CHECK range -= bound; code -= bound;
+#define GET_BIT2_CHECK(p, i, A0, A1) IF_BIT_0_CHECK(p) \
+  { UPDATE_0_CHECK; i = (i + i); A0; } else \
+  { UPDATE_1_CHECK; i = (i + i) + 1; A1; }
+#define GET_BIT_CHECK(p, i) GET_BIT2_CHECK(p, i, ; , ;)
+#define TREE_DECODE_CHECK(probs, limit, i) \
+  { i = 1; do { GET_BIT_CHECK(probs + i, i) } while (i < limit); i -= limit; }
+
+#define kNumPosBitsMax 4
+#define kNumPosStatesMax (1 << kNumPosBitsMax)
+
+#define kLenNumLowBits 3
+#define kLenNumLowSymbols (1 << kLenNumLowBits)
+#define kLenNumMidBits 3
+#define kLenNumMidSymbols (1 << kLenNumMidBits)
+#define kLenNumHighBits 8
+#define kLenNumHighSymbols (1 << kLenNumHighBits)
+
+#define LenChoice 0
+#define LenChoice2 (LenChoice + 1)
+#define LenLow (LenChoice2 + 1)
+#define LenMid (LenLow + (kNumPosStatesMax << kLenNumLowBits))
+#define LenHigh (LenMid + (kNumPosStatesMax << kLenNumMidBits))
+#define kNumLenProbs (LenHigh + kLenNumHighSymbols)
+
+#define kNumStates 12
+#define kNumLitStates 7
+
+#define kStartPosModelIndex 4
+#define kEndPosModelIndex 14
+#define kNumFullDistances (1 << (kEndPosModelIndex >> 1))
+
+#define kNumPosSlotBits 6
+#define kNumLenToPosStates 4
+
+#define kNumAlignBits 4
+#define kAlignTableSize (1 << kNumAlignBits)
+
+#define kMatchMinLen 2
+#define kMatchSpecLenStart (kMatchMinLen + kLenNumLowSymbols + kLenNumMidSymbols + kLenNumHighSymbols)
+
+#define IsMatch 0
+#define IsRep (IsMatch + (kNumStates << kNumPosBitsMax))
+#define IsRepG0 (IsRep + kNumStates)
+#define IsRepG1 (IsRepG0 + kNumStates)
+#define IsRepG2 (IsRepG1 + kNumStates)
+#define IsRep0Long (IsRepG2 + kNumStates)
+#define PosSlot (IsRep0Long + (kNumStates << kNumPosBitsMax))
+#define SpecPos (PosSlot + (kNumLenToPosStates << kNumPosSlotBits))
+#define Align (SpecPos + kNumFullDistances - kEndPosModelIndex)
+#define LenCoder (Align + kAlignTableSize)
+#define RepLenCoder (LenCoder + kNumLenProbs)
+#define Literal (RepLenCoder + kNumLenProbs)
+
+#define LZMA_BASE_SIZE 1846
+#define LZMA_LIT_SIZE 768
+
+#define LzmaProps_GetNumProbs(p) ((UInt32)LZMA_BASE_SIZE + (LZMA_LIT_SIZE << ((p)->lc + (p)->lp)))
+
+#if Literal != LZMA_BASE_SIZE
+StopCompilingDueBUG
+#endif
+
+#define LZMA_DIC_MIN (1 << 12)
+
+/* First LZMA-symbol is always decoded.
+And it decodes new LZMA-symbols while (buf < bufLimit), but "buf" is without last normalization
+Out:
+  Result:
+	SZ_OK - OK
+	SZ_ERROR_DATA - Error
+  p->remainLen:
+	< kMatchSpecLenStart : normal remain
+	= kMatchSpecLenStart : finished
+	= kMatchSpecLenStart + 1 : Flush marker
+	= kMatchSpecLenStart + 2 : State Init Marker
+*/
+
+static int MY_FAST_CALL LzmaDec_DecodeReal(CLzmaDec *p, SizeT limit, const Byte *bufLimit)
+{
+  CLzmaProb *probs = p->probs;
+
+  unsigned state = p->state;
+  UInt32 rep0 = p->reps[0], rep1 = p->reps[1], rep2 = p->reps[2], rep3 = p->reps[3];
+  unsigned pbMask = ((unsigned)1 << (p->prop.pb)) - 1;
+  unsigned lpMask = ((unsigned)1 << (p->prop.lp)) - 1;
+  unsigned lc = p->prop.lc;
+
+  Byte *dic = p->dic;
+  SizeT dicBufSize = p->dicBufSize;
+  SizeT dicPos = p->dicPos;
+
+  UInt32 processedPos = p->processedPos;
+  UInt32 checkDicSize = p->checkDicSize;
+  unsigned len = 0;
+
+  const Byte *buf = p->buf;
+  UInt32 range = p->range;
+  UInt32 code = p->code;
+
+  do
+  {
+	CLzmaProb *prob;
+	UInt32 bound;
+	unsigned ttt;
+	unsigned posState = processedPos & pbMask;
+
+	prob = probs + IsMatch + (state << kNumPosBitsMax) + posState;
+	IF_BIT_0(prob)
+	{
+	  unsigned symbol;
+	  UPDATE_0(prob);
+	  prob = probs + Literal;
+	  if (checkDicSize != 0 || processedPos != 0)
+		prob += (LZMA_LIT_SIZE * (((processedPos & lpMask) << lc) +
+		(dic[(dicPos == 0 ? dicBufSize : dicPos) - 1] >> (8 - lc))));
+
+	  if (state < kNumLitStates)
+	  {
+		state -= (state < 4) ? state : 3;
+		symbol = 1;
+		do { GET_BIT(prob + symbol, symbol) } while (symbol < 0x100);
+	  }
+	  else
+	  {
+		unsigned matchByte = p->dic[(dicPos - rep0) + ((dicPos < rep0) ? dicBufSize : 0)];
+		unsigned offs = 0x100;
+		state -= (state < 10) ? 3 : 6;
+		symbol = 1;
+		do
+		{
+		  unsigned bit;
+		  CLzmaProb *probLit;
+		  matchByte <<= 1;
+		  bit = (matchByte & offs);
+		  probLit = prob + offs + bit + symbol;
+		  GET_BIT2(probLit, symbol, offs &= ~bit, offs &= bit)
+		}
+		while (symbol < 0x100);
+	  }
+	  dic[dicPos++] = (Byte)symbol;
+	  processedPos++;
+	  continue;
+	}
+	else
+	{
+	  UPDATE_1(prob);
+	  prob = probs + IsRep + state;
+	  IF_BIT_0(prob)
+	  {
+		UPDATE_0(prob);
+		state += kNumStates;
+		prob = probs + LenCoder;
+	  }
+	  else
+	  {
+		UPDATE_1(prob);
+		if (checkDicSize == 0 && processedPos == 0)
+		  return SZ_ERROR_DATA;
+		prob = probs + IsRepG0 + state;
+		IF_BIT_0(prob)
+		{
+		  UPDATE_0(prob);
+		  prob = probs + IsRep0Long + (state << kNumPosBitsMax) + posState;
+		  IF_BIT_0(prob)
+		  {
+			UPDATE_0(prob);
+			dic[dicPos] = dic[(dicPos - rep0) + ((dicPos < rep0) ? dicBufSize : 0)];
+			dicPos++;
+			processedPos++;
+			state = state < kNumLitStates ? 9 : 11;
+			continue;
+		  }
+		  UPDATE_1(prob);
+		}
+		else
+		{
+		  UInt32 distance;
+		  UPDATE_1(prob);
+		  prob = probs + IsRepG1 + state;
+		  IF_BIT_0(prob)
+		  {
+			UPDATE_0(prob);
+			distance = rep1;
+		  }
+		  else
+		  {
+			UPDATE_1(prob);
+			prob = probs + IsRepG2 + state;
+			IF_BIT_0(prob)
+			{
+			  UPDATE_0(prob);
+			  distance = rep2;
+			}
+			else
+			{
+			  UPDATE_1(prob);
+			  distance = rep3;
+			  rep3 = rep2;
+			}
+			rep2 = rep1;
+		  }
+		  rep1 = rep0;
+		  rep0 = distance;
+		}
+		state = state < kNumLitStates ? 8 : 11;
+		prob = probs + RepLenCoder;
+	  }
+	  {
+		unsigned limit, offset;
+		CLzmaProb *probLen = prob + LenChoice;
+		IF_BIT_0(probLen)
+		{
+		  UPDATE_0(probLen);
+		  probLen = prob + LenLow + (posState << kLenNumLowBits);
+		  offset = 0;
+		  limit = (1 << kLenNumLowBits);
+		}
+		else
+		{
+		  UPDATE_1(probLen);
+		  probLen = prob + LenChoice2;
+		  IF_BIT_0(probLen)
+		  {
+			UPDATE_0(probLen);
+			probLen = prob + LenMid + (posState << kLenNumMidBits);
+			offset = kLenNumLowSymbols;
+			limit = (1 << kLenNumMidBits);
+		  }
+		  else
+		  {
+			UPDATE_1(probLen);
+			probLen = prob + LenHigh;
+			offset = kLenNumLowSymbols + kLenNumMidSymbols;
+			limit = (1 << kLenNumHighBits);
+		  }
+		}
+		TREE_DECODE(probLen, limit, len);
+		len += offset;
+	  }
+
+	  if (state >= kNumStates)
+	  {
+		UInt32 distance;
+		prob = probs + PosSlot +
+			((len < kNumLenToPosStates ? len : kNumLenToPosStates - 1) << kNumPosSlotBits);
+		TREE_6_DECODE(prob, distance);
+		if (distance >= kStartPosModelIndex)
+		{
+		  unsigned posSlot = (unsigned)distance;
+		  int numDirectBits = (int)(((distance >> 1) - 1));
+		  distance = (2 | (distance & 1));
+		  if (posSlot < kEndPosModelIndex)
+		  {
+			distance <<= numDirectBits;
+			prob = probs + SpecPos + distance - posSlot - 1;
+			{
+			  UInt32 mask = 1;
+			  unsigned i = 1;
+			  do
+			  {
+				GET_BIT2(prob + i, i, ; , distance |= mask);
+				mask <<= 1;
+			  }
+			  while (--numDirectBits != 0);
+			}
+		  }
+		  else
+		  {
+			numDirectBits -= kNumAlignBits;
+			do
+			{
+			  NORMALIZE
+			  range >>= 1;
+
+			  {
+				UInt32 t;
+				code -= range;
+				t = (0 - ((UInt32)code >> 31)); /* (UInt32)((Int32)code >> 31) */
+				distance = (distance << 1) + (t + 1);
+				code += range & t;
+			  }
+			  /*
+			  distance <<= 1;
+			  if (code >= range)
+			  {
+				code -= range;
+				distance |= 1;
+			  }
+			  */
+			}
+			while (--numDirectBits != 0);
+			prob = probs + Align;
+			distance <<= kNumAlignBits;
+			{
+			  unsigned i = 1;
+			  GET_BIT2(prob + i, i, ; , distance |= 1);
+			  GET_BIT2(prob + i, i, ; , distance |= 2);
+			  GET_BIT2(prob + i, i, ; , distance |= 4);
+			  GET_BIT2(prob + i, i, ; , distance |= 8);
+			}
+			if (distance == (UInt32)0xFFFFFFFF)
+			{
+			  len += kMatchSpecLenStart;
+			  state -= kNumStates;
+			  break;
+			}
+		  }
+		}
+		rep3 = rep2;
+		rep2 = rep1;
+		rep1 = rep0;
+		rep0 = distance + 1;
+		if (checkDicSize == 0)
+		{
+		  if (distance >= processedPos)
+			return SZ_ERROR_DATA;
+		}
+		else if (distance >= checkDicSize)
+		  return SZ_ERROR_DATA;
+		state = (state < kNumStates + kNumLitStates) ? kNumLitStates : kNumLitStates + 3;
+	  }
+
+	  len += kMatchMinLen;
+
+	  if (limit == dicPos)
+		return SZ_ERROR_DATA;
+	  {
+		SizeT rem = limit - dicPos;
+		unsigned curLen = ((rem < len) ? (unsigned)rem : len);
+		SizeT pos = (dicPos - rep0) + ((dicPos < rep0) ? dicBufSize : 0);
+
+		processedPos += curLen;
+
+		len -= curLen;
+		if (pos + curLen <= dicBufSize)
+		{
+		  Byte *dest = dic + dicPos;
+		  ptrdiff_t src = (ptrdiff_t)pos - (ptrdiff_t)dicPos;
+		  const Byte *lim = dest + curLen;
+		  dicPos += curLen;
+		  do
+			*(dest) = (Byte)*(dest + src);
+		  while (++dest != lim);
+		}
+		else
+		{
+		  do
+		  {
+			dic[dicPos++] = dic[pos];
+			if (++pos == dicBufSize)
+			  pos = 0;
+		  }
+		  while (--curLen != 0);
+		}
+	  }
+	}
+  }
+  while (dicPos < limit && buf < bufLimit);
+  NORMALIZE;
+  p->buf = buf;
+  p->range = range;
+  p->code = code;
+  p->remainLen = len;
+  p->dicPos = dicPos;
+  p->processedPos = processedPos;
+  p->reps[0] = rep0;
+  p->reps[1] = rep1;
+  p->reps[2] = rep2;
+  p->reps[3] = rep3;
+  p->state = state;
+
+  return SZ_OK;
+}
+
+static void MY_FAST_CALL LzmaDec_WriteRem(CLzmaDec *p, SizeT limit)
+{
+  if (p->remainLen != 0 && p->remainLen < kMatchSpecLenStart)
+  {
+	Byte *dic = p->dic;
+	SizeT dicPos = p->dicPos;
+	SizeT dicBufSize = p->dicBufSize;
+	unsigned len = p->remainLen;
+	UInt32 rep0 = p->reps[0];
+	if (limit - dicPos < len)
+	  len = (unsigned)(limit - dicPos);
+
+	if (p->checkDicSize == 0 && p->prop.dicSize - p->processedPos <= len)
+	  p->checkDicSize = p->prop.dicSize;
+
+	p->processedPos += len;
+	p->remainLen -= len;
+	while (len != 0)
+	{
+	  len--;
+	  dic[dicPos] = dic[(dicPos - rep0) + ((dicPos < rep0) ? dicBufSize : 0)];
+	  dicPos++;
+	}
+	p->dicPos = dicPos;
+  }
+}
+
+static int MY_FAST_CALL LzmaDec_DecodeReal2(CLzmaDec *p, SizeT limit, const Byte *bufLimit)
+{
+  do
+  {
+	SizeT limit2 = limit;
+	if (p->checkDicSize == 0)
+	{
+	  UInt32 rem = p->prop.dicSize - p->processedPos;
+	  if (limit - p->dicPos > rem)
+		limit2 = p->dicPos + rem;
+	}
+	RINOK(LzmaDec_DecodeReal(p, limit2, bufLimit));
+	if (p->processedPos >= p->prop.dicSize)
+	  p->checkDicSize = p->prop.dicSize;
+	LzmaDec_WriteRem(p, limit);
+  }
+  while (p->dicPos < limit && p->buf < bufLimit && p->remainLen < kMatchSpecLenStart);
+
+  if (p->remainLen > kMatchSpecLenStart)
+  {
+	p->remainLen = kMatchSpecLenStart;
+  }
+  return 0;
+}
+
+typedef enum
+{
+  DUMMY_ERROR, /* unexpected end of input stream */
+  DUMMY_LIT,
+  DUMMY_MATCH,
+  DUMMY_REP
+} ELzmaDummy;
+
+static ELzmaDummy LzmaDec_TryDummy(const CLzmaDec *p, const Byte *buf, SizeT inSize)
+{
+  UInt32 range = p->range;
+  UInt32 code = p->code;
+  const Byte *bufLimit = buf + inSize;
+  CLzmaProb *probs = p->probs;
+  unsigned state = p->state;
+  ELzmaDummy res;
+
+  {
+	CLzmaProb *prob;
+	UInt32 bound;
+	unsigned ttt;
+	unsigned posState = (p->processedPos) & ((1 << p->prop.pb) - 1);
+
+	prob = probs + IsMatch + (state << kNumPosBitsMax) + posState;
+	IF_BIT_0_CHECK(prob)
+	{
+	  UPDATE_0_CHECK
+
+	  /* if (bufLimit - buf >= 7) return DUMMY_LIT; */
+
+	  prob = probs + Literal;
+	  if (p->checkDicSize != 0 || p->processedPos != 0)
+		prob += (LZMA_LIT_SIZE *
+		  ((((p->processedPos) & ((1 << (p->prop.lp)) - 1)) << p->prop.lc) +
+		  (p->dic[(p->dicPos == 0 ? p->dicBufSize : p->dicPos) - 1] >> (8 - p->prop.lc))));
+
+	  if (state < kNumLitStates)
+	  {
+		unsigned symbol = 1;
+		do { GET_BIT_CHECK(prob + symbol, symbol) } while (symbol < 0x100);
+	  }
+	  else
+	  {
+		unsigned matchByte = p->dic[p->dicPos - p->reps[0] +
+			((p->dicPos < p->reps[0]) ? p->dicBufSize : 0)];
+		unsigned offs = 0x100;
+		unsigned symbol = 1;
+		do
+		{
+		  unsigned bit;
+		  CLzmaProb *probLit;
+		  matchByte <<= 1;
+		  bit = (matchByte & offs);
+		  probLit = prob + offs + bit + symbol;
+		  GET_BIT2_CHECK(probLit, symbol, offs &= ~bit, offs &= bit)
+		}
+		while (symbol < 0x100);
+	  }
+	  res = DUMMY_LIT;
+	}
+	else
+	{
+	  unsigned len;
+	  UPDATE_1_CHECK;
+
+	  prob = probs + IsRep + state;
+	  IF_BIT_0_CHECK(prob)
+	  {
+		UPDATE_0_CHECK;
+		state = 0;
+		prob = probs + LenCoder;
+		res = DUMMY_MATCH;
+	  }
+	  else
+	  {
+		UPDATE_1_CHECK;
+		res = DUMMY_REP;
+		prob = probs + IsRepG0 + state;
+		IF_BIT_0_CHECK(prob)
+		{
+		  UPDATE_0_CHECK;
+		  prob = probs + IsRep0Long + (state << kNumPosBitsMax) + posState;
+		  IF_BIT_0_CHECK(prob)
+		  {
+			UPDATE_0_CHECK;
+			NORMALIZE_CHECK;
+			return DUMMY_REP;
+		  }
+		  else
+		  {
+			UPDATE_1_CHECK;
+		  }
+		}
+		else
+		{
+		  UPDATE_1_CHECK;
+		  prob = probs + IsRepG1 + state;
+		  IF_BIT_0_CHECK(prob)
+		  {
+			UPDATE_0_CHECK;
+		  }
+		  else
+		  {
+			UPDATE_1_CHECK;
+			prob = probs + IsRepG2 + state;
+			IF_BIT_0_CHECK(prob)
+			{
+			  UPDATE_0_CHECK;
+			}
+			else
+			{
+			  UPDATE_1_CHECK;
+			}
+		  }
+		}
+		state = kNumStates;
+		prob = probs + RepLenCoder;
+	  }
+	  {
+		unsigned limit, offset;
+		CLzmaProb *probLen = prob + LenChoice;
+		IF_BIT_0_CHECK(probLen)
+		{
+		  UPDATE_0_CHECK;
+		  probLen = prob + LenLow + (posState << kLenNumLowBits);
+		  offset = 0;
+		  limit = 1 << kLenNumLowBits;
+		}
+		else
+		{
+		  UPDATE_1_CHECK;
+		  probLen = prob + LenChoice2;
+		  IF_BIT_0_CHECK(probLen)
+		  {
+			UPDATE_0_CHECK;
+			probLen = prob + LenMid + (posState << kLenNumMidBits);
+			offset = kLenNumLowSymbols;
+			limit = 1 << kLenNumMidBits;
+		  }
+		  else
+		  {
+			UPDATE_1_CHECK;
+			probLen = prob + LenHigh;
+			offset = kLenNumLowSymbols + kLenNumMidSymbols;
+			limit = 1 << kLenNumHighBits;
+		  }
+		}
+		TREE_DECODE_CHECK(probLen, limit, len);
+		len += offset;
+	  }
+
+	  if (state < 4)
+	  {
+		unsigned posSlot;
+		prob = probs + PosSlot +
+			((len < kNumLenToPosStates ? len : kNumLenToPosStates - 1) <<
+			kNumPosSlotBits);
+		TREE_DECODE_CHECK(prob, 1 << kNumPosSlotBits, posSlot);
+		if (posSlot >= kStartPosModelIndex)
+		{
+		  int numDirectBits = ((posSlot >> 1) - 1);
+
+		  /* if (bufLimit - buf >= 8) return DUMMY_MATCH; */
+
+		  if (posSlot < kEndPosModelIndex)
+		  {
+			prob = probs + SpecPos + ((2 | (posSlot & 1)) << numDirectBits) - posSlot - 1;
+		  }
+		  else
+		  {
+			numDirectBits -= kNumAlignBits;
+			do
+			{
+			  NORMALIZE_CHECK
+			  range >>= 1;
+			  code -= range & (((code - range) >> 31) - 1);
+			  /* if (code >= range) code -= range; */
+			}
+			while (--numDirectBits != 0);
+			prob = probs + Align;
+			numDirectBits = kNumAlignBits;
+		  }
+		  {
+			unsigned i = 1;
+			do
+			{
+			  GET_BIT_CHECK(prob + i, i);
+			}
+			while (--numDirectBits != 0);
+		  }
+		}
+	  }
+	}
+  }
+  NORMALIZE_CHECK;
+  return res;
+}
+
+static void LzmaDec_InitRc(CLzmaDec *p, const Byte *data)
+{
+  p->code = ((UInt32)data[1] << 24) | ((UInt32)data[2] << 16) | ((UInt32)data[3] << 8) | ((UInt32)data[4]);
+  p->range = 0xFFFFFFFF;
+  p->needFlush = 0;
+}
+
+void LzmaDec_InitDicAndState(CLzmaDec *p, Bool initDic, Bool initState)
+{
+  p->needFlush = 1;
+  p->remainLen = 0;
+  p->tempBufSize = 0;
+
+  if (initDic)
+  {
+	p->processedPos = 0;
+	p->checkDicSize = 0;
+	p->needInitState = 1;
+  }
+  if (initState)
+	p->needInitState = 1;
+}
+
+void LzmaDec_Init(CLzmaDec *p)
+{
+  p->dicPos = 0;
+  LzmaDec_InitDicAndState(p, True, True);
+}
+
+static void LzmaDec_InitStateReal(CLzmaDec *p)
+{
+  UInt32 numProbs = Literal + ((UInt32)LZMA_LIT_SIZE << (p->prop.lc + p->prop.lp));
+  UInt32 i;
+  CLzmaProb *probs = p->probs;
+  for (i = 0; i < numProbs; i++)
+	probs[i] = kBitModelTotal >> 1;
+  p->reps[0] = p->reps[1] = p->reps[2] = p->reps[3] = 1;
+  p->state = 0;
+  p->needInitState = 0;
+}
+
+SRes LzmaDec_DecodeToDic(CLzmaDec *p, SizeT dicLimit, const Byte *src, SizeT *srcLen,
+	ELzmaFinishMode finishMode, ELzmaStatus *status)
+{
+  SizeT inSize = *srcLen;
+  (*srcLen) = 0;
+  LzmaDec_WriteRem(p, dicLimit);
+
+  *status = LZMA_STATUS_NOT_SPECIFIED;
+
+  while (p->remainLen != kMatchSpecLenStart)
+  {
+	  int checkEndMarkNow;
+
+	  if (p->needFlush != 0)
+	  {
+		for (; inSize > 0 && p->tempBufSize < RC_INIT_SIZE; (*srcLen)++, inSize--)
+		  p->tempBuf[p->tempBufSize++] = *src++;
+		if (p->tempBufSize < RC_INIT_SIZE)
+		{
+		  *status = LZMA_STATUS_NEEDS_MORE_INPUT;
+		  return SZ_OK;
+		}
+		if (p->tempBuf[0] != 0)
+		  return SZ_ERROR_DATA;
+
+		LzmaDec_InitRc(p, p->tempBuf);
+		p->tempBufSize = 0;
+	  }
+
+	  checkEndMarkNow = 0;
+	  if (p->dicPos >= dicLimit)
+	  {
+		if (p->remainLen == 0 && p->code == 0)
+		{
+		  *status = LZMA_STATUS_MAYBE_FINISHED_WITHOUT_MARK;
+		  return SZ_OK;
+		}
+		if (finishMode == LZMA_FINISH_ANY)
+		{
+		  *status = LZMA_STATUS_NOT_FINISHED;
+		  return SZ_OK;
+		}
+		if (p->remainLen != 0)
+		{
+		  *status = LZMA_STATUS_NOT_FINISHED;
+		  return SZ_ERROR_DATA;
+		}
+		checkEndMarkNow = 1;
+	  }
+
+	  if (p->needInitState)
+		LzmaDec_InitStateReal(p);
+
+	  if (p->tempBufSize == 0)
+	  {
+		SizeT processed;
+		const Byte *bufLimit;
+		if (inSize < LZMA_REQUIRED_INPUT_MAX || checkEndMarkNow)
+		{
+		  int dummyRes = LzmaDec_TryDummy(p, src, inSize);
+		  if (dummyRes == DUMMY_ERROR)
+		  {
+			memcpy(p->tempBuf, src, inSize);
+			p->tempBufSize = (unsigned)inSize;
+			(*srcLen) += inSize;
+			*status = LZMA_STATUS_NEEDS_MORE_INPUT;
+			return SZ_OK;
+		  }
+		  if (checkEndMarkNow && dummyRes != DUMMY_MATCH)
+		  {
+			*status = LZMA_STATUS_NOT_FINISHED;
+			return SZ_ERROR_DATA;
+		  }
+		  bufLimit = src;
+		}
+		else
+		  bufLimit = src + inSize - LZMA_REQUIRED_INPUT_MAX;
+		p->buf = src;
+		if (LzmaDec_DecodeReal2(p, dicLimit, bufLimit) != 0)
+		  return SZ_ERROR_DATA;
+		processed = (SizeT)(p->buf - src);
+		(*srcLen) += processed;
+		src += processed;
+		inSize -= processed;
+	  }
+	  else
+	  {
+		unsigned rem = p->tempBufSize, lookAhead = 0;
+		while (rem < LZMA_REQUIRED_INPUT_MAX && lookAhead < inSize)
+		  p->tempBuf[rem++] = src[lookAhead++];
+		p->tempBufSize = rem;
+		if (rem < LZMA_REQUIRED_INPUT_MAX || checkEndMarkNow)
+		{
+		  int dummyRes = LzmaDec_TryDummy(p, p->tempBuf, rem);
+		  if (dummyRes == DUMMY_ERROR)
+		  {
+			(*srcLen) += lookAhead;
+			*status = LZMA_STATUS_NEEDS_MORE_INPUT;
+			return SZ_OK;
+		  }
+		  if (checkEndMarkNow && dummyRes != DUMMY_MATCH)
+		  {
+			*status = LZMA_STATUS_NOT_FINISHED;
+			return SZ_ERROR_DATA;
+		  }
+		}
+		p->buf = p->tempBuf;
+		if (LzmaDec_DecodeReal2(p, dicLimit, p->buf) != 0)
+		  return SZ_ERROR_DATA;
+		lookAhead -= (rem - (unsigned)(p->buf - p->tempBuf));
+		(*srcLen) += lookAhead;
+		src += lookAhead;
+		inSize -= lookAhead;
+		p->tempBufSize = 0;
+	  }
+  }
+  if (p->code == 0)
+	*status = LZMA_STATUS_FINISHED_WITH_MARK;
+  return (p->code == 0) ? SZ_OK : SZ_ERROR_DATA;
+}
+
+SRes LzmaDec_DecodeToBuf(CLzmaDec *p, Byte *dest, SizeT *destLen, const Byte *src, SizeT *srcLen, ELzmaFinishMode finishMode, ELzmaStatus *status)
+{
+  SizeT outSize = *destLen;
+  SizeT inSize = *srcLen;
+  *srcLen = *destLen = 0;
+  for (;;)
+  {
+	SizeT inSizeCur = inSize, outSizeCur, dicPos;
+	ELzmaFinishMode curFinishMode;
+	SRes res;
+	if (p->dicPos == p->dicBufSize)
+	  p->dicPos = 0;
+	dicPos = p->dicPos;
+	if (outSize > p->dicBufSize - dicPos)
+	{
+	  outSizeCur = p->dicBufSize;
+	  curFinishMode = LZMA_FINISH_ANY;
+	}
+	else
+	{
+	  outSizeCur = dicPos + outSize;
+	  curFinishMode = finishMode;
+	}
+
+	res = LzmaDec_DecodeToDic(p, outSizeCur, src, &inSizeCur, curFinishMode, status);
+	src += inSizeCur;
+	inSize -= inSizeCur;
+	*srcLen += inSizeCur;
+	outSizeCur = p->dicPos - dicPos;
+	memcpy(dest, p->dic + dicPos, outSizeCur);
+	dest += outSizeCur;
+	outSize -= outSizeCur;
+	*destLen += outSizeCur;
+	if (res != 0)
+	  return res;
+	if (outSizeCur == 0 || outSize == 0)
+	  return SZ_OK;
+  }
+}
+
+void LzmaDec_FreeProbs(CLzmaDec *p, ISzAlloc *alloc)
+{
+  alloc->Free(alloc, p->probs);
+  p->probs = 0;
+}
+
+static void LzmaDec_FreeDict(CLzmaDec *p, ISzAlloc *alloc)
+{
+  alloc->Free(alloc, p->dic);
+  p->dic = 0;
+}
+
+void LzmaDec_Free(CLzmaDec *p, ISzAlloc *alloc)
+{
+  LzmaDec_FreeProbs(p, alloc);
+  LzmaDec_FreeDict(p, alloc);
+}
+
+SRes LzmaProps_Decode(CLzmaProps *p, const Byte *data, unsigned size)
+{
+  UInt32 dicSize;
+  Byte d;
+
+  if (size < LZMA_PROPS_SIZE)
+	return SZ_ERROR_UNSUPPORTED;
+  else
+	dicSize = data[1] | ((UInt32)data[2] << 8) | ((UInt32)data[3] << 16) | ((UInt32)data[4] << 24);
+
+  if (dicSize < LZMA_DIC_MIN)
+	dicSize = LZMA_DIC_MIN;
+  p->dicSize = dicSize;
+
+  d = data[0];
+  if (d >= (9 * 5 * 5))
+	return SZ_ERROR_UNSUPPORTED;
+
+  p->lc = d % 9;
+  d /= 9;
+  p->pb = d / 5;
+  p->lp = d % 5;
+
+  return SZ_OK;
+}
+
+static SRes LzmaDec_AllocateProbs2(CLzmaDec *p, const CLzmaProps *propNew, ISzAlloc *alloc)
+{
+  UInt32 numProbs = LzmaProps_GetNumProbs(propNew);
+  if (p->probs == 0 || numProbs != p->numProbs)
+  {
+	LzmaDec_FreeProbs(p, alloc);
+	p->probs = (CLzmaProb *)alloc->Alloc(alloc, numProbs * sizeof(CLzmaProb));
+	p->numProbs = numProbs;
+	if (p->probs == 0)
+	  return SZ_ERROR_MEM;
+  }
+  return SZ_OK;
+}
+
+SRes LzmaDec_AllocateProbs(CLzmaDec *p, const Byte *props, unsigned propsSize, ISzAlloc *alloc)
+{
+  CLzmaProps propNew;
+  RINOK(LzmaProps_Decode(&propNew, props, propsSize));
+  RINOK(LzmaDec_AllocateProbs2(p, &propNew, alloc));
+  p->prop = propNew;
+  return SZ_OK;
+}
+
+SRes LzmaDec_Allocate(CLzmaDec *p, const Byte *props, unsigned propsSize, ISzAlloc *alloc)
+{
+  CLzmaProps propNew;
+  SizeT dicBufSize;
+  RINOK(LzmaProps_Decode(&propNew, props, propsSize));
+  RINOK(LzmaDec_AllocateProbs2(p, &propNew, alloc));
+  dicBufSize = propNew.dicSize;
+  if (p->dic == 0 || dicBufSize != p->dicBufSize)
+  {
+	LzmaDec_FreeDict(p, alloc);
+	p->dic = (Byte *)alloc->Alloc(alloc, dicBufSize);
+	if (p->dic == 0)
+	{
+	  LzmaDec_FreeProbs(p, alloc);
+	  return SZ_ERROR_MEM;
+	}
+  }
+  p->dicBufSize = dicBufSize;
+  p->prop = propNew;
+  return SZ_OK;
+}
+
+SRes LzmaDecode(Byte *dest, SizeT *destLen, const Byte *src, SizeT *srcLen,
+	const Byte *propData, unsigned propSize, ELzmaFinishMode finishMode,
+	ELzmaStatus *status, ISzAlloc *alloc)
+{
+  CLzmaDec p;
+  SRes res;
+  SizeT outSize = *destLen, inSize = *srcLen;
+  *destLen = *srcLen = 0;
+  *status = LZMA_STATUS_NOT_SPECIFIED;
+  if (inSize < RC_INIT_SIZE)
+	return SZ_ERROR_INPUT_EOF;
+  LzmaDec_Construct(&p);
+  RINOK(LzmaDec_AllocateProbs(&p, propData, propSize, alloc));
+  p.dic = dest;
+  p.dicBufSize = outSize;
+  LzmaDec_Init(&p);
+  *srcLen = inSize;
+  res = LzmaDec_DecodeToDic(&p, outSize, src, srcLen, finishMode, status);
+  *destLen = p.dicPos;
+  if (res == SZ_OK && *status == LZMA_STATUS_NEEDS_MORE_INPUT)
+	res = SZ_ERROR_INPUT_EOF;
+  LzmaDec_FreeProbs(&p, alloc);
+  return res;
+}
+
+
+#line 1 "LzmaEnc.c"
+#include <string.h>
+
+/* #define SHOW_STAT */
+/* #define SHOW_STAT2 */
+
+#if defined(SHOW_STAT) || defined(SHOW_STAT2)
+#include <stdio.h>
+#endif
+
+#define _7ZIP_ST
+#ifndef _7ZIP_ST
+#include "LzFindMt.h"
+#endif
+
+#ifdef SHOW_STAT
+static int ttt = 0;
+#endif
+
+#define kBlockSizeMax ((1 << LZMA_NUM_BLOCK_SIZE_BITS) - 1)
+
+#define kBlockSize (9 << 10)
+#define kUnpackBlockSize (1 << 18)
+#define kMatchArraySize (1 << 21)
+#define kMatchRecordMaxSize ((LZMA_MATCH_LEN_MAX * 2 + 3) * LZMA_MATCH_LEN_MAX)
+
+#define kNumMaxDirectBits (31)
+
+#define kNumTopBits 24
+#define kTopValue ((UInt32)1 << kNumTopBits)
+
+#define kNumBitModelTotalBits 11
+#define kBitModelTotal (1 << kNumBitModelTotalBits)
+#define kNumMoveBits 5
+#define kProbInitValue (kBitModelTotal >> 1)
+
+#define kNumMoveReducingBits 4
+#define kNumBitPriceShiftBits 4
+#define kBitPrice (1 << kNumBitPriceShiftBits)
+
+void LzmaEncProps_Init(CLzmaEncProps *p)
+{
+  p->level = 5;
+  p->dictSize = p->mc = 0;
+  p->reduceSize = (UInt32)(Int32)-1;
+  p->lc = p->lp = p->pb = p->algo = p->fb = p->btMode = p->numHashBytes = p->numThreads = -1;
+  p->writeEndMark = 0;
+}
+
+void LzmaEncProps_Normalize(CLzmaEncProps *p)
+{
+  int level = p->level;
+  if (level < 0) level = 5;
+  p->level = level;
+  if (p->dictSize == 0) p->dictSize = (level <= 5 ? (1 << (level * 2 + 14)) : (level == 6 ? (1 << 25) : (1 << 26)));
+  if (p->dictSize > p->reduceSize)
+  {
+	unsigned i;
+	for (i = 15; i <= 30; i++)
+	{
+	  if (p->reduceSize <= ((UInt32)2 << i)) { p->dictSize = ((UInt32)2 << i); break; }
+	  if (p->reduceSize <= ((UInt32)3 << i)) { p->dictSize = ((UInt32)3 << i); break; }
+	}
+  }
+  if (p->lc < 0) p->lc = 3;
+  if (p->lp < 0) p->lp = 0;
+  if (p->pb < 0) p->pb = 2;
+  if (p->algo < 0) p->algo = (level < 5 ? 0 : 1);
+  if (p->fb < 0) p->fb = (level < 7 ? 32 : 64);
+  if (p->btMode < 0) p->btMode = (p->algo == 0 ? 0 : 1);
+  if (p->numHashBytes < 0) p->numHashBytes = 4;
+  if (p->mc == 0)  p->mc = (16 + (p->fb >> 1)) >> (p->btMode ? 0 : 1);
+  if (p->numThreads < 0)
+	p->numThreads =
+	  #ifndef _7ZIP_ST
+	  ((p->btMode && p->algo) ? 2 : 1);
+	  #else
+	  1;
+	  #endif
+}
+
+UInt32 LzmaEncProps_GetDictSize(const CLzmaEncProps *props2)
+{
+  CLzmaEncProps props = *props2;
+  LzmaEncProps_Normalize(&props);
+  return props.dictSize;
+}
+
+/* #define LZMA_LOG_BSR */
+/* Define it for Intel's CPU */
+
+#ifdef LZMA_LOG_BSR
+
+#define kDicLogSizeMaxCompress 30
+
+#define BSR2_RET(pos, res) { unsigned long i; _BitScanReverse(&i, (pos)); res = (i + i) + ((pos >> (i - 1)) & 1); }
+
+UInt32 GetPosSlot1(UInt32 pos)
+{
+  UInt32 res;
+  BSR2_RET(pos, res);
+  return res;
+}
+#define GetPosSlot2(pos, res) { BSR2_RET(pos, res); }
+#define GetPosSlot(pos, res) { if (pos < 2) res = pos; else BSR2_RET(pos, res); }
+
+#else
+
+#define kNumLogBits (9 + (int)sizeof(size_t) / 2)
+#define kDicLogSizeMaxCompress ((kNumLogBits - 1) * 2 + 7)
+
+void LzmaEnc_FastPosInit(Byte *g_FastPos)
+{
+  int c = 2, slotFast;
+  g_FastPos[0] = 0;
+  g_FastPos[1] = 1;
+
+  for (slotFast = 2; slotFast < kNumLogBits * 2; slotFast++)
+  {
+	UInt32 k = (1 << ((slotFast >> 1) - 1));
+	UInt32 j;
+	for (j = 0; j < k; j++, c++)
+	  g_FastPos[c] = (Byte)slotFast;
+  }
+}
+
+#define BSR2_RET(pos, res) { UInt32 i = 6 + ((kNumLogBits - 1) & \
+  (0 - (((((UInt32)1 << (kNumLogBits + 6)) - 1) - pos) >> 31))); \
+  res = p->g_FastPos[pos >> i] + (i * 2); }
+/*
+#define BSR2_RET(pos, res) { res = (pos < (1 << (kNumLogBits + 6))) ? \
+  p->g_FastPos[pos >> 6] + 12 : \
+  p->g_FastPos[pos >> (6 + kNumLogBits - 1)] + (6 + (kNumLogBits - 1)) * 2; }
+*/
+
+#define GetPosSlot1(pos) p->g_FastPos[pos]
+#define GetPosSlot2(pos, res) { BSR2_RET(pos, res); }
+#define GetPosSlot(pos, res) { if (pos < kNumFullDistances) res = p->g_FastPos[pos]; else BSR2_RET(pos, res); }
+
+#endif
+
+#define LZMA_NUM_REPS 4
+
+typedef unsigned CState;
+
+typedef struct
+{
+  UInt32 price;
+
+  CState state;
+  int prev1IsChar;
+  int prev2;
+
+  UInt32 posPrev2;
+  UInt32 backPrev2;
+
+  UInt32 posPrev;
+  UInt32 backPrev;
+  UInt32 backs[LZMA_NUM_REPS];
+} COptimal;
+
+#define kNumOpts (1 << 12)
+
+#define kNumLenToPosStates 4
+#define kNumPosSlotBits 6
+#define kDicLogSizeMin 0
+#define kDicLogSizeMax 32
+#define kDistTableSizeMax (kDicLogSizeMax * 2)
+
+#define kNumAlignBits 4
+#define kAlignTableSize (1 << kNumAlignBits)
+#define kAlignMask (kAlignTableSize - 1)
+
+#define kStartPosModelIndex 4
+#define kEndPosModelIndex 14
+#define kNumPosModels (kEndPosModelIndex - kStartPosModelIndex)
+
+#define kNumFullDistances (1 << (kEndPosModelIndex >> 1))
+
+#ifdef _LZMA_PROB32
+#define CLzmaProb UInt32
+#else
+#define CLzmaProb UInt16
+#endif
+
+#define LZMA_PB_MAX 4
+#define LZMA_LC_MAX 8
+#define LZMA_LP_MAX 4
+
+#define LZMA_NUM_PB_STATES_MAX (1 << LZMA_PB_MAX)
+
+#define kLenNumLowBits 3
+#define kLenNumLowSymbols (1 << kLenNumLowBits)
+#define kLenNumMidBits 3
+#define kLenNumMidSymbols (1 << kLenNumMidBits)
+#define kLenNumHighBits 8
+#define kLenNumHighSymbols (1 << kLenNumHighBits)
+
+#define kLenNumSymbolsTotal (kLenNumLowSymbols + kLenNumMidSymbols + kLenNumHighSymbols)
+
+#define LZMA_MATCH_LEN_MIN 2
+#define LZMA_MATCH_LEN_MAX (LZMA_MATCH_LEN_MIN + kLenNumSymbolsTotal - 1)
+
+#define kNumStates 12
+
+typedef struct
+{
+  CLzmaProb choice;
+  CLzmaProb choice2;
+  CLzmaProb low[LZMA_NUM_PB_STATES_MAX << kLenNumLowBits];
+  CLzmaProb mid[LZMA_NUM_PB_STATES_MAX << kLenNumMidBits];
+  CLzmaProb high[kLenNumHighSymbols];
+} CLenEnc;
+
+typedef struct
+{
+  CLenEnc p;
+  UInt32 prices[LZMA_NUM_PB_STATES_MAX][kLenNumSymbolsTotal];
+  UInt32 tableSize;
+  UInt32 counters[LZMA_NUM_PB_STATES_MAX];
+} CLenPriceEnc;
+
+typedef struct
+{
+  UInt32 range;
+  Byte cache;
+  UInt64 low;
+  UInt64 cacheSize;
+  Byte *buf;
+  Byte *bufLim;
+  Byte *bufBase;
+  ISeqOutStream *outStream;
+  UInt64 processed;
+  SRes res;
+} CRangeEnc;
+
+typedef struct
+{
+  CLzmaProb *litProbs;
+
+  CLzmaProb isMatch[kNumStates][LZMA_NUM_PB_STATES_MAX];
+  CLzmaProb isRep[kNumStates];
+  CLzmaProb isRepG0[kNumStates];
+  CLzmaProb isRepG1[kNumStates];
+  CLzmaProb isRepG2[kNumStates];
+  CLzmaProb isRep0Long[kNumStates][LZMA_NUM_PB_STATES_MAX];
+
+  CLzmaProb posSlotEncoder[kNumLenToPosStates][1 << kNumPosSlotBits];
+  CLzmaProb posEncoders[kNumFullDistances - kEndPosModelIndex];
+  CLzmaProb posAlignEncoder[1 << kNumAlignBits];
+
+  CLenPriceEnc lenEnc;
+  CLenPriceEnc repLenEnc;
+
+  UInt32 reps[LZMA_NUM_REPS];
+  UInt32 state;
+} CSaveState;
+
+typedef struct
+{
+  IMatchFinder matchFinder;
+  void *matchFinderObj;
+
+  #ifndef _7ZIP_ST
+  Bool mtMode;
+  CMatchFinderMt matchFinderMt;
+  #endif
+
+  CMatchFinder matchFinderBase;
+
+  #ifndef _7ZIP_ST
+  Byte pad[128];
+  #endif
+
+  UInt32 optimumEndIndex;
+  UInt32 optimumCurrentIndex;
+
+  UInt32 longestMatchLength;
+  UInt32 numPairs;
+  UInt32 numAvail;
+  COptimal opt[kNumOpts];
+
+  #ifndef LZMA_LOG_BSR
+  Byte g_FastPos[1 << kNumLogBits];
+  #endif
+
+  UInt32 ProbPrices[kBitModelTotal >> kNumMoveReducingBits];
+  UInt32 matches[LZMA_MATCH_LEN_MAX * 2 + 2 + 1];
+  UInt32 numFastBytes;
+  UInt32 additionalOffset;
+  UInt32 reps[LZMA_NUM_REPS];
+  UInt32 state;
+
+  UInt32 posSlotPrices[kNumLenToPosStates][kDistTableSizeMax];
+  UInt32 distancesPrices[kNumLenToPosStates][kNumFullDistances];
+  UInt32 alignPrices[kAlignTableSize];
+  UInt32 alignPriceCount;
+
+  UInt32 distTableSize;
+
+  unsigned lc, lp, pb;
+  unsigned lpMask, pbMask;
+
+  CLzmaProb *litProbs;
+
+  CLzmaProb isMatch[kNumStates][LZMA_NUM_PB_STATES_MAX];
+  CLzmaProb isRep[kNumStates];
+  CLzmaProb isRepG0[kNumStates];
+  CLzmaProb isRepG1[kNumStates];
+  CLzmaProb isRepG2[kNumStates];
+  CLzmaProb isRep0Long[kNumStates][LZMA_NUM_PB_STATES_MAX];
+
+  CLzmaProb posSlotEncoder[kNumLenToPosStates][1 << kNumPosSlotBits];
+  CLzmaProb posEncoders[kNumFullDistances - kEndPosModelIndex];
+  CLzmaProb posAlignEncoder[1 << kNumAlignBits];
+
+  CLenPriceEnc lenEnc;
+  CLenPriceEnc repLenEnc;
+
+  unsigned lclp;
+
+  Bool fastMode;
+
+  CRangeEnc rc;
+
+  Bool writeEndMark;
+  UInt64 nowPos64;
+  UInt32 matchPriceCount;
+  Bool finished;
+  Bool multiThread;
+
+  SRes result;
+  UInt32 dictSize;
+
+  int needInit;
+
+  CSaveState saveState;
+} CLzmaEnc;
+
+void LzmaEnc_SaveState(CLzmaEncHandle pp)
+{
+  CLzmaEnc *p = (CLzmaEnc *)pp;
+  CSaveState *dest = &p->saveState;
+  int i;
+  dest->lenEnc = p->lenEnc;
+  dest->repLenEnc = p->repLenEnc;
+  dest->state = p->state;
+
+  for (i = 0; i < kNumStates; i++)
+  {
+	memcpy(dest->isMatch[i], p->isMatch[i], sizeof(p->isMatch[i]));
+	memcpy(dest->isRep0Long[i], p->isRep0Long[i], sizeof(p->isRep0Long[i]));
+  }
+  for (i = 0; i < kNumLenToPosStates; i++)
+	memcpy(dest->posSlotEncoder[i], p->posSlotEncoder[i], sizeof(p->posSlotEncoder[i]));
+  memcpy(dest->isRep, p->isRep, sizeof(p->isRep));
+  memcpy(dest->isRepG0, p->isRepG0, sizeof(p->isRepG0));
+  memcpy(dest->isRepG1, p->isRepG1, sizeof(p->isRepG1));
+  memcpy(dest->isRepG2, p->isRepG2, sizeof(p->isRepG2));
+  memcpy(dest->posEncoders, p->posEncoders, sizeof(p->posEncoders));
+  memcpy(dest->posAlignEncoder, p->posAlignEncoder, sizeof(p->posAlignEncoder));
+  memcpy(dest->reps, p->reps, sizeof(p->reps));
+  memcpy(dest->litProbs, p->litProbs, (0x300 << p->lclp) * sizeof(CLzmaProb));
+}
+
+void LzmaEnc_RestoreState(CLzmaEncHandle pp)
+{
+  CLzmaEnc *dest = (CLzmaEnc *)pp;
+  const CSaveState *p = &dest->saveState;
+  int i;
+  dest->lenEnc = p->lenEnc;
+  dest->repLenEnc = p->repLenEnc;
+  dest->state = p->state;
+
+  for (i = 0; i < kNumStates; i++)
+  {
+	memcpy(dest->isMatch[i], p->isMatch[i], sizeof(p->isMatch[i]));
+	memcpy(dest->isRep0Long[i], p->isRep0Long[i], sizeof(p->isRep0Long[i]));
+  }
+  for (i = 0; i < kNumLenToPosStates; i++)
+	memcpy(dest->posSlotEncoder[i], p->posSlotEncoder[i], sizeof(p->posSlotEncoder[i]));
+  memcpy(dest->isRep, p->isRep, sizeof(p->isRep));
+  memcpy(dest->isRepG0, p->isRepG0, sizeof(p->isRepG0));
+  memcpy(dest->isRepG1, p->isRepG1, sizeof(p->isRepG1));
+  memcpy(dest->isRepG2, p->isRepG2, sizeof(p->isRepG2));
+  memcpy(dest->posEncoders, p->posEncoders, sizeof(p->posEncoders));
+  memcpy(dest->posAlignEncoder, p->posAlignEncoder, sizeof(p->posAlignEncoder));
+  memcpy(dest->reps, p->reps, sizeof(p->reps));
+  memcpy(dest->litProbs, p->litProbs, (0x300 << dest->lclp) * sizeof(CLzmaProb));
+}
+
+SRes LzmaEnc_SetProps(CLzmaEncHandle pp, const CLzmaEncProps *props2)
+{
+  CLzmaEnc *p = (CLzmaEnc *)pp;
+  CLzmaEncProps props = *props2;
+  LzmaEncProps_Normalize(&props);
+
+  if (props.lc > LZMA_LC_MAX || props.lp > LZMA_LP_MAX || props.pb > LZMA_PB_MAX ||
+	  props.dictSize > ((UInt32)1 << kDicLogSizeMaxCompress) || props.dictSize > ((UInt32)1 << 30))
+	return SZ_ERROR_PARAM;
+  p->dictSize = props.dictSize;
+  {
+	unsigned fb = props.fb;
+	if (fb < 5)
+	  fb = 5;
+	if (fb > LZMA_MATCH_LEN_MAX)
+	  fb = LZMA_MATCH_LEN_MAX;
+	p->numFastBytes = fb;
+  }
+  p->lc = props.lc;
+  p->lp = props.lp;
+  p->pb = props.pb;
+  p->fastMode = (props.algo == 0);
+  p->matchFinderBase.btMode = props.btMode;
+  {
+	UInt32 numHashBytes = 4;
+	if (props.btMode)
+	{
+	  if (props.numHashBytes < 2)
+		numHashBytes = 2;
+	  else if (props.numHashBytes < 4)
+		numHashBytes = props.numHashBytes;
+	}
+	p->matchFinderBase.numHashBytes = numHashBytes;
+  }
+
+  p->matchFinderBase.cutValue = props.mc;
+
+  p->writeEndMark = props.writeEndMark;
+
+  #ifndef _7ZIP_ST
+  /*
+  if (newMultiThread != _multiThread)
+  {
+	ReleaseMatchFinder();
+	_multiThread = newMultiThread;
+  }
+  */
+  p->multiThread = (props.numThreads > 1);
+  #endif
+
+  return SZ_OK;
+}
+
+static const int kLiteralNextStates[kNumStates] = {0, 0, 0, 0, 1, 2, 3, 4,  5,  6,   4, 5};
+static const int kMatchNextStates[kNumStates]   = {7, 7, 7, 7, 7, 7, 7, 10, 10, 10, 10, 10};
+static const int kRepNextStates[kNumStates]     = {8, 8, 8, 8, 8, 8, 8, 11, 11, 11, 11, 11};
+static const int kShortRepNextStates[kNumStates]= {9, 9, 9, 9, 9, 9, 9, 11, 11, 11, 11, 11};
+
+#define IsCharState(s) ((s) < 7)
+
+#define GetLenToPosState(len) (((len) < kNumLenToPosStates + 1) ? (len) - 2 : kNumLenToPosStates - 1)
+
+#define kInfinityPrice (1 << 30)
+
+static void RangeEnc_Construct(CRangeEnc *p)
+{
+  p->outStream = 0;
+  p->bufBase = 0;
+}
+
+#define RangeEnc_GetProcessed(p) ((p)->processed + ((p)->buf - (p)->bufBase) + (p)->cacheSize)
+
+#define RC_BUF_SIZE (1 << 16)
+static int RangeEnc_Alloc(CRangeEnc *p, ISzAlloc *alloc)
+{
+  if (p->bufBase == 0)
+  {
+	p->bufBase = (Byte *)alloc->Alloc(alloc, RC_BUF_SIZE);
+	if (p->bufBase == 0)
+	  return 0;
+	p->bufLim = p->bufBase + RC_BUF_SIZE;
+  }
+  return 1;
+}
+
+static void RangeEnc_Free(CRangeEnc *p, ISzAlloc *alloc)
+{
+  alloc->Free(alloc, p->bufBase);
+  p->bufBase = 0;
+}
+
+static void RangeEnc_Init(CRangeEnc *p)
+{
+  /* Stream.Init(); */
+  p->low = 0;
+  p->range = 0xFFFFFFFF;
+  p->cacheSize = 1;
+  p->cache = 0;
+
+  p->buf = p->bufBase;
+
+  p->processed = 0;
+  p->res = SZ_OK;
+}
+
+static void RangeEnc_FlushStream(CRangeEnc *p)
+{
+  size_t num;
+  if (p->res != SZ_OK)
+	return;
+  num = p->buf - p->bufBase;
+  if (num != p->outStream->Write(p->outStream, p->bufBase, num))
+	p->res = SZ_ERROR_WRITE;
+  p->processed += num;
+  p->buf = p->bufBase;
+}
+
+static void MY_FAST_CALL RangeEnc_ShiftLow(CRangeEnc *p)
+{
+  if ((UInt32)p->low < (UInt32)0xFF000000 || (int)(p->low >> 32) != 0)
+  {
+	Byte temp = p->cache;
+	do
+	{
+	  Byte *buf = p->buf;
+	  *buf++ = (Byte)(temp + (Byte)(p->low >> 32));
+	  p->buf = buf;
+	  if (buf == p->bufLim)
+		RangeEnc_FlushStream(p);
+	  temp = 0xFF;
+	}
+	while (--p->cacheSize != 0);
+	p->cache = (Byte)((UInt32)p->low >> 24);
+  }
+  p->cacheSize++;
+  p->low = (UInt32)p->low << 8;
+}
+
+static void RangeEnc_FlushData(CRangeEnc *p)
+{
+  int i;
+  for (i = 0; i < 5; i++)
+	RangeEnc_ShiftLow(p);
+}
+
+static void RangeEnc_EncodeDirectBits(CRangeEnc *p, UInt32 value, int numBits)
+{
+  do
+  {
+	p->range >>= 1;
+	p->low += p->range & (0 - ((value >> --numBits) & 1));
+	if (p->range < kTopValue)
+	{
+	  p->range <<= 8;
+	  RangeEnc_ShiftLow(p);
+	}
+  }
+  while (numBits != 0);
+}
+
+static void RangeEnc_EncodeBit(CRangeEnc *p, CLzmaProb *prob, UInt32 symbol)
+{
+  UInt32 ttt = *prob;
+  UInt32 newBound = (p->range >> kNumBitModelTotalBits) * ttt;
+  if (symbol == 0)
+  {
+	p->range = newBound;
+	ttt += (kBitModelTotal - ttt) >> kNumMoveBits;
+  }
+  else
+  {
+	p->low += newBound;
+	p->range -= newBound;
+	ttt -= ttt >> kNumMoveBits;
+  }
+  *prob = (CLzmaProb)ttt;
+  if (p->range < kTopValue)
+  {
+	p->range <<= 8;
+	RangeEnc_ShiftLow(p);
+  }
+}
+
+static void LitEnc_Encode(CRangeEnc *p, CLzmaProb *probs, UInt32 symbol)
+{
+  symbol |= 0x100;
+  do
+  {
+	RangeEnc_EncodeBit(p, probs + (symbol >> 8), (symbol >> 7) & 1);
+	symbol <<= 1;
+  }
+  while (symbol < 0x10000);
+}
+
+static void LitEnc_EncodeMatched(CRangeEnc *p, CLzmaProb *probs, UInt32 symbol, UInt32 matchByte)
+{
+  UInt32 offs = 0x100;
+  symbol |= 0x100;
+  do
+  {
+	matchByte <<= 1;
+	RangeEnc_EncodeBit(p, probs + (offs + (matchByte & offs) + (symbol >> 8)), (symbol >> 7) & 1);
+	symbol <<= 1;
+	offs &= ~(matchByte ^ symbol);
+  }
+  while (symbol < 0x10000);
+}
+
+void LzmaEnc_InitPriceTables(UInt32 *ProbPrices)
+{
+  UInt32 i;
+  for (i = (1 << kNumMoveReducingBits) / 2; i < kBitModelTotal; i += (1 << kNumMoveReducingBits))
+  {
+	const int kCyclesBits = kNumBitPriceShiftBits;
+	UInt32 w = i;
+	UInt32 bitCount = 0;
+	int j;
+	for (j = 0; j < kCyclesBits; j++)
+	{
+	  w = w * w;
+	  bitCount <<= 1;
+	  while (w >= ((UInt32)1 << 16))
+	  {
+		w >>= 1;
+		bitCount++;
+	  }
+	}
+	ProbPrices[i >> kNumMoveReducingBits] = ((kNumBitModelTotalBits << kCyclesBits) - 15 - bitCount);
+  }
+}
+
+#define GET_PRICE(prob, symbol) \
+  p->ProbPrices[((prob) ^ (((-(int)(symbol))) & (kBitModelTotal - 1))) >> kNumMoveReducingBits];
+
+#define GET_PRICEa(prob, symbol) \
+  ProbPrices[((prob) ^ ((-((int)(symbol))) & (kBitModelTotal - 1))) >> kNumMoveReducingBits];
+
+#define GET_PRICE_0(prob) p->ProbPrices[(prob) >> kNumMoveReducingBits]
+#define GET_PRICE_1(prob) p->ProbPrices[((prob) ^ (kBitModelTotal - 1)) >> kNumMoveReducingBits]
+
+#define GET_PRICE_0a(prob) ProbPrices[(prob) >> kNumMoveReducingBits]
+#define GET_PRICE_1a(prob) ProbPrices[((prob) ^ (kBitModelTotal - 1)) >> kNumMoveReducingBits]
+
+static UInt32 LitEnc_GetPrice(const CLzmaProb *probs, UInt32 symbol, UInt32 *ProbPrices)
+{
+  UInt32 price = 0;
+  symbol |= 0x100;
+  do
+  {
+	price += GET_PRICEa(probs[symbol >> 8], (symbol >> 7) & 1);
+	symbol <<= 1;
+  }
+  while (symbol < 0x10000);
+  return price;
+}
+
+static UInt32 LitEnc_GetPriceMatched(const CLzmaProb *probs, UInt32 symbol, UInt32 matchByte, UInt32 *ProbPrices)
+{
+  UInt32 price = 0;
+  UInt32 offs = 0x100;
+  symbol |= 0x100;
+  do
+  {
+	matchByte <<= 1;
+	price += GET_PRICEa(probs[offs + (matchByte & offs) + (symbol >> 8)], (symbol >> 7) & 1);
+	symbol <<= 1;
+	offs &= ~(matchByte ^ symbol);
+  }
+  while (symbol < 0x10000);
+  return price;
+}
+
+static void RcTree_Encode(CRangeEnc *rc, CLzmaProb *probs, int numBitLevels, UInt32 symbol)
+{
+  UInt32 m = 1;
+  int i;
+  for (i = numBitLevels; i != 0;)
+  {
+	UInt32 bit;
+	i--;
+	bit = (symbol >> i) & 1;
+	RangeEnc_EncodeBit(rc, probs + m, bit);
+	m = (m << 1) | bit;
+  }
+}
+
+static void RcTree_ReverseEncode(CRangeEnc *rc, CLzmaProb *probs, int numBitLevels, UInt32 symbol)
+{
+  UInt32 m = 1;
+  int i;
+  for (i = 0; i < numBitLevels; i++)
+  {
+	UInt32 bit = symbol & 1;
+	RangeEnc_EncodeBit(rc, probs + m, bit);
+	m = (m << 1) | bit;
+	symbol >>= 1;
+  }
+}
+
+static UInt32 RcTree_GetPrice(const CLzmaProb *probs, int numBitLevels, UInt32 symbol, UInt32 *ProbPrices)
+{
+  UInt32 price = 0;
+  symbol |= (1 << numBitLevels);
+  while (symbol != 1)
+  {
+	price += GET_PRICEa(probs[symbol >> 1], symbol & 1);
+	symbol >>= 1;
+  }
+  return price;
+}
+
+static UInt32 RcTree_ReverseGetPrice(const CLzmaProb *probs, int numBitLevels, UInt32 symbol, UInt32 *ProbPrices)
+{
+  UInt32 price = 0;
+  UInt32 m = 1;
+  int i;
+  for (i = numBitLevels; i != 0; i--)
+  {
+	UInt32 bit = symbol & 1;
+	symbol >>= 1;
+	price += GET_PRICEa(probs[m], bit);
+	m = (m << 1) | bit;
+  }
+  return price;
+}
+
+static void LenEnc_Init(CLenEnc *p)
+{
+  unsigned i;
+  p->choice = p->choice2 = kProbInitValue;
+  for (i = 0; i < (LZMA_NUM_PB_STATES_MAX << kLenNumLowBits); i++)
+	p->low[i] = kProbInitValue;
+  for (i = 0; i < (LZMA_NUM_PB_STATES_MAX << kLenNumMidBits); i++)
+	p->mid[i] = kProbInitValue;
+  for (i = 0; i < kLenNumHighSymbols; i++)
+	p->high[i] = kProbInitValue;
+}
+
+static void LenEnc_Encode(CLenEnc *p, CRangeEnc *rc, UInt32 symbol, UInt32 posState)
+{
+  if (symbol < kLenNumLowSymbols)
+  {
+	RangeEnc_EncodeBit(rc, &p->choice, 0);
+	RcTree_Encode(rc, p->low + (posState << kLenNumLowBits), kLenNumLowBits, symbol);
+  }
+  else
+  {
+	RangeEnc_EncodeBit(rc, &p->choice, 1);
+	if (symbol < kLenNumLowSymbols + kLenNumMidSymbols)
+	{
+	  RangeEnc_EncodeBit(rc, &p->choice2, 0);
+	  RcTree_Encode(rc, p->mid + (posState << kLenNumMidBits), kLenNumMidBits, symbol - kLenNumLowSymbols);
+	}
+	else
+	{
+	  RangeEnc_EncodeBit(rc, &p->choice2, 1);
+	  RcTree_Encode(rc, p->high, kLenNumHighBits, symbol - kLenNumLowSymbols - kLenNumMidSymbols);
+	}
+  }
+}
+
+static void LenEnc_SetPrices(CLenEnc *p, UInt32 posState, UInt32 numSymbols, UInt32 *prices, UInt32 *ProbPrices)
+{
+  UInt32 a0 = GET_PRICE_0a(p->choice);
+  UInt32 a1 = GET_PRICE_1a(p->choice);
+  UInt32 b0 = a1 + GET_PRICE_0a(p->choice2);
+  UInt32 b1 = a1 + GET_PRICE_1a(p->choice2);
+  UInt32 i = 0;
+  for (i = 0; i < kLenNumLowSymbols; i++)
+  {
+	if (i >= numSymbols)
+	  return;
+	prices[i] = a0 + RcTree_GetPrice(p->low + (posState << kLenNumLowBits), kLenNumLowBits, i, ProbPrices);
+  }
+  for (; i < kLenNumLowSymbols + kLenNumMidSymbols; i++)
+  {
+	if (i >= numSymbols)
+	  return;
+	prices[i] = b0 + RcTree_GetPrice(p->mid + (posState << kLenNumMidBits), kLenNumMidBits, i - kLenNumLowSymbols, ProbPrices);
+  }
+  for (; i < numSymbols; i++)
+	prices[i] = b1 + RcTree_GetPrice(p->high, kLenNumHighBits, i - kLenNumLowSymbols - kLenNumMidSymbols, ProbPrices);
+}
+
+static void MY_FAST_CALL LenPriceEnc_UpdateTable(CLenPriceEnc *p, UInt32 posState, UInt32 *ProbPrices)
+{
+  LenEnc_SetPrices(&p->p, posState, p->tableSize, p->prices[posState], ProbPrices);
+  p->counters[posState] = p->tableSize;
+}
+
+static void LenPriceEnc_UpdateTables(CLenPriceEnc *p, UInt32 numPosStates, UInt32 *ProbPrices)
+{
+  UInt32 posState;
+  for (posState = 0; posState < numPosStates; posState++)
+	LenPriceEnc_UpdateTable(p, posState, ProbPrices);
+}
+
+static void LenEnc_Encode2(CLenPriceEnc *p, CRangeEnc *rc, UInt32 symbol, UInt32 posState, Bool updatePrice, UInt32 *ProbPrices)
+{
+  LenEnc_Encode(&p->p, rc, symbol, posState);
+  if (updatePrice)
+	if (--p->counters[posState] == 0)
+	  LenPriceEnc_UpdateTable(p, posState, ProbPrices);
+}
+
+static void MovePos(CLzmaEnc *p, UInt32 num)
+{
+  #ifdef SHOW_STAT
+  ttt += num;
+  printf("\n MovePos %d", num);
+  #endif
+  if (num != 0)
+  {
+	p->additionalOffset += num;
+	p->matchFinder.Skip(p->matchFinderObj, num);
+  }
+}
+
+static UInt32 ReadMatchDistances(CLzmaEnc *p, UInt32 *numDistancePairsRes)
+{
+  UInt32 lenRes = 0, numPairs;
+  p->numAvail = p->matchFinder.GetNumAvailableBytes(p->matchFinderObj);
+  numPairs = p->matchFinder.GetMatches(p->matchFinderObj, p->matches);
+  #ifdef SHOW_STAT
+  printf("\n i = %d numPairs = %d    ", ttt, numPairs / 2);
+  ttt++;
+  {
+	UInt32 i;
+	for (i = 0; i < numPairs; i += 2)
+	  printf("%2d %6d   | ", p->matches[i], p->matches[i + 1]);
+  }
+  #endif
+  if (numPairs > 0)
+  {
+	lenRes = p->matches[numPairs - 2];
+	if (lenRes == p->numFastBytes)
+	{
+	  const Byte *pby = p->matchFinder.GetPointerToCurrentPos(p->matchFinderObj) - 1;
+	  UInt32 distance = p->matches[numPairs - 1] + 1;
+	  UInt32 numAvail = p->numAvail;
+	  if (numAvail > LZMA_MATCH_LEN_MAX)
+		numAvail = LZMA_MATCH_LEN_MAX;
+	  {
+		const Byte *pby2 = pby - distance;
+		for (; lenRes < numAvail && pby[lenRes] == pby2[lenRes]; lenRes++);
+	  }
+	}
+  }
+  p->additionalOffset++;
+  *numDistancePairsRes = numPairs;
+  return lenRes;
+}
+
+#define MakeAsChar(p) (p)->backPrev = (UInt32)(-1); (p)->prev1IsChar = False;
+#define MakeAsShortRep(p) (p)->backPrev = 0; (p)->prev1IsChar = False;
+#define IsShortRep(p) ((p)->backPrev == 0)
+
+static UInt32 GetRepLen1Price(CLzmaEnc *p, UInt32 state, UInt32 posState)
+{
+  return
+	GET_PRICE_0(p->isRepG0[state]) +
+	GET_PRICE_0(p->isRep0Long[state][posState]);
+}
+
+static UInt32 GetPureRepPrice(CLzmaEnc *p, UInt32 repIndex, UInt32 state, UInt32 posState)
+{
+  UInt32 price;
+  if (repIndex == 0)
+  {
+	price = GET_PRICE_0(p->isRepG0[state]);
+	price += GET_PRICE_1(p->isRep0Long[state][posState]);
+  }
+  else
+  {
+	price = GET_PRICE_1(p->isRepG0[state]);
+	if (repIndex == 1)
+	  price += GET_PRICE_0(p->isRepG1[state]);
+	else
+	{
+	  price += GET_PRICE_1(p->isRepG1[state]);
+	  price += GET_PRICE(p->isRepG2[state], repIndex - 2);
+	}
+  }
+  return price;
+}
+
+static UInt32 GetRepPrice(CLzmaEnc *p, UInt32 repIndex, UInt32 len, UInt32 state, UInt32 posState)
+{
+  return p->repLenEnc.prices[posState][len - LZMA_MATCH_LEN_MIN] +
+	GetPureRepPrice(p, repIndex, state, posState);
+}
+
+static UInt32 Backward(CLzmaEnc *p, UInt32 *backRes, UInt32 cur)
+{
+  UInt32 posMem = p->opt[cur].posPrev;
+  UInt32 backMem = p->opt[cur].backPrev;
+  p->optimumEndIndex = cur;
+  do
+  {
+	if (p->opt[cur].prev1IsChar)
+	{
+	  MakeAsChar(&p->opt[posMem])
+	  p->opt[posMem].posPrev = posMem - 1;
+	  if (p->opt[cur].prev2)
+	  {
+		p->opt[posMem - 1].prev1IsChar = False;
+		p->opt[posMem - 1].posPrev = p->opt[cur].posPrev2;
+		p->opt[posMem - 1].backPrev = p->opt[cur].backPrev2;
+	  }
+	}
+	{
+	  UInt32 posPrev = posMem;
+	  UInt32 backCur = backMem;
+
+	  backMem = p->opt[posPrev].backPrev;
+	  posMem = p->opt[posPrev].posPrev;
+
+	  p->opt[posPrev].backPrev = backCur;
+	  p->opt[posPrev].posPrev = cur;
+	  cur = posPrev;
+	}
+  }
+  while (cur != 0);
+  *backRes = p->opt[0].backPrev;
+  p->optimumCurrentIndex  = p->opt[0].posPrev;
+  return p->optimumCurrentIndex;
+}
+
+#define LIT_PROBS(pos, prevByte) (p->litProbs + ((((pos) & p->lpMask) << p->lc) + ((prevByte) >> (8 - p->lc))) * 0x300)
+
+static UInt32 GetOptimum(CLzmaEnc *p, UInt32 position, UInt32 *backRes)
+{
+  UInt32 numAvail, mainLen, numPairs, repMaxIndex, i, posState, lenEnd, len, cur;
+  UInt32 matchPrice, repMatchPrice, normalMatchPrice;
+  UInt32 reps[LZMA_NUM_REPS], repLens[LZMA_NUM_REPS];
+  UInt32 *matches;
+  const Byte *data;
+  Byte curByte, matchByte;
+  if (p->optimumEndIndex != p->optimumCurrentIndex)
+  {
+	const COptimal *opt = &p->opt[p->optimumCurrentIndex];
+	UInt32 lenRes = opt->posPrev - p->optimumCurrentIndex;
+	*backRes = opt->backPrev;
+	p->optimumCurrentIndex = opt->posPrev;
+	return lenRes;
+  }
+  p->optimumCurrentIndex = p->optimumEndIndex = 0;
+
+  if (p->additionalOffset == 0)
+	mainLen = ReadMatchDistances(p, &numPairs);
+  else
+  {
+	mainLen = p->longestMatchLength;
+	numPairs = p->numPairs;
+  }
+
+  numAvail = p->numAvail;
+  if (numAvail < 2)
+  {
+	*backRes = (UInt32)(-1);
+	return 1;
+  }
+  if (numAvail > LZMA_MATCH_LEN_MAX)
+	numAvail = LZMA_MATCH_LEN_MAX;
+
+  data = p->matchFinder.GetPointerToCurrentPos(p->matchFinderObj) - 1;
+  repMaxIndex = 0;
+  for (i = 0; i < LZMA_NUM_REPS; i++)
+  {
+	UInt32 lenTest;
+	const Byte *data2;
+	reps[i] = p->reps[i];
+	data2 = data - (reps[i] + 1);
+	if (data[0] != data2[0] || data[1] != data2[1])
+	{
+	  repLens[i] = 0;
+	  continue;
+	}
+	for (lenTest = 2; lenTest < numAvail && data[lenTest] == data2[lenTest]; lenTest++);
+	repLens[i] = lenTest;
+	if (lenTest > repLens[repMaxIndex])
+	  repMaxIndex = i;
+  }
+  if (repLens[repMaxIndex] >= p->numFastBytes)
+  {
+	UInt32 lenRes;
+	*backRes = repMaxIndex;
+	lenRes = repLens[repMaxIndex];
+	MovePos(p, lenRes - 1);
+	return lenRes;
+  }
+
+  matches = p->matches;
+  if (mainLen >= p->numFastBytes)
+  {
+	*backRes = matches[numPairs - 1] + LZMA_NUM_REPS;
+	MovePos(p, mainLen - 1);
+	return mainLen;
+  }
+  curByte = *data;
+  matchByte = *(data - (reps[0] + 1));
+
+  if (mainLen < 2 && curByte != matchByte && repLens[repMaxIndex] < 2)
+  {
+	*backRes = (UInt32)-1;
+	return 1;
+  }
+
+  p->opt[0].state = (CState)p->state;
+
+  posState = (position & p->pbMask);
+
+  {
+	const CLzmaProb *probs = LIT_PROBS(position, *(data - 1));
+	p->opt[1].price = GET_PRICE_0(p->isMatch[p->state][posState]) +
+		(!IsCharState(p->state) ?
+		  LitEnc_GetPriceMatched(probs, curByte, matchByte, p->ProbPrices) :
+		  LitEnc_GetPrice(probs, curByte, p->ProbPrices));
+  }
+
+  MakeAsChar(&p->opt[1]);
+
+  matchPrice = GET_PRICE_1(p->isMatch[p->state][posState]);
+  repMatchPrice = matchPrice + GET_PRICE_1(p->isRep[p->state]);
+
+  if (matchByte == curByte)
+  {
+	UInt32 shortRepPrice = repMatchPrice + GetRepLen1Price(p, p->state, posState);
+	if (shortRepPrice < p->opt[1].price)
+	{
+	  p->opt[1].price = shortRepPrice;
+	  MakeAsShortRep(&p->opt[1]);
+	}
+  }
+  lenEnd = ((mainLen >= repLens[repMaxIndex]) ? mainLen : repLens[repMaxIndex]);
+
+  if (lenEnd < 2)
+  {
+	*backRes = p->opt[1].backPrev;
+	return 1;
+  }
+
+  p->opt[1].posPrev = 0;
+  for (i = 0; i < LZMA_NUM_REPS; i++)
+	p->opt[0].backs[i] = reps[i];
+
+  len = lenEnd;
+  do
+	p->opt[len--].price = kInfinityPrice;
+  while (len >= 2);
+
+  for (i = 0; i < LZMA_NUM_REPS; i++)
+  {
+	UInt32 repLen = repLens[i];
+	UInt32 price;
+	if (repLen < 2)
+	  continue;
+	price = repMatchPrice + GetPureRepPrice(p, i, p->state, posState);
+	do
+	{
+	  UInt32 curAndLenPrice = price + p->repLenEnc.prices[posState][repLen - 2];
+	  COptimal *opt = &p->opt[repLen];
+	  if (curAndLenPrice < opt->price)
+	  {
+		opt->price = curAndLenPrice;
+		opt->posPrev = 0;
+		opt->backPrev = i;
+		opt->prev1IsChar = False;
+	  }
+	}
+	while (--repLen >= 2);
+  }
+
+  normalMatchPrice = matchPrice + GET_PRICE_0(p->isRep[p->state]);
+
+  len = ((repLens[0] >= 2) ? repLens[0] + 1 : 2);
+  if (len <= mainLen)
+  {
+	UInt32 offs = 0;
+	while (len > matches[offs])
+	  offs += 2;
+	for (; ; len++)
+	{
+	  COptimal *opt;
+	  UInt32 distance = matches[offs + 1];
+
+	  UInt32 curAndLenPrice = normalMatchPrice + p->lenEnc.prices[posState][len - LZMA_MATCH_LEN_MIN];
+	  UInt32 lenToPosState = GetLenToPosState(len);
+	  if (distance < kNumFullDistances)
+		curAndLenPrice += p->distancesPrices[lenToPosState][distance];
+	  else
+	  {
+		UInt32 slot;
+		GetPosSlot2(distance, slot);
+		curAndLenPrice += p->alignPrices[distance & kAlignMask] + p->posSlotPrices[lenToPosState][slot];
+	  }
+	  opt = &p->opt[len];
+	  if (curAndLenPrice < opt->price)
+	  {
+		opt->price = curAndLenPrice;
+		opt->posPrev = 0;
+		opt->backPrev = distance + LZMA_NUM_REPS;
+		opt->prev1IsChar = False;
+	  }
+	  if (len == matches[offs])
+	  {
+		offs += 2;
+		if (offs == numPairs)
+		  break;
+	  }
+	}
+  }
+
+  cur = 0;
+
+	#ifdef SHOW_STAT2
+	if (position >= 0)
+	{
+	  unsigned i;
+	  printf("\n pos = %4X", position);
+	  for (i = cur; i <= lenEnd; i++)
+	  printf("\nprice[%4X] = %d", position - cur + i, p->opt[i].price);
+	}
+	#endif
+
+  for (;;)
+  {
+	UInt32 numAvailFull, newLen, numPairs, posPrev, state, posState, startLen;
+	UInt32 curPrice, curAnd1Price, matchPrice, repMatchPrice;
+	Bool nextIsChar;
+	Byte curByte, matchByte;
+	const Byte *data;
+	COptimal *curOpt;
+	COptimal *nextOpt;
+
+	cur++;
+	if (cur == lenEnd)
+	  return Backward(p, backRes, cur);
+
+	newLen = ReadMatchDistances(p, &numPairs);
+	if (newLen >= p->numFastBytes)
+	{
+	  p->numPairs = numPairs;
+	  p->longestMatchLength = newLen;
+	  return Backward(p, backRes, cur);
+	}
+	position++;
+	curOpt = &p->opt[cur];
+	posPrev = curOpt->posPrev;
+	if (curOpt->prev1IsChar)
+	{
+	  posPrev--;
+	  if (curOpt->prev2)
+	  {
+		state = p->opt[curOpt->posPrev2].state;
+		if (curOpt->backPrev2 < LZMA_NUM_REPS)
+		  state = kRepNextStates[state];
+		else
+		  state = kMatchNextStates[state];
+	  }
+	  else
+		state = p->opt[posPrev].state;
+	  state = kLiteralNextStates[state];
+	}
+	else
+	  state = p->opt[posPrev].state;
+	if (posPrev == cur - 1)
+	{
+	  if (IsShortRep(curOpt))
+		state = kShortRepNextStates[state];
+	  else
+		state = kLiteralNextStates[state];
+	}
+	else
+	{
+	  UInt32 pos;
+	  const COptimal *prevOpt;
+	  if (curOpt->prev1IsChar && curOpt->prev2)
+	  {
+		posPrev = curOpt->posPrev2;
+		pos = curOpt->backPrev2;
+		state = kRepNextStates[state];
+	  }
+	  else
+	  {
+		pos = curOpt->backPrev;
+		if (pos < LZMA_NUM_REPS)
+		  state = kRepNextStates[state];
+		else
+		  state = kMatchNextStates[state];
+	  }
+	  prevOpt = &p->opt[posPrev];
+	  if (pos < LZMA_NUM_REPS)
+	  {
+		UInt32 i;
+		reps[0] = prevOpt->backs[pos];
+		for (i = 1; i <= pos; i++)
+		  reps[i] = prevOpt->backs[i - 1];
+		for (; i < LZMA_NUM_REPS; i++)
+		  reps[i] = prevOpt->backs[i];
+	  }
+	  else
+	  {
+		UInt32 i;
+		reps[0] = (pos - LZMA_NUM_REPS);
+		for (i = 1; i < LZMA_NUM_REPS; i++)
+		  reps[i] = prevOpt->backs[i - 1];
+	  }
+	}
+	curOpt->state = (CState)state;
+
+	curOpt->backs[0] = reps[0];
+	curOpt->backs[1] = reps[1];
+	curOpt->backs[2] = reps[2];
+	curOpt->backs[3] = reps[3];
+
+	curPrice = curOpt->price;
+	nextIsChar = False;
+	data = p->matchFinder.GetPointerToCurrentPos(p->matchFinderObj) - 1;
+	curByte = *data;
+	matchByte = *(data - (reps[0] + 1));
+
+	posState = (position & p->pbMask);
+
+	curAnd1Price = curPrice + GET_PRICE_0(p->isMatch[state][posState]);
+	{
+	  const CLzmaProb *probs = LIT_PROBS(position, *(data - 1));
+	  curAnd1Price +=
+		(!IsCharState(state) ?
+		  LitEnc_GetPriceMatched(probs, curByte, matchByte, p->ProbPrices) :
+		  LitEnc_GetPrice(probs, curByte, p->ProbPrices));
+	}
+
+	nextOpt = &p->opt[cur + 1];
+
+	if (curAnd1Price < nextOpt->price)
+	{
+	  nextOpt->price = curAnd1Price;
+	  nextOpt->posPrev = cur;
+	  MakeAsChar(nextOpt);
+	  nextIsChar = True;
+	}
+
+	matchPrice = curPrice + GET_PRICE_1(p->isMatch[state][posState]);
+	repMatchPrice = matchPrice + GET_PRICE_1(p->isRep[state]);
+
+	if (matchByte == curByte && !(nextOpt->posPrev < cur && nextOpt->backPrev == 0))
+	{
+	  UInt32 shortRepPrice = repMatchPrice + GetRepLen1Price(p, state, posState);
+	  if (shortRepPrice <= nextOpt->price)
+	  {
+		nextOpt->price = shortRepPrice;
+		nextOpt->posPrev = cur;
+		MakeAsShortRep(nextOpt);
+		nextIsChar = True;
+	  }
+	}
+	numAvailFull = p->numAvail;
+	{
+	  UInt32 temp = kNumOpts - 1 - cur;
+	  if (temp < numAvailFull)
+		numAvailFull = temp;
+	}
+
+	if (numAvailFull < 2)
+	  continue;
+	numAvail = (numAvailFull <= p->numFastBytes ? numAvailFull : p->numFastBytes);
+
+	if (!nextIsChar && matchByte != curByte) /* speed optimization */
+	{
+	  /* try Literal + rep0 */
+	  UInt32 temp;
+	  UInt32 lenTest2;
+	  const Byte *data2 = data - (reps[0] + 1);
+	  UInt32 limit = p->numFastBytes + 1;
+	  if (limit > numAvailFull)
+		limit = numAvailFull;
+
+	  for (temp = 1; temp < limit && data[temp] == data2[temp]; temp++);
+	  lenTest2 = temp - 1;
+	  if (lenTest2 >= 2)
+	  {
+		UInt32 state2 = kLiteralNextStates[state];
+		UInt32 posStateNext = (position + 1) & p->pbMask;
+		UInt32 nextRepMatchPrice = curAnd1Price +
+			GET_PRICE_1(p->isMatch[state2][posStateNext]) +
+			GET_PRICE_1(p->isRep[state2]);
+		/* for (; lenTest2 >= 2; lenTest2--) */
+		{
+		  UInt32 curAndLenPrice;
+		  COptimal *opt;
+		  UInt32 offset = cur + 1 + lenTest2;
+		  while (lenEnd < offset)
+			p->opt[++lenEnd].price = kInfinityPrice;
+		  curAndLenPrice = nextRepMatchPrice + GetRepPrice(p, 0, lenTest2, state2, posStateNext);
+		  opt = &p->opt[offset];
+		  if (curAndLenPrice < opt->price)
+		  {
+			opt->price = curAndLenPrice;
+			opt->posPrev = cur + 1;
+			opt->backPrev = 0;
+			opt->prev1IsChar = True;
+			opt->prev2 = False;
+		  }
+		}
+	  }
+	}
+
+	startLen = 2; /* speed optimization */
+	{
+	UInt32 repIndex;
+	for (repIndex = 0; repIndex < LZMA_NUM_REPS; repIndex++)
+	{
+	  UInt32 lenTest;
+	  UInt32 lenTestTemp;
+	  UInt32 price;
+	  const Byte *data2 = data - (reps[repIndex] + 1);
+	  if (data[0] != data2[0] || data[1] != data2[1])
+		continue;
+	  for (lenTest = 2; lenTest < numAvail && data[lenTest] == data2[lenTest]; lenTest++);
+	  while (lenEnd < cur + lenTest)
+		p->opt[++lenEnd].price = kInfinityPrice;
+	  lenTestTemp = lenTest;
+	  price = repMatchPrice + GetPureRepPrice(p, repIndex, state, posState);
+	  do
+	  {
+		UInt32 curAndLenPrice = price + p->repLenEnc.prices[posState][lenTest - 2];
+		COptimal *opt = &p->opt[cur + lenTest];
+		if (curAndLenPrice < opt->price)
+		{
+		  opt->price = curAndLenPrice;
+		  opt->posPrev = cur;
+		  opt->backPrev = repIndex;
+		  opt->prev1IsChar = False;
+		}
+	  }
+	  while (--lenTest >= 2);
+	  lenTest = lenTestTemp;
+
+	  if (repIndex == 0)
+		startLen = lenTest + 1;
+
+	  /* if (_maxMode) */
+		{
+		  UInt32 lenTest2 = lenTest + 1;
+		  UInt32 limit = lenTest2 + p->numFastBytes;
+		  UInt32 nextRepMatchPrice;
+		  if (limit > numAvailFull)
+			limit = numAvailFull;
+		  for (; lenTest2 < limit && data[lenTest2] == data2[lenTest2]; lenTest2++);
+		  lenTest2 -= lenTest + 1;
+		  if (lenTest2 >= 2)
+		  {
+			UInt32 state2 = kRepNextStates[state];
+			UInt32 posStateNext = (position + lenTest) & p->pbMask;
+			UInt32 curAndLenCharPrice =
+				price + p->repLenEnc.prices[posState][lenTest - 2] +
+				GET_PRICE_0(p->isMatch[state2][posStateNext]) +
+				LitEnc_GetPriceMatched(LIT_PROBS(position + lenTest, data[lenTest - 1]),
+					data[lenTest], data2[lenTest], p->ProbPrices);
+			state2 = kLiteralNextStates[state2];
+			posStateNext = (position + lenTest + 1) & p->pbMask;
+			nextRepMatchPrice = curAndLenCharPrice +
+				GET_PRICE_1(p->isMatch[state2][posStateNext]) +
+				GET_PRICE_1(p->isRep[state2]);
+
+			/* for (; lenTest2 >= 2; lenTest2--) */
+			{
+			  UInt32 curAndLenPrice;
+			  COptimal *opt;
+			  UInt32 offset = cur + lenTest + 1 + lenTest2;
+			  while (lenEnd < offset)
+				p->opt[++lenEnd].price = kInfinityPrice;
+			  curAndLenPrice = nextRepMatchPrice + GetRepPrice(p, 0, lenTest2, state2, posStateNext);
+			  opt = &p->opt[offset];
+			  if (curAndLenPrice < opt->price)
+			  {
+				opt->price = curAndLenPrice;
+				opt->posPrev = cur + lenTest + 1;
+				opt->backPrev = 0;
+				opt->prev1IsChar = True;
+				opt->prev2 = True;
+				opt->posPrev2 = cur;
+				opt->backPrev2 = repIndex;
+			  }
+			}
+		  }
+		}
+	}
+	}
+	/* for (UInt32 lenTest = 2; lenTest <= newLen; lenTest++) */
+	if (newLen > numAvail)
+	{
+	  newLen = numAvail;
+	  for (numPairs = 0; newLen > matches[numPairs]; numPairs += 2);
+	  matches[numPairs] = newLen;
+	  numPairs += 2;
+	}
+	if (newLen >= startLen)
+	{
+	  UInt32 normalMatchPrice = matchPrice + GET_PRICE_0(p->isRep[state]);
+	  UInt32 offs, curBack, posSlot;
+	  UInt32 lenTest;
+	  while (lenEnd < cur + newLen)
+		p->opt[++lenEnd].price = kInfinityPrice;
+
+	  offs = 0;
+	  while (startLen > matches[offs])
+		offs += 2;
+	  curBack = matches[offs + 1];
+	  GetPosSlot2(curBack, posSlot);
+	  for (lenTest = /*2*/ startLen; ; lenTest++)
+	  {
+		UInt32 curAndLenPrice = normalMatchPrice + p->lenEnc.prices[posState][lenTest - LZMA_MATCH_LEN_MIN];
+		UInt32 lenToPosState = GetLenToPosState(lenTest);
+		COptimal *opt;
+		if (curBack < kNumFullDistances)
+		  curAndLenPrice += p->distancesPrices[lenToPosState][curBack];
+		else
+		  curAndLenPrice += p->posSlotPrices[lenToPosState][posSlot] + p->alignPrices[curBack & kAlignMask];
+
+		opt = &p->opt[cur + lenTest];
+		if (curAndLenPrice < opt->price)
+		{
+		  opt->price = curAndLenPrice;
+		  opt->posPrev = cur;
+		  opt->backPrev = curBack + LZMA_NUM_REPS;
+		  opt->prev1IsChar = False;
+		}
+
+		if (/*_maxMode && */lenTest == matches[offs])
+		{
+		  /* Try Match + Literal + Rep0 */
+		  const Byte *data2 = data - (curBack + 1);
+		  UInt32 lenTest2 = lenTest + 1;
+		  UInt32 limit = lenTest2 + p->numFastBytes;
+		  UInt32 nextRepMatchPrice;
+		  if (limit > numAvailFull)
+			limit = numAvailFull;
+		  for (; lenTest2 < limit && data[lenTest2] == data2[lenTest2]; lenTest2++);
+		  lenTest2 -= lenTest + 1;
+		  if (lenTest2 >= 2)
+		  {
+			UInt32 state2 = kMatchNextStates[state];
+			UInt32 posStateNext = (position + lenTest) & p->pbMask;
+			UInt32 curAndLenCharPrice = curAndLenPrice +
+				GET_PRICE_0(p->isMatch[state2][posStateNext]) +
+				LitEnc_GetPriceMatched(LIT_PROBS(position + lenTest, data[lenTest - 1]),
+					data[lenTest], data2[lenTest], p->ProbPrices);
+			state2 = kLiteralNextStates[state2];
+			posStateNext = (posStateNext + 1) & p->pbMask;
+			nextRepMatchPrice = curAndLenCharPrice +
+				GET_PRICE_1(p->isMatch[state2][posStateNext]) +
+				GET_PRICE_1(p->isRep[state2]);
+
+			/* for (; lenTest2 >= 2; lenTest2--) */
+			{
+			  UInt32 offset = cur + lenTest + 1 + lenTest2;
+			  UInt32 curAndLenPrice;
+			  COptimal *opt;
+			  while (lenEnd < offset)
+				p->opt[++lenEnd].price = kInfinityPrice;
+			  curAndLenPrice = nextRepMatchPrice + GetRepPrice(p, 0, lenTest2, state2, posStateNext);
+			  opt = &p->opt[offset];
+			  if (curAndLenPrice < opt->price)
+			  {
+				opt->price = curAndLenPrice;
+				opt->posPrev = cur + lenTest + 1;
+				opt->backPrev = 0;
+				opt->prev1IsChar = True;
+				opt->prev2 = True;
+				opt->posPrev2 = cur;
+				opt->backPrev2 = curBack + LZMA_NUM_REPS;
+			  }
+			}
+		  }
+		  offs += 2;
+		  if (offs == numPairs)
+			break;
+		  curBack = matches[offs + 1];
+		  if (curBack >= kNumFullDistances)
+			GetPosSlot2(curBack, posSlot);
+		}
+	  }
+	}
+  }
+}
+
+#define ChangePair(smallDist, bigDist) (((bigDist) >> 7) > (smallDist))
+
+static UInt32 GetOptimumFast(CLzmaEnc *p, UInt32 *backRes)
+{
+  UInt32 numAvail, mainLen, mainDist, numPairs, repIndex, repLen, i;
+  const Byte *data;
+  const UInt32 *matches;
+
+  if (p->additionalOffset == 0)
+	mainLen = ReadMatchDistances(p, &numPairs);
+  else
+  {
+	mainLen = p->longestMatchLength;
+	numPairs = p->numPairs;
+  }
+
+  numAvail = p->numAvail;
+  *backRes = (UInt32)-1;
+  if (numAvail < 2)
+	return 1;
+  if (numAvail > LZMA_MATCH_LEN_MAX)
+	numAvail = LZMA_MATCH_LEN_MAX;
+  data = p->matchFinder.GetPointerToCurrentPos(p->matchFinderObj) - 1;
+
+  repLen = repIndex = 0;
+  for (i = 0; i < LZMA_NUM_REPS; i++)
+  {
+	UInt32 len;
+	const Byte *data2 = data - (p->reps[i] + 1);
+	if (data[0] != data2[0] || data[1] != data2[1])
+	  continue;
+	for (len = 2; len < numAvail && data[len] == data2[len]; len++);
+	if (len >= p->numFastBytes)
+	{
+	  *backRes = i;
+	  MovePos(p, len - 1);
+	  return len;
+	}
+	if (len > repLen)
+	{
+	  repIndex = i;
+	  repLen = len;
+	}
+  }
+
+  matches = p->matches;
+  if (mainLen >= p->numFastBytes)
+  {
+	*backRes = matches[numPairs - 1] + LZMA_NUM_REPS;
+	MovePos(p, mainLen - 1);
+	return mainLen;
+  }
+
+  mainDist = 0; /* for GCC */
+  if (mainLen >= 2)
+  {
+	mainDist = matches[numPairs - 1];
+	while (numPairs > 2 && mainLen == matches[numPairs - 4] + 1)
+	{
+	  if (!ChangePair(matches[numPairs - 3], mainDist))
+		break;
+	  numPairs -= 2;
+	  mainLen = matches[numPairs - 2];
+	  mainDist = matches[numPairs - 1];
+	}
+	if (mainLen == 2 && mainDist >= 0x80)
+	  mainLen = 1;
+  }
+
+  if (repLen >= 2 && (
+		(repLen + 1 >= mainLen) ||
+		(repLen + 2 >= mainLen && mainDist >= (1 << 9)) ||
+		(repLen + 3 >= mainLen && mainDist >= (1 << 15))))
+  {
+	*backRes = repIndex;
+	MovePos(p, repLen - 1);
+	return repLen;
+  }
+
+  if (mainLen < 2 || numAvail <= 2)
+	return 1;
+
+  p->longestMatchLength = ReadMatchDistances(p, &p->numPairs);
+  if (p->longestMatchLength >= 2)
+  {
+	UInt32 newDistance = matches[p->numPairs - 1];
+	if ((p->longestMatchLength >= mainLen && newDistance < mainDist) ||
+		(p->longestMatchLength == mainLen + 1 && !ChangePair(mainDist, newDistance)) ||
+		(p->longestMatchLength > mainLen + 1) ||
+		(p->longestMatchLength + 1 >= mainLen && mainLen >= 3 && ChangePair(newDistance, mainDist)))
+	  return 1;
+  }
+
+  data = p->matchFinder.GetPointerToCurrentPos(p->matchFinderObj) - 1;
+  for (i = 0; i < LZMA_NUM_REPS; i++)
+  {
+	UInt32 len, limit;
+	const Byte *data2 = data - (p->reps[i] + 1);
+	if (data[0] != data2[0] || data[1] != data2[1])
+	  continue;
+	limit = mainLen - 1;
+	for (len = 2; len < limit && data[len] == data2[len]; len++);
+	if (len >= limit)
+	  return 1;
+  }
+  *backRes = mainDist + LZMA_NUM_REPS;
+  MovePos(p, mainLen - 2);
+  return mainLen;
+}
+
+static void WriteEndMarker(CLzmaEnc *p, UInt32 posState)
+{
+  UInt32 len;
+  RangeEnc_EncodeBit(&p->rc, &p->isMatch[p->state][posState], 1);
+  RangeEnc_EncodeBit(&p->rc, &p->isRep[p->state], 0);
+  p->state = kMatchNextStates[p->state];
+  len = LZMA_MATCH_LEN_MIN;
+  LenEnc_Encode2(&p->lenEnc, &p->rc, len - LZMA_MATCH_LEN_MIN, posState, !p->fastMode, p->ProbPrices);
+  RcTree_Encode(&p->rc, p->posSlotEncoder[GetLenToPosState(len)], kNumPosSlotBits, (1 << kNumPosSlotBits) - 1);
+  RangeEnc_EncodeDirectBits(&p->rc, (((UInt32)1 << 30) - 1) >> kNumAlignBits, 30 - kNumAlignBits);
+  RcTree_ReverseEncode(&p->rc, p->posAlignEncoder, kNumAlignBits, kAlignMask);
+}
+
+static SRes CheckErrors(CLzmaEnc *p)
+{
+  if (p->result != SZ_OK)
+	return p->result;
+  if (p->rc.res != SZ_OK)
+	p->result = SZ_ERROR_WRITE;
+  if (p->matchFinderBase.result != SZ_OK)
+	p->result = SZ_ERROR_READ;
+  if (p->result != SZ_OK)
+	p->finished = True;
+  return p->result;
+}
+
+static SRes Flush(CLzmaEnc *p, UInt32 nowPos)
+{
+  /* ReleaseMFStream(); */
+  p->finished = True;
+  if (p->writeEndMark)
+	WriteEndMarker(p, nowPos & p->pbMask);
+  RangeEnc_FlushData(&p->rc);
+  RangeEnc_FlushStream(&p->rc);
+  return CheckErrors(p);
+}
+
+static void FillAlignPrices(CLzmaEnc *p)
+{
+  UInt32 i;
+  for (i = 0; i < kAlignTableSize; i++)
+	p->alignPrices[i] = RcTree_ReverseGetPrice(p->posAlignEncoder, kNumAlignBits, i, p->ProbPrices);
+  p->alignPriceCount = 0;
+}
+
+static void FillDistancesPrices(CLzmaEnc *p)
+{
+  UInt32 tempPrices[kNumFullDistances];
+  UInt32 i, lenToPosState;
+  for (i = kStartPosModelIndex; i < kNumFullDistances; i++)
+  {
+	UInt32 posSlot = GetPosSlot1(i);
+	UInt32 footerBits = ((posSlot >> 1) - 1);
+	UInt32 base = ((2 | (posSlot & 1)) << footerBits);
+	tempPrices[i] = RcTree_ReverseGetPrice(p->posEncoders + base - posSlot - 1, footerBits, i - base, p->ProbPrices);
+  }
+
+  for (lenToPosState = 0; lenToPosState < kNumLenToPosStates; lenToPosState++)
+  {
+	UInt32 posSlot;
+	const CLzmaProb *encoder = p->posSlotEncoder[lenToPosState];
+	UInt32 *posSlotPrices = p->posSlotPrices[lenToPosState];
+	for (posSlot = 0; posSlot < p->distTableSize; posSlot++)
+	  posSlotPrices[posSlot] = RcTree_GetPrice(encoder, kNumPosSlotBits, posSlot, p->ProbPrices);
+	for (posSlot = kEndPosModelIndex; posSlot < p->distTableSize; posSlot++)
+	  posSlotPrices[posSlot] += ((((posSlot >> 1) - 1) - kNumAlignBits) << kNumBitPriceShiftBits);
+
+	{
+	  UInt32 *distancesPrices = p->distancesPrices[lenToPosState];
+	  UInt32 i;
+	  for (i = 0; i < kStartPosModelIndex; i++)
+		distancesPrices[i] = posSlotPrices[i];
+	  for (; i < kNumFullDistances; i++)
+		distancesPrices[i] = posSlotPrices[GetPosSlot1(i)] + tempPrices[i];
+	}
+  }
+  p->matchPriceCount = 0;
+}
+
+void LzmaEnc_Construct(CLzmaEnc *p)
+{
+  RangeEnc_Construct(&p->rc);
+  MatchFinder_Construct(&p->matchFinderBase);
+  #ifndef _7ZIP_ST
+  MatchFinderMt_Construct(&p->matchFinderMt);
+  p->matchFinderMt.MatchFinder = &p->matchFinderBase;
+  #endif
+
+  {
+	CLzmaEncProps props;
+	LzmaEncProps_Init(&props);
+	LzmaEnc_SetProps(p, &props);
+  }
+
+  #ifndef LZMA_LOG_BSR
+  LzmaEnc_FastPosInit(p->g_FastPos);
+  #endif
+
+  LzmaEnc_InitPriceTables(p->ProbPrices);
+  p->litProbs = 0;
+  p->saveState.litProbs = 0;
+}
+
+CLzmaEncHandle LzmaEnc_Create(ISzAlloc *alloc)
+{
+  void *p;
+  p = alloc->Alloc(alloc, sizeof(CLzmaEnc));
+  if (p != 0)
+	LzmaEnc_Construct((CLzmaEnc *)p);
+  return p;
+}
+
+void LzmaEnc_FreeLits(CLzmaEnc *p, ISzAlloc *alloc)
+{
+  alloc->Free(alloc, p->litProbs);
+  alloc->Free(alloc, p->saveState.litProbs);
+  p->litProbs = 0;
+  p->saveState.litProbs = 0;
+}
+
+void LzmaEnc_Destruct(CLzmaEnc *p, ISzAlloc *alloc, ISzAlloc *allocBig)
+{
+  #ifndef _7ZIP_ST
+  MatchFinderMt_Destruct(&p->matchFinderMt, allocBig);
+  #endif
+  MatchFinder_Free(&p->matchFinderBase, allocBig);
+  LzmaEnc_FreeLits(p, alloc);
+  RangeEnc_Free(&p->rc, alloc);
+}
+
+void LzmaEnc_Destroy(CLzmaEncHandle p, ISzAlloc *alloc, ISzAlloc *allocBig)
+{
+  LzmaEnc_Destruct((CLzmaEnc *)p, alloc, allocBig);
+  alloc->Free(alloc, p);
+}
+
+static SRes LzmaEnc_CodeOneBlock(CLzmaEnc *p, Bool useLimits, UInt32 maxPackSize, UInt32 maxUnpackSize)
+{
+  UInt32 nowPos32, startPos32;
+  if (p->needInit)
+  {
+	p->matchFinder.Init(p->matchFinderObj);
+	p->needInit = 0;
+  }
+
+  if (p->finished)
+	return p->result;
+  RINOK(CheckErrors(p));
+
+  nowPos32 = (UInt32)p->nowPos64;
+  startPos32 = nowPos32;
+
+  if (p->nowPos64 == 0)
+  {
+	UInt32 numPairs;
+	Byte curByte;
+	if (p->matchFinder.GetNumAvailableBytes(p->matchFinderObj) == 0)
+	  return Flush(p, nowPos32);
+	ReadMatchDistances(p, &numPairs);
+	RangeEnc_EncodeBit(&p->rc, &p->isMatch[p->state][0], 0);
+	p->state = kLiteralNextStates[p->state];
+	curByte = p->matchFinder.GetIndexByte(p->matchFinderObj, 0 - p->additionalOffset);
+	LitEnc_Encode(&p->rc, p->litProbs, curByte);
+	p->additionalOffset--;
+	nowPos32++;
+  }
+
+  if (p->matchFinder.GetNumAvailableBytes(p->matchFinderObj) != 0)
+  for (;;)
+  {
+	UInt32 pos, len, posState;
+
+	if (p->fastMode)
+	  len = GetOptimumFast(p, &pos);
+	else
+	  len = GetOptimum(p, nowPos32, &pos);
+
+	#ifdef SHOW_STAT2
+	printf("\n pos = %4X,   len = %d   pos = %d", nowPos32, len, pos);
+	#endif
+
+	posState = nowPos32 & p->pbMask;
+	if (len == 1 && pos == (UInt32)-1)
+	{
+	  Byte curByte;
+	  CLzmaProb *probs;
+	  const Byte *data;
+
+	  RangeEnc_EncodeBit(&p->rc, &p->isMatch[p->state][posState], 0);
+	  data = p->matchFinder.GetPointerToCurrentPos(p->matchFinderObj) - p->additionalOffset;
+	  curByte = *data;
+	  probs = LIT_PROBS(nowPos32, *(data - 1));
+	  if (IsCharState(p->state))
+		LitEnc_Encode(&p->rc, probs, curByte);
+	  else
+		LitEnc_EncodeMatched(&p->rc, probs, curByte, *(data - p->reps[0] - 1));
+	  p->state = kLiteralNextStates[p->state];
+	}
+	else
+	{
+	  RangeEnc_EncodeBit(&p->rc, &p->isMatch[p->state][posState], 1);
+	  if (pos < LZMA_NUM_REPS)
+	  {
+		RangeEnc_EncodeBit(&p->rc, &p->isRep[p->state], 1);
+		if (pos == 0)
+		{
+		  RangeEnc_EncodeBit(&p->rc, &p->isRepG0[p->state], 0);
+		  RangeEnc_EncodeBit(&p->rc, &p->isRep0Long[p->state][posState], ((len == 1) ? 0 : 1));
+		}
+		else
+		{
+		  UInt32 distance = p->reps[pos];
+		  RangeEnc_EncodeBit(&p->rc, &p->isRepG0[p->state], 1);
+		  if (pos == 1)
+			RangeEnc_EncodeBit(&p->rc, &p->isRepG1[p->state], 0);
+		  else
+		  {
+			RangeEnc_EncodeBit(&p->rc, &p->isRepG1[p->state], 1);
+			RangeEnc_EncodeBit(&p->rc, &p->isRepG2[p->state], pos - 2);
+			if (pos == 3)
+			  p->reps[3] = p->reps[2];
+			p->reps[2] = p->reps[1];
+		  }
+		  p->reps[1] = p->reps[0];
+		  p->reps[0] = distance;
+		}
+		if (len == 1)
+		  p->state = kShortRepNextStates[p->state];
+		else
+		{
+		  LenEnc_Encode2(&p->repLenEnc, &p->rc, len - LZMA_MATCH_LEN_MIN, posState, !p->fastMode, p->ProbPrices);
+		  p->state = kRepNextStates[p->state];
+		}
+	  }
+	  else
+	  {
+		UInt32 posSlot;
+		RangeEnc_EncodeBit(&p->rc, &p->isRep[p->state], 0);
+		p->state = kMatchNextStates[p->state];
+		LenEnc_Encode2(&p->lenEnc, &p->rc, len - LZMA_MATCH_LEN_MIN, posState, !p->fastMode, p->ProbPrices);
+		pos -= LZMA_NUM_REPS;
+		GetPosSlot(pos, posSlot);
+		RcTree_Encode(&p->rc, p->posSlotEncoder[GetLenToPosState(len)], kNumPosSlotBits, posSlot);
+
+		if (posSlot >= kStartPosModelIndex)
+		{
+		  UInt32 footerBits = ((posSlot >> 1) - 1);
+		  UInt32 base = ((2 | (posSlot & 1)) << footerBits);
+		  UInt32 posReduced = pos - base;
+
+		  if (posSlot < kEndPosModelIndex)
+			RcTree_ReverseEncode(&p->rc, p->posEncoders + base - posSlot - 1, footerBits, posReduced);
+		  else
+		  {
+			RangeEnc_EncodeDirectBits(&p->rc, posReduced >> kNumAlignBits, footerBits - kNumAlignBits);
+			RcTree_ReverseEncode(&p->rc, p->posAlignEncoder, kNumAlignBits, posReduced & kAlignMask);
+			p->alignPriceCount++;
+		  }
+		}
+		p->reps[3] = p->reps[2];
+		p->reps[2] = p->reps[1];
+		p->reps[1] = p->reps[0];
+		p->reps[0] = pos;
+		p->matchPriceCount++;
+	  }
+	}
+	p->additionalOffset -= len;
+	nowPos32 += len;
+	if (p->additionalOffset == 0)
+	{
+	  UInt32 processed;
+	  if (!p->fastMode)
+	  {
+		if (p->matchPriceCount >= (1 << 7))
+		  FillDistancesPrices(p);
+		if (p->alignPriceCount >= kAlignTableSize)
+		  FillAlignPrices(p);
+	  }
+	  if (p->matchFinder.GetNumAvailableBytes(p->matchFinderObj) == 0)
+		break;
+	  processed = nowPos32 - startPos32;
+	  if (useLimits)
+	  {
+		if (processed + kNumOpts + 300 >= maxUnpackSize ||
+			RangeEnc_GetProcessed(&p->rc) + kNumOpts * 2 >= maxPackSize)
+		  break;
+	  }
+	  else if (processed >= (1 << 15))
+	  {
+		p->nowPos64 += nowPos32 - startPos32;
+		return CheckErrors(p);
+	  }
+	}
+  }
+  p->nowPos64 += nowPos32 - startPos32;
+  return Flush(p, nowPos32);
+}
+
+#define kBigHashDicLimit ((UInt32)1 << 24)
+
+static SRes LzmaEnc_Alloc(CLzmaEnc *p, UInt32 keepWindowSize, ISzAlloc *alloc, ISzAlloc *allocBig)
+{
+  UInt32 beforeSize = kNumOpts;
+  Bool btMode;
+  if (!RangeEnc_Alloc(&p->rc, alloc))
+	return SZ_ERROR_MEM;
+  btMode = (p->matchFinderBase.btMode != 0);
+  #ifndef _7ZIP_ST
+  p->mtMode = (p->multiThread && !p->fastMode && btMode);
+  #endif
+
+  {
+	unsigned lclp = p->lc + p->lp;
+	if (p->litProbs == 0 || p->saveState.litProbs == 0 || p->lclp != lclp)
+	{
+	  LzmaEnc_FreeLits(p, alloc);
+	  p->litProbs = (CLzmaProb *)alloc->Alloc(alloc, (0x300 << lclp) * sizeof(CLzmaProb));
+	  p->saveState.litProbs = (CLzmaProb *)alloc->Alloc(alloc, (0x300 << lclp) * sizeof(CLzmaProb));
+	  if (p->litProbs == 0 || p->saveState.litProbs == 0)
+	  {
+		LzmaEnc_FreeLits(p, alloc);
+		return SZ_ERROR_MEM;
+	  }
+	  p->lclp = lclp;
+	}
+  }
+
+  p->matchFinderBase.bigHash = (p->dictSize > kBigHashDicLimit);
+
+  if (beforeSize + p->dictSize < keepWindowSize)
+	beforeSize = keepWindowSize - p->dictSize;
+
+  #ifndef _7ZIP_ST
+  if (p->mtMode)
+  {
+	RINOK(MatchFinderMt_Create(&p->matchFinderMt, p->dictSize, beforeSize, p->numFastBytes, LZMA_MATCH_LEN_MAX, allocBig));
+	p->matchFinderObj = &p->matchFinderMt;
+	MatchFinderMt_CreateVTable(&p->matchFinderMt, &p->matchFinder);
+  }
+  else
+  #endif
+  {
+	if (!MatchFinder_Create(&p->matchFinderBase, p->dictSize, beforeSize, p->numFastBytes, LZMA_MATCH_LEN_MAX, allocBig))
+	  return SZ_ERROR_MEM;
+	p->matchFinderObj = &p->matchFinderBase;
+	MatchFinder_CreateVTable(&p->matchFinderBase, &p->matchFinder);
+  }
+  return SZ_OK;
+}
+
+void LzmaEnc_Init(CLzmaEnc *p)
+{
+  UInt32 i;
+  p->state = 0;
+  for (i = 0 ; i < LZMA_NUM_REPS; i++)
+	p->reps[i] = 0;
+
+  RangeEnc_Init(&p->rc);
+
+  for (i = 0; i < kNumStates; i++)
+  {
+	UInt32 j;
+	for (j = 0; j < LZMA_NUM_PB_STATES_MAX; j++)
+	{
+	  p->isMatch[i][j] = kProbInitValue;
+	  p->isRep0Long[i][j] = kProbInitValue;
+	}
+	p->isRep[i] = kProbInitValue;
+	p->isRepG0[i] = kProbInitValue;
+	p->isRepG1[i] = kProbInitValue;
+	p->isRepG2[i] = kProbInitValue;
+  }
+
+  {
+	UInt32 num = 0x300 << (p->lp + p->lc);
+	for (i = 0; i < num; i++)
+	  p->litProbs[i] = kProbInitValue;
+  }
+
+  {
+	for (i = 0; i < kNumLenToPosStates; i++)
+	{
+	  CLzmaProb *probs = p->posSlotEncoder[i];
+	  UInt32 j;
+	  for (j = 0; j < (1 << kNumPosSlotBits); j++)
+		probs[j] = kProbInitValue;
+	}
+  }
+  {
+	for (i = 0; i < kNumFullDistances - kEndPosModelIndex; i++)
+	  p->posEncoders[i] = kProbInitValue;
+  }
+
+  LenEnc_Init(&p->lenEnc.p);
+  LenEnc_Init(&p->repLenEnc.p);
+
+  for (i = 0; i < (1 << kNumAlignBits); i++)
+	p->posAlignEncoder[i] = kProbInitValue;
+
+  p->optimumEndIndex = 0;
+  p->optimumCurrentIndex = 0;
+  p->additionalOffset = 0;
+
+  p->pbMask = (1 << p->pb) - 1;
+  p->lpMask = (1 << p->lp) - 1;
+}
+
+void LzmaEnc_InitPrices(CLzmaEnc *p)
+{
+  if (!p->fastMode)
+  {
+	FillDistancesPrices(p);
+	FillAlignPrices(p);
+  }
+
+  p->lenEnc.tableSize =
+  p->repLenEnc.tableSize =
+	  p->numFastBytes + 1 - LZMA_MATCH_LEN_MIN;
+  LenPriceEnc_UpdateTables(&p->lenEnc, 1 << p->pb, p->ProbPrices);
+  LenPriceEnc_UpdateTables(&p->repLenEnc, 1 << p->pb, p->ProbPrices);
+}
+
+static SRes LzmaEnc_AllocAndInit(CLzmaEnc *p, UInt32 keepWindowSize, ISzAlloc *alloc, ISzAlloc *allocBig)
+{
+  UInt32 i;
+  for (i = 0; i < (UInt32)kDicLogSizeMaxCompress; i++)
+	if (p->dictSize <= ((UInt32)1 << i))
+	  break;
+  p->distTableSize = i * 2;
+
+  p->finished = False;
+  p->result = SZ_OK;
+  RINOK(LzmaEnc_Alloc(p, keepWindowSize, alloc, allocBig));
+  LzmaEnc_Init(p);
+  LzmaEnc_InitPrices(p);
+  p->nowPos64 = 0;
+  return SZ_OK;
+}
+
+static SRes LzmaEnc_Prepare(CLzmaEncHandle pp, ISeqOutStream *outStream, ISeqInStream *inStream,
+	ISzAlloc *alloc, ISzAlloc *allocBig)
+{
+  CLzmaEnc *p = (CLzmaEnc *)pp;
+  p->matchFinderBase.stream = inStream;
+  p->needInit = 1;
+  p->rc.outStream = outStream;
+  return LzmaEnc_AllocAndInit(p, 0, alloc, allocBig);
+}
+
+SRes LzmaEnc_PrepareForLzma2(CLzmaEncHandle pp,
+	ISeqInStream *inStream, UInt32 keepWindowSize,
+	ISzAlloc *alloc, ISzAlloc *allocBig)
+{
+  CLzmaEnc *p = (CLzmaEnc *)pp;
+  p->matchFinderBase.stream = inStream;
+  p->needInit = 1;
+  return LzmaEnc_AllocAndInit(p, keepWindowSize, alloc, allocBig);
+}
+
+static void LzmaEnc_SetInputBuf(CLzmaEnc *p, const Byte *src, SizeT srcLen)
+{
+  p->matchFinderBase.directInput = 1;
+  p->matchFinderBase.bufferBase = (Byte *)src;
+  p->matchFinderBase.directInputRem = srcLen;
+}
+
+SRes LzmaEnc_MemPrepare(CLzmaEncHandle pp, const Byte *src, SizeT srcLen,
+	UInt32 keepWindowSize, ISzAlloc *alloc, ISzAlloc *allocBig)
+{
+  CLzmaEnc *p = (CLzmaEnc *)pp;
+  LzmaEnc_SetInputBuf(p, src, srcLen);
+  p->needInit = 1;
+
+  return LzmaEnc_AllocAndInit(p, keepWindowSize, alloc, allocBig);
+}
+
+void LzmaEnc_Finish(CLzmaEncHandle pp)
+{
+  #ifndef _7ZIP_ST
+  CLzmaEnc *p = (CLzmaEnc *)pp;
+  if (p->mtMode)
+	MatchFinderMt_ReleaseStream(&p->matchFinderMt);
+  #else
+  pp = pp;
+  #endif
+}
+
+typedef struct
+{
+  ISeqOutStream funcTable;
+  Byte *data;
+  SizeT rem;
+  Bool overflow;
+} CSeqOutStreamBuf;
+
+static size_t MyWrite(void *pp, const void *data, size_t size)
+{
+  CSeqOutStreamBuf *p = (CSeqOutStreamBuf *)pp;
+  if (p->rem < size)
+  {
+	size = p->rem;
+	p->overflow = True;
+  }
+  memcpy(p->data, data, size);
+  p->rem -= size;
+  p->data += size;
+  return size;
+}
+
+UInt32 LzmaEnc_GetNumAvailableBytes(CLzmaEncHandle pp)
+{
+  const CLzmaEnc *p = (CLzmaEnc *)pp;
+  return p->matchFinder.GetNumAvailableBytes(p->matchFinderObj);
+}
+
+const Byte *LzmaEnc_GetCurBuf(CLzmaEncHandle pp)
+{
+  const CLzmaEnc *p = (CLzmaEnc *)pp;
+  return p->matchFinder.GetPointerToCurrentPos(p->matchFinderObj) - p->additionalOffset;
+}
+
+SRes LzmaEnc_CodeOneMemBlock(CLzmaEncHandle pp, Bool reInit,
+	Byte *dest, size_t *destLen, UInt32 desiredPackSize, UInt32 *unpackSize)
+{
+  CLzmaEnc *p = (CLzmaEnc *)pp;
+  UInt64 nowPos64;
+  SRes res;
+  CSeqOutStreamBuf outStream;
+
+  outStream.funcTable.Write = MyWrite;
+  outStream.data = dest;
+  outStream.rem = *destLen;
+  outStream.overflow = False;
+
+  p->writeEndMark = False;
+  p->finished = False;
+  p->result = SZ_OK;
+
+  if (reInit)
+	LzmaEnc_Init(p);
+  LzmaEnc_InitPrices(p);
+  nowPos64 = p->nowPos64;
+  RangeEnc_Init(&p->rc);
+  p->rc.outStream = &outStream.funcTable;
+
+  res = LzmaEnc_CodeOneBlock(p, True, desiredPackSize, *unpackSize);
+
+  *unpackSize = (UInt32)(p->nowPos64 - nowPos64);
+  *destLen -= outStream.rem;
+  if (outStream.overflow)
+	return SZ_ERROR_OUTPUT_EOF;
+
+  return res;
+}
+
+static SRes LzmaEnc_Encode2(CLzmaEnc *p, ICompressProgress *progress)
+{
+  SRes res = SZ_OK;
+
+  #ifndef _7ZIP_ST
+  Byte allocaDummy[0x300];
+  int i = 0;
+  for (i = 0; i < 16; i++)
+	allocaDummy[i] = (Byte)i;
+  #endif
+
+  for (;;)
+  {
+	res = LzmaEnc_CodeOneBlock(p, False, 0, 0);
+	if (res != SZ_OK || p->finished != 0)
+	  break;
+	if (progress != 0)
+	{
+	  res = progress->Progress(progress, p->nowPos64, RangeEnc_GetProcessed(&p->rc));
+	  if (res != SZ_OK)
+	  {
+		res = SZ_ERROR_PROGRESS;
+		break;
+	  }
+	}
+  }
+  LzmaEnc_Finish(p);
+  return res;
+}
+
+SRes LzmaEnc_Encode(CLzmaEncHandle pp, ISeqOutStream *outStream, ISeqInStream *inStream, ICompressProgress *progress,
+	ISzAlloc *alloc, ISzAlloc *allocBig)
+{
+  RINOK(LzmaEnc_Prepare(pp, outStream, inStream, alloc, allocBig));
+  return LzmaEnc_Encode2((CLzmaEnc *)pp, progress);
+}
+
+SRes LzmaEnc_WriteProperties(CLzmaEncHandle pp, Byte *props, SizeT *size)
+{
+  CLzmaEnc *p = (CLzmaEnc *)pp;
+  int i;
+  UInt32 dictSize = p->dictSize;
+  if (*size < LZMA_PROPS_SIZE)
+	return SZ_ERROR_PARAM;
+  *size = LZMA_PROPS_SIZE;
+  props[0] = (Byte)((p->pb * 5 + p->lp) * 9 + p->lc);
+
+  for (i = 11; i <= 30; i++)
+  {
+	if (dictSize <= ((UInt32)2 << i))
+	{
+	  dictSize = (2 << i);
+	  break;
+	}
+	if (dictSize <= ((UInt32)3 << i))
+	{
+	  dictSize = (3 << i);
+	  break;
+	}
+  }
+
+  for (i = 0; i < 4; i++)
+	props[1 + i] = (Byte)(dictSize >> (8 * i));
+  return SZ_OK;
+}
+
+SRes LzmaEnc_MemEncode(CLzmaEncHandle pp, Byte *dest, SizeT *destLen, const Byte *src, SizeT srcLen,
+	int writeEndMark, ICompressProgress *progress, ISzAlloc *alloc, ISzAlloc *allocBig)
+{
+  SRes res;
+  CLzmaEnc *p = (CLzmaEnc *)pp;
+
+  CSeqOutStreamBuf outStream;
+
+  LzmaEnc_SetInputBuf(p, src, srcLen);
+
+  outStream.funcTable.Write = MyWrite;
+  outStream.data = dest;
+  outStream.rem = *destLen;
+  outStream.overflow = False;
+
+  p->writeEndMark = writeEndMark;
+
+  p->rc.outStream = &outStream.funcTable;
+  res = LzmaEnc_MemPrepare(pp, src, srcLen, 0, alloc, allocBig);
+  if (res == SZ_OK)
+	res = LzmaEnc_Encode2(p, progress);
+
+  *destLen -= outStream.rem;
+  if (outStream.overflow)
+	return SZ_ERROR_OUTPUT_EOF;
+  return res;
+}
+
+SRes LzmaEncode(Byte *dest, SizeT *destLen, const Byte *src, SizeT srcLen,
+	const CLzmaEncProps *props, Byte *propsEncoded, SizeT *propsSize, int writeEndMark,
+	ICompressProgress *progress, ISzAlloc *alloc, ISzAlloc *allocBig)
+{
+  CLzmaEnc *p = (CLzmaEnc *)LzmaEnc_Create(alloc);
+  SRes res;
+  if (p == 0)
+	return SZ_ERROR_MEM;
+
+  res = LzmaEnc_SetProps(p, props);
+  if (res == SZ_OK)
+  {
+	res = LzmaEnc_WriteProperties(p, propsEncoded, propsSize);
+	if (res == SZ_OK)
+	  res = LzmaEnc_MemEncode(p, dest, destLen, src, srcLen,
+		  writeEndMark, progress, alloc, allocBig);
+  }
+
+  LzmaEnc_Destroy(p, alloc, allocBig);
+  return res;
+}
+
+
+#line 1 "LzmaLib.c"
+
+#line 1 "LzmaLib.h"
+#ifndef __LZMA_LIB_H
+#define __LZMA_LIB_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define MY_STDAPI int MY_STD_CALL
+
+#define LZMA_PROPS_SIZE 5
+
+/*
+RAM requirements for LZMA:
+  for compression:   (dictSize * 11.5 + 6 MB) + state_size
+  for decompression: dictSize + state_size
+	state_size = (4 + (1.5 << (lc + lp))) KB
+	by default (lc=3, lp=0), state_size = 16 KB.
+
+LZMA properties (5 bytes) format
+	Offset Size  Description
+	  0     1    lc, lp and pb in encoded form.
+	  1     4    dictSize (little endian).
+*/
+
+/*
+LzmaCompress
+------------
+
+outPropsSize -
+	 In:  the pointer to the size of outProps buffer; *outPropsSize = LZMA_PROPS_SIZE = 5.
+	 Out: the pointer to the size of written properties in outProps buffer; *outPropsSize = LZMA_PROPS_SIZE = 5.
+
+  LZMA Encoder will use defult values for any parameter, if it is
+  -1  for any from: level, loc, lp, pb, fb, numThreads
+   0  for dictSize
+
+level - compression level: 0 <= level <= 9;
+
+  level dictSize algo  fb
+	0:    16 KB   0    32
+	1:    64 KB   0    32
+	2:   256 KB   0    32
+	3:     1 MB   0    32
+	4:     4 MB   0    32
+	5:    16 MB   1    32
+	6:    32 MB   1    32
+	7+:   64 MB   1    64
+
+  The default value for "level" is 5.
+
+  algo = 0 means fast method
+  algo = 1 means normal method
+
+dictSize - The dictionary size in bytes. The maximum value is
+		128 MB = (1 << 27) bytes for 32-bit version
+		  1 GB = (1 << 30) bytes for 64-bit version
+	 The default value is 16 MB = (1 << 24) bytes.
+	 It's recommended to use the dictionary that is larger than 4 KB and
+	 that can be calculated as (1 << N) or (3 << N) sizes.
+
+lc - The number of literal context bits (high bits of previous literal).
+	 It can be in the range from 0 to 8. The default value is 3.
+	 Sometimes lc=4 gives the gain for big files.
+
+lp - The number of literal pos bits (low bits of current position for literals).
+	 It can be in the range from 0 to 4. The default value is 0.
+	 The lp switch is intended for periodical data when the period is equal to 2^lp.
+	 For example, for 32-bit (4 bytes) periodical data you can use lp=2. Often it's
+	 better to set lc=0, if you change lp switch.
+
+pb - The number of pos bits (low bits of current position).
+	 It can be in the range from 0 to 4. The default value is 2.
+	 The pb switch is intended for periodical data when the period is equal 2^pb.
+
+fb - Word size (the number of fast bytes).
+	 It can be in the range from 5 to 273. The default value is 32.
+	 Usually, a big number gives a little bit better compression ratio and
+	 slower compression process.
+
+numThreads - The number of thereads. 1 or 2. The default value is 2.
+	 Fast mode (algo = 0) can use only 1 thread.
+
+Out:
+  destLen  - processed output size
+Returns:
+  SZ_OK               - OK
+  SZ_ERROR_MEM        - Memory allocation error
+  SZ_ERROR_PARAM      - Incorrect paramater
+  SZ_ERROR_OUTPUT_EOF - output buffer overflow
+  SZ_ERROR_THREAD     - errors in multithreading functions (only for Mt version)
+*/
+
+MY_STDAPI LzmaCompress(unsigned char *dest, size_t *destLen, const unsigned char *src, size_t srcLen,
+  unsigned char *outProps, size_t *outPropsSize, /* *outPropsSize must be = 5 */
+  int level,      /* 0 <= level <= 9, default = 5 */
+  unsigned dictSize,  /* default = (1 << 24) */
+  int lc,        /* 0 <= lc <= 8, default = 3  */
+  int lp,        /* 0 <= lp <= 4, default = 0  */
+  int pb,        /* 0 <= pb <= 4, default = 2  */
+  int fb,        /* 5 <= fb <= 273, default = 32 */
+  int numThreads /* 1 or 2, default = 2 */
+  );
+
+/*
+LzmaUncompress
+--------------
+In:
+  dest     - output data
+  destLen  - output data size
+  src      - input data
+  srcLen   - input data size
+Out:
+  destLen  - processed output size
+  srcLen   - processed input size
+Returns:
+  SZ_OK                - OK
+  SZ_ERROR_DATA        - Data error
+  SZ_ERROR_MEM         - Memory allocation arror
+  SZ_ERROR_UNSUPPORTED - Unsupported properties
+  SZ_ERROR_INPUT_EOF   - it needs more bytes in input buffer (src)
+*/
+
+MY_STDAPI LzmaUncompress(unsigned char *dest, size_t *destLen, const unsigned char *src, SizeT *srcLen,
+  const unsigned char *props, size_t propsSize);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif
+
+static void *SzAlloc(void *p, size_t size) { p = p; return MyAlloc(size); }
+static void SzFree(void *p, void *address) { p = p; MyFree(address); }
+static ISzAlloc g_Alloc = { SzAlloc, SzFree };
+
+MY_STDAPI LzmaCompress(unsigned char *dest, size_t  *destLen, const unsigned char *src, size_t  srcLen,
+  unsigned char *outProps, size_t *outPropsSize,
+  int level, /* 0 <= level <= 9, default = 5 */
+  unsigned dictSize, /* use (1 << N) or (3 << N). 4 KB < dictSize <= 128 MB */
+  int lc, /* 0 <= lc <= 8, default = 3  */
+  int lp, /* 0 <= lp <= 4, default = 0  */
+  int pb, /* 0 <= pb <= 4, default = 2  */
+  int fb,  /* 5 <= fb <= 273, default = 32 */
+  int numThreads /* 1 or 2, default = 2 */
+)
+{
+  CLzmaEncProps props;
+  LzmaEncProps_Init(&props);
+  props.level = level;
+  props.dictSize = dictSize;
+  props.lc = lc;
+  props.lp = lp;
+  props.pb = pb;
+  props.fb = fb;
+  props.numThreads = numThreads;
+
+  return LzmaEncode(dest, destLen, src, srcLen, &props, outProps, outPropsSize, 0,
+	  NULL, &g_Alloc, &g_Alloc);
+}
+
+MY_STDAPI LzmaUncompress(unsigned char *dest, size_t  *destLen, const unsigned char *src, size_t  *srcLen,
+  const unsigned char *props, size_t propsSize)
+{
+  ELzmaStatus status;
+  return LzmaDecode(dest, destLen, src, srcLen, props, (unsigned)propsSize, LZMA_FINISH_ANY, &status, &g_Alloc);
+}
+
+#undef NORMALIZE
+#undef IF_BIT_0
+#undef UPDATE_0
+#undef UPDATE_1
+#undef kNumFullDistances
+#undef kTopValue
+
+#line 1 "Bcj2.c"
+
+#line 1 "Bcj2.h"
+#ifndef __BCJ2_H
+#define __BCJ2_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/*
+Conditions:
+  outSize <= FullOutputSize,
+  where FullOutputSize is full size of output stream of x86_2 filter.
+
+If buf0 overlaps outBuf, there are two required conditions:
+  1) (buf0 >= outBuf)
+  2) (buf0 + size0 >= outBuf + FullOutputSize).
+
+Returns:
+  SZ_OK
+  SZ_ERROR_DATA - Data error
+*/
+
+int Bcj2_Decode(
+	const Byte *buf0, SizeT size0,
+	const Byte *buf1, SizeT size1,
+	const Byte *buf2, SizeT size2,
+	const Byte *buf3, SizeT size3,
+	Byte *outBuf, SizeT outSize);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif
+
+#ifdef _LZMA_PROB32
+#define CProb UInt32
+#else
+#define CProb UInt16
+#endif
+
+#define IsJcc(b0, b1) ((b0) == 0x0F && ((b1) & 0xF0) == 0x80)
+#define IsJ(b0, b1) ((b1 & 0xFE) == 0xE8 || IsJcc(b0, b1))
+
+#define kNumTopBits 24
+#define kTopValue ((UInt32)1 << kNumTopBits)
+
+#define kNumBitModelTotalBits 11
+#define kBitModelTotal (1 << kNumBitModelTotalBits)
+#define kNumMoveBits 5
+
+#define RC_READ_BYTE (*buffer++)
+#define RC_TEST { if (buffer == bufferLim) return SZ_ERROR_DATA; }
+#define RC_INIT2 code = 0; range = 0xFFFFFFFF; \
+  { int i; for (i = 0; i < 5; i++) { RC_TEST; code = (code << 8) | RC_READ_BYTE; }}
+
+#define NORMALIZE if (range < kTopValue) { RC_TEST; range <<= 8; code = (code << 8) | RC_READ_BYTE; }
+
+#define IF_BIT_0(p) ttt = *(p); bound = (range >> kNumBitModelTotalBits) * ttt; if (code < bound)
+#define UPDATE_0(p) range = bound; *(p) = (CProb)(ttt + ((kBitModelTotal - ttt) >> kNumMoveBits)); NORMALIZE;
+#define UPDATE_1(p) range -= bound; code -= bound; *(p) = (CProb)(ttt - (ttt >> kNumMoveBits)); NORMALIZE;
+
+int Bcj2_Decode(
+	const Byte *buf0, SizeT size0,
+	const Byte *buf1, SizeT size1,
+	const Byte *buf2, SizeT size2,
+	const Byte *buf3, SizeT size3,
+	Byte *outBuf, SizeT outSize)
+{
+  CProb p[256 + 2];
+  SizeT inPos = 0, outPos = 0;
+
+  const Byte *buffer, *bufferLim;
+  UInt32 range, code;
+  Byte prevByte = 0;
+
+  unsigned int i;
+  for (i = 0; i < sizeof(p) / sizeof(p[0]); i++)
+	p[i] = kBitModelTotal >> 1;
+
+  buffer = buf3;
+  bufferLim = buffer + size3;
+  RC_INIT2
+
+  if (outSize == 0)
+	return SZ_OK;
+
+  for (;;)
+  {
+	Byte b;
+	CProb *prob;
+	UInt32 bound;
+	UInt32 ttt;
+
+	SizeT limit = size0 - inPos;
+	if (outSize - outPos < limit)
+	  limit = outSize - outPos;
+	while (limit != 0)
+	{
+	  Byte b = buf0[inPos];
+	  outBuf[outPos++] = b;
+	  if (IsJ(prevByte, b))
+		break;
+	  inPos++;
+	  prevByte = b;
+	  limit--;
+	}
+
+	if (limit == 0 || outPos == outSize)
+	  break;
+
+	b = buf0[inPos++];
+
+	if (b == 0xE8)
+	  prob = p + prevByte;
+	else if (b == 0xE9)
+	  prob = p + 256;
+	else
+	  prob = p + 257;
+
+	IF_BIT_0(prob)
+	{
+	  UPDATE_0(prob)
+	  prevByte = b;
+	}
+	else
+	{
+	  UInt32 dest;
+	  const Byte *v;
+	  UPDATE_1(prob)
+	  if (b == 0xE8)
+	  {
+		v = buf1;
+		if (size1 < 4)
+		  return SZ_ERROR_DATA;
+		buf1 += 4;
+		size1 -= 4;
+	  }
+	  else
+	  {
+		v = buf2;
+		if (size2 < 4)
+		  return SZ_ERROR_DATA;
+		buf2 += 4;
+		size2 -= 4;
+	  }
+	  dest = (((UInt32)v[0] << 24) | ((UInt32)v[1] << 16) |
+		  ((UInt32)v[2] << 8) | ((UInt32)v[3])) - ((UInt32)outPos + 4);
+	  outBuf[outPos++] = (Byte)dest;
+	  if (outPos == outSize)
+		break;
+	  outBuf[outPos++] = (Byte)(dest >> 8);
+	  if (outPos == outSize)
+		break;
+	  outBuf[outPos++] = (Byte)(dest >> 16);
+	  if (outPos == outSize)
+		break;
+	  outBuf[outPos++] = prevByte = (Byte)(dest >> 24);
+	}
+  }
+  return (outPos == outSize) ? SZ_OK : SZ_ERROR_DATA;
+}
+
+
 #ifdef swap
 #undef swap
 #endif
@@ -9906,139 +13560,122 @@ size_t shoco_decompress(const char * const restrict original, size_t complen, ch
 #include <algorithm>
 
 namespace {
-  /* Compresses 'size' bytes from 'data'. Returns the address of a
-	 malloc'd buffer containing the compressed data and its size in
-	 '*out_sizep'.
-	 In case of error, returns 0 and does not modify '*out_sizep'.
-  */
-  uint8_t * lzip_compress( const uint8_t * const data, const int size,
-						uint8_t * const new_data, int * const out_sizep )
-	{
-	struct LZ_Encoder * encoder;
-  //uint8_t * new_data;
-	const int match_len_limit = 273; //36; 64; 273;
-	const unsigned long long member_size = (unsigned long long)~0;
-	int delta_size, new_data_size;
-	int new_pos = 0;
-	int written = 0;
-	bool error = false;
-	int dict_size = 4 << 20; //= 4 MiB, 8 << 20 = 8 MiB
+	/* callbacks for streamed input and output */
 
-	if( dict_size > size ) dict_size = size;      /* saves memory */
-	if( dict_size < LZ_min_dictionary_size() )
-	  dict_size = LZ_min_dictionary_size();
-	encoder = LZ_compress_open( dict_size, match_len_limit, member_size );
-	if( !encoder || LZ_compress_errno( encoder ) != LZ_ok )
-	  { LZ_compress_close( encoder ); return 0; }
+	struct wrbuf {
+		size_t pos;
+		const size_t size;
+		uint8_t *const data;
+	};
 
-	delta_size = (size < 256) ? 64 : size / 4;        /* size may be zero */
-  //  new_data_size = delta_size;               /* initial size */
-	new_data_size = int(*out_sizep);
+	struct rdbuf {
+		size_t pos;
+		const size_t size;
+		const uint8_t *const data;
+	};
 
-  //  new_data = (uint8_t *)malloc( new_data_size );
-	if( !new_data )
-	  { LZ_compress_close( encoder ); return 0; }
+	size_t elzma_write_callback( void *ctx, const void *buf, size_t size ) {
+		wrbuf * f = (wrbuf *) ctx;
+		assert( f );
 
-	while( true )
-	  {
-	  int rd;
-	  if( LZ_compress_write_size( encoder ) > 0 )
-		{
-		if( written < size )
-		  {
-		  const int wr = LZ_compress_write( encoder, data + written,
-											size - written );
-		  if( wr < 0 ) { error = true; break; }
-		  written += wr;
-		  }
-		if( written >= size ) LZ_compress_finish( encoder );
+		if( f->pos + size > f->size ) {
+			size = f->size - f->pos;
 		}
-	  rd = LZ_compress_read( encoder, new_data + new_pos,
-							 new_data_size - new_pos );
-	  if( rd < 0 ) { error = true; break; }
-	  new_pos += rd;
-	  if( LZ_compress_finished( encoder ) == 1 ) break;
-	  if( new_pos >= new_data_size )
-		{
-  #if 1
-		  error = true; break;
-  #else
-		uint8_t * const tmp =
-		  (uint8_t *)realloc( new_data, new_data_size + delta_size );
-		if( !tmp ) { error = true; break; }
-		new_data = tmp;
-		new_data_size += delta_size;
-  #endif
-		}
-	  }
 
-	if( LZ_compress_close( encoder ) < 0 ) error = true;
-	if( error ) { /*free( new_data );*/ return 0; }
-	*out_sizep = new_pos;
-	return new_data;
+		memcpy( &f->data[ f->pos ], buf, size );
+		f->pos += size;
+
+		return size;
 	}
 
-  /* Decompresses 'size' bytes from 'data'. Returns the address of a
-	 malloc'd buffer containing the decompressed data and its size in
-	 '*out_sizep'.
-	 In case of error, returns 0 and does not modify '*out_sizep'.
-  */
-  uint8_t * lzip_decompress( const uint8_t * const data, const int size,
-						  uint8_t * const new_data, int * const out_sizep )
-	{
-	struct LZ_Decoder * const decoder = LZ_decompress_open();
-  //uint8_t * new_data;
-	const int delta_size = size;          /* size must be > zero */
-  //  int new_data_size = delta_size;       /* initial size */
-	int new_data_size = int(*out_sizep);
-	int new_pos = 0;
-	int written = 0;
-	bool error = false;
-	if( !decoder || LZ_decompress_errno( decoder ) != LZ_ok )
-	  { LZ_decompress_close( decoder ); return 0; }
+	int elzma_read_callback( void *ctx, void *buf, size_t *size ) {
+		rdbuf * f = (rdbuf *) ctx;
+		assert( f );
 
-	//new_data = (uint8_t *)malloc( new_data_size );
-	if( !new_data )
-	  { LZ_decompress_close( decoder ); return 0; }
-
-	while( true )
-	  {
-	  int rd;
-	  if( LZ_decompress_write_size( decoder ) > 0 )
-		{
-		if( written < size )
-		  {
-		  const int wr = LZ_decompress_write( decoder, data + written,
-											  size - written );
-		  if( wr < 0 ) { error = true; break; }
-		  written += wr;
-		  }
-		if( written >= size ) LZ_decompress_finish( decoder );
+		if( f->pos + *size > f->size ) {
+			*size = f->size - f->pos;
 		}
-	  rd = LZ_decompress_read( decoder, new_data + new_pos,
-							   new_data_size - new_pos );
-	  if( rd < 0 ) { error = true; break; }
-	  new_pos += rd;
-	  if( LZ_decompress_finished( decoder ) == 1 ) break;
-	  if( new_pos >= new_data_size )
-		{
-  #if 1
-		  error = true; break;
-  #else
-		uint8_t * const tmp =
-		  (uint8_t *)realloc( new_data, new_data_size + delta_size );
-		if( !tmp ) { error = true; break; }
-		new_data = tmp;
-		new_data_size += delta_size;
-  #endif
-		}
-	  }
 
-	if( LZ_decompress_close( decoder ) < 0 ) error = true;
-	if( error ) { /*free( new_data );*/ return 0; }
-	*out_sizep = new_pos;
-	return new_data;
+		memcpy( buf, &f->data[ f->pos ], *size );
+		f->pos += *size;
+
+		return 0;
 	}
+
+	template<bool is_lzip>
+	size_t lzma_decompress( const uint8_t * const data, const size_t size,
+						  uint8_t * const new_data, size_t * const out_sizep )
+	{
+		rdbuf rd = { 0, size, data };
+		wrbuf wr = { 0, *out_sizep, new_data };
+
+		elzma_file_format format = is_lzip ? ELZMA_lzip : ELZMA_lzma;
+		elzma_decompress_handle hand = elzma_decompress_alloc();
+		bool ok = false, init = NULL != hand;
+		if( init && ELZMA_E_OK == elzma_decompress_run(
+				hand, elzma_read_callback, (void *) &rd,
+				elzma_write_callback, (void *) &wr, format) ) {
+			ok = true;
+		}
+		if( init ) elzma_decompress_free(&hand);
+		return ok ? 1 : 0;
+	}
+
+	template<bool is_lzip>
+	size_t lzma_compress( const uint8_t * const data, const size_t size,
+						uint8_t * const new_data, size_t * const out_sizep )
+	{
+		/* default compression parameters, some of which may be overridded by
+		 * command line arguments */
+		unsigned char level = 9;
+		unsigned char lc = ELZMA_LC_DEFAULT;
+		unsigned char lp = ELZMA_LP_DEFAULT;
+		unsigned char pb = ELZMA_PB_DEFAULT;
+		unsigned int maxDictSize = ELZMA_DICT_SIZE_DEFAULT_MAX;
+		unsigned int dictSize = 0;
+		elzma_file_format format = is_lzip ? ELZMA_lzip : ELZMA_lzma;
+
+		elzma_compress_handle hand = NULL;
+
+		/* determine a reasonable dictionary size given input size */
+		dictSize = elzma_get_dict_size(size);
+		if (dictSize > maxDictSize) dictSize = maxDictSize;
+
+		/* allocate a compression handle */
+		hand = elzma_compress_alloc();
+		if (hand == NULL) {
+			return 0;
+		}
+
+		if (ELZMA_E_OK != elzma_compress_config(hand, lc, lp, pb, level,
+												dictSize, format,
+												size)) {
+			elzma_compress_free(&hand);
+			return 0;
+		}
+
+		int rv;
+		int pCtx = 0;
+
+		rdbuf rd = { 0, size, data };
+		wrbuf wr = { 0, *out_sizep, new_data };
+
+		rv = elzma_compress_run(hand, elzma_read_callback, (void *) &rd,
+								elzma_write_callback, (void *) &wr,
+								(NULL), &pCtx);
+
+		if (ELZMA_E_OK != rv) {
+			elzma_compress_free(&hand);
+			return 0;
+		}
+
+		*out_sizep = wr.pos;
+
+		/* clean up */
+		elzma_compress_free(&hand);
+		return wr.pos;
+	}
+
 }
 
 namespace bundle {
@@ -10081,7 +13718,8 @@ namespace bundle {
 			break; case LZ4: return "LZ4";
 			break; case MINIZ: return "MINIZ";
 			break; case SHOCO: return "SHOCO";
-			break; case LZLIB: return "LZLIB";
+			break; case LZIP: return "LZIP";
+			break; case LZMASDK: return "LZMA";
 			/* for archival reasons: */
 			// break; case LZHAM: return "LZHAM";
 		}
@@ -10097,7 +13735,8 @@ namespace bundle {
 			break; case LZ4: return "lz4";
 			break; case MINIZ: return "miniz";
 			break; case SHOCO: return "shoco";
-			break; case LZLIB: return "lz";
+			break; case LZIP: return "lz";
+			break; case LZMASDK: return "lzma";
 			/* for archival reasons: */
 			// break; case LZHAM: return "lzham";
 		}
@@ -10107,7 +13746,7 @@ namespace bundle {
 		unsigned char *mem = (unsigned char *)ptr;
 		//std::string s; s.resize( size ); memcpy( &s[0], mem, size );
 		//std::cout << hexdump( s) << std::endl;
-		if( size >= 4 && mem && mem[0] == 'L' && mem[1] == 'Z' && mem[2] == 'I' && mem[3] == 'P' ) return LZLIB;
+		if( size >= 4 && mem && mem[0] == 'L' && mem[1] == 'Z' && mem[2] == 'I' && mem[3] == 'P' ) return LZIP;
 		if( size >= 1 && mem && mem[0] == 0xEC ) return MINIZ;
 		if( size >= 1 && mem && mem[0] >= 0xF0 ) return LZ4;
 		return NONE;
@@ -10132,7 +13771,8 @@ namespace bundle {
 				break; case LZ4: outlen = LZ4_compress( (const char *)in, (char *)out, inlen );
 				break; case MINIZ: outlen = tdefl_compress_mem_to_mem( out, outlen, in, inlen, TDEFL_DEFAULT_MAX_PROBES ); //TDEFL_MAX_PROBES_MASK ); //
 				break; case SHOCO: outlen = shoco_compress( (const char *)in, inlen, (char *)out, outlen );
-				break; case LZLIB: { int l; outlen = 0; if( lzip_compress( (const uint8_t *)in, inlen, (uint8_t *)out, &l ) ) outlen = l; }
+				break; case LZMASDK: outlen = lzma_compress<0>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen );
+				break; case LZIP: outlen = lzma_compress<1>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen );
 				/* for archival reasons: */
 				// break; case LZHAM: { lzham_z_ulong l; lzham_z_compress( (unsigned char *)out, &l, (const unsigned char *)in, inlen ); outlen = l; }
 			}
@@ -10153,7 +13793,8 @@ namespace bundle {
 				break; case LZ4: bytes_read = LZ4_uncompress( (const char *)in, (char *)out, outlen );
 				break; case MINIZ: bytes_read = inlen; tinfl_decompress_mem_to_mem( out, outlen, in, inlen, TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF );
 				break; case SHOCO: bytes_read = inlen; shoco_decompress( (const char *)in, inlen, (char *)out, outlen );
-				break; case LZLIB: bytes_read = 0; { int l = outlen; if( lzip_decompress( (const uint8_t *)in, inlen, (uint8_t *)out, &l ) ) { outlen = l; bytes_read = inlen; } }
+				break; case LZMASDK: bytes_read = 0; if( lzma_decompress<0>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen ) ) bytes_read = inlen;
+				break; case LZIP: bytes_read = 0; if( lzma_decompress<1>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen ) ) bytes_read = inlen;
 				/* for archival reasons: */
 				// break; case LZHAM: bytes_read = inlen; { lzham_z_ulong l = outlen; lzham_z_uncompress( (unsigned char *)out, &l, (const unsigned char *)in, inlen ); }
 			}

@@ -48,9 +48,9 @@
 namespace bundle
 {
     // per lib
-    enum { UNDEFINED, SHOCO, LZ4, MINIZ, LZLIB };
+    enum { UNDEFINED, SHOCO, LZ4, MINIZ, LZIP, LZMASDK };
     // per family
-    enum { NONE = UNDEFINED, ASCII = SHOCO, LZ77 = LZ4, DEFLATE = MINIZ, LZMA = LZLIB };
+    enum { NONE = UNDEFINED, ASCII = SHOCO, LZ77 = LZ4, DEFLATE = MINIZ, LZMA = LZMASDK };
     // per context
     enum { UNCOMPRESSED = NONE, ENTROPY = ASCII, FAST = LZ77, DEFAULT = DEFLATE, EXTRA = LZMA };
 
@@ -174,7 +174,8 @@ namespace bundle
             all.push_back( LZ4 );
             all.push_back( SHOCO );
             all.push_back( MINIZ );
-            all.push_back( LZLIB );
+            all.push_back( LZIP );
+            all.push_back( LZMASDK );
             all.push_back( NONE );
         }
         return all;

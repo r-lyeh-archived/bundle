@@ -36,140 +36,123 @@
 #include "bundle.hpp"
 
 namespace {
-  /* Compresses 'size' bytes from 'data'. Returns the address of a
-     malloc'd buffer containing the compressed data and its size in
-     '*out_sizep'.
-     In case of error, returns 0 and does not modify '*out_sizep'.
-  */
-  uint8_t * lzip_compress( const uint8_t * const data, const int size,
-                        uint8_t * const new_data, int * const out_sizep )
+    /* callbacks for streamed input and output */
+
+    struct wrbuf {
+        size_t pos;
+        const size_t size;
+        uint8_t *const data;
+    };
+
+    struct rdbuf {
+        size_t pos;
+        const size_t size;
+        const uint8_t *const data;
+    };
+
+    size_t elzma_write_callback( void *ctx, const void *buf, size_t size ) {
+        wrbuf * f = (wrbuf *) ctx;
+        assert( f );
+
+        if( f->pos + size > f->size ) {
+            size = f->size - f->pos;
+        }
+
+        memcpy( &f->data[ f->pos ], buf, size );
+        f->pos += size;
+
+        return size;
+    }
+
+    int elzma_read_callback( void *ctx, void *buf, size_t *size ) {
+        rdbuf * f = (rdbuf *) ctx;
+        assert( f );
+
+        if( f->pos + *size > f->size ) {
+            *size = f->size - f->pos;
+        }
+
+        memcpy( buf, &f->data[ f->pos ], *size );
+        f->pos += *size;
+
+        return 0;
+    }
+
+    template<bool is_lzip>
+    size_t lzma_decompress( const uint8_t * const data, const size_t size,
+                          uint8_t * const new_data, size_t * const out_sizep )
     {
-    struct LZ_Encoder * encoder;
-  //uint8_t * new_data;
-    const int match_len_limit = 273; //36; 64; 273;
-    const unsigned long long member_size = (unsigned long long)~0;
-    int delta_size, new_data_size;
-    int new_pos = 0;
-    int written = 0;
-    bool error = false;
-    int dict_size = 4 << 20; //= 4 MiB, 8 << 20 = 8 MiB
+        rdbuf rd = { 0, size, data };
+        wrbuf wr = { 0, *out_sizep, new_data };
 
-    if( dict_size > size ) dict_size = size;      /* saves memory */
-    if( dict_size < LZ_min_dictionary_size() )
-      dict_size = LZ_min_dictionary_size();
-    encoder = LZ_compress_open( dict_size, match_len_limit, member_size );
-    if( !encoder || LZ_compress_errno( encoder ) != LZ_ok )
-      { LZ_compress_close( encoder ); return 0; }
-
-    delta_size = (size < 256) ? 64 : size / 4;        /* size may be zero */
-  //  new_data_size = delta_size;               /* initial size */
-    new_data_size = int(*out_sizep);
-
-  //  new_data = (uint8_t *)malloc( new_data_size );
-    if( !new_data )
-      { LZ_compress_close( encoder ); return 0; }
-
-    while( true )
-      {
-      int rd;
-      if( LZ_compress_write_size( encoder ) > 0 )
-        {
-        if( written < size )
-          {
-          const int wr = LZ_compress_write( encoder, data + written,
-                                            size - written );
-          if( wr < 0 ) { error = true; break; }
-          written += wr;
-          }
-        if( written >= size ) LZ_compress_finish( encoder );
+        elzma_file_format format = is_lzip ? ELZMA_lzip : ELZMA_lzma;
+        elzma_decompress_handle hand = elzma_decompress_alloc();
+        bool ok = false, init = NULL != hand;
+        if( init && ELZMA_E_OK == elzma_decompress_run(
+                hand, elzma_read_callback, (void *) &rd,
+                elzma_write_callback, (void *) &wr, format) ) {
+            ok = true;
         }
-      rd = LZ_compress_read( encoder, new_data + new_pos,
-                             new_data_size - new_pos );
-      if( rd < 0 ) { error = true; break; }
-      new_pos += rd;
-      if( LZ_compress_finished( encoder ) == 1 ) break;
-      if( new_pos >= new_data_size )
-        {
-  #if 1
-          error = true; break;
-  #else
-        uint8_t * const tmp =
-          (uint8_t *)realloc( new_data, new_data_size + delta_size );
-        if( !tmp ) { error = true; break; }
-        new_data = tmp;
-        new_data_size += delta_size;
-  #endif
-        }
-      }
+        if( init ) elzma_decompress_free(&hand);
+        return ok ? 1 : 0;
+    }
 
-    if( LZ_compress_close( encoder ) < 0 ) error = true;
-    if( error ) { /*free( new_data );*/ return 0; }
-    *out_sizep = new_pos;
-    return new_data;
+    template<bool is_lzip>
+    size_t lzma_compress( const uint8_t * const data, const size_t size,
+                        uint8_t * const new_data, size_t * const out_sizep )
+    {
+        /* default compression parameters, some of which may be overridded by
+         * command line arguments */
+        unsigned char level = 9;
+        unsigned char lc = ELZMA_LC_DEFAULT;
+        unsigned char lp = ELZMA_LP_DEFAULT;
+        unsigned char pb = ELZMA_PB_DEFAULT;
+        unsigned int maxDictSize = ELZMA_DICT_SIZE_DEFAULT_MAX;
+        unsigned int dictSize = 0;
+        elzma_file_format format = is_lzip ? ELZMA_lzip : ELZMA_lzma;
+
+        elzma_compress_handle hand = NULL;
+
+        /* determine a reasonable dictionary size given input size */
+        dictSize = elzma_get_dict_size(size);
+        if (dictSize > maxDictSize) dictSize = maxDictSize;
+
+        /* allocate a compression handle */
+        hand = elzma_compress_alloc();
+        if (hand == NULL) {
+            return 0;
+        }
+
+        if (ELZMA_E_OK != elzma_compress_config(hand, lc, lp, pb, level,
+                                                dictSize, format,
+                                                size)) {
+            elzma_compress_free(&hand);
+            return 0;
+        }
+
+        int rv;
+        int pCtx = 0;
+
+        rdbuf rd = { 0, size, data };
+        wrbuf wr = { 0, *out_sizep, new_data };
+
+        rv = elzma_compress_run(hand, elzma_read_callback, (void *) &rd,
+                                elzma_write_callback, (void *) &wr,
+                                (NULL), &pCtx);
+
+        if (ELZMA_E_OK != rv) {
+            elzma_compress_free(&hand);
+            return 0;
+        }
+
+        *out_sizep = wr.pos;
+
+        /* clean up */
+        elzma_compress_free(&hand);
+        return wr.pos;
     }
 
 
-  /* Decompresses 'size' bytes from 'data'. Returns the address of a
-     malloc'd buffer containing the decompressed data and its size in
-     '*out_sizep'.
-     In case of error, returns 0 and does not modify '*out_sizep'.
-  */
-  uint8_t * lzip_decompress( const uint8_t * const data, const int size,
-                          uint8_t * const new_data, int * const out_sizep )
-    {
-    struct LZ_Decoder * const decoder = LZ_decompress_open();
-  //uint8_t * new_data;
-    const int delta_size = size;          /* size must be > zero */
-  //  int new_data_size = delta_size;       /* initial size */
-    int new_data_size = int(*out_sizep);
-    int new_pos = 0;
-    int written = 0;
-    bool error = false;
-    if( !decoder || LZ_decompress_errno( decoder ) != LZ_ok )
-      { LZ_decompress_close( decoder ); return 0; }
-
-    //new_data = (uint8_t *)malloc( new_data_size );
-    if( !new_data )
-      { LZ_decompress_close( decoder ); return 0; }
-
-    while( true )
-      {
-      int rd;
-      if( LZ_decompress_write_size( decoder ) > 0 )
-        {
-        if( written < size )
-          {
-          const int wr = LZ_decompress_write( decoder, data + written,
-                                              size - written );
-          if( wr < 0 ) { error = true; break; }
-          written += wr;
-          }
-        if( written >= size ) LZ_decompress_finish( decoder );
-        }
-      rd = LZ_decompress_read( decoder, new_data + new_pos,
-                               new_data_size - new_pos );
-      if( rd < 0 ) { error = true; break; }
-      new_pos += rd;
-      if( LZ_decompress_finished( decoder ) == 1 ) break;
-      if( new_pos >= new_data_size )
-        {
-  #if 1
-          error = true; break;
-  #else
-        uint8_t * const tmp =
-          (uint8_t *)realloc( new_data, new_data_size + delta_size );
-        if( !tmp ) { error = true; break; }
-        new_data = tmp;
-        new_data_size += delta_size;
-  #endif
-        }
-      }
-
-    if( LZ_decompress_close( decoder ) < 0 ) error = true;
-    if( error ) { /*free( new_data );*/ return 0; }
-    *out_sizep = new_pos;
-    return new_data;
-    }
 }
 
 
@@ -213,7 +196,8 @@ namespace bundle {
             break; case LZ4: return "LZ4";
             break; case MINIZ: return "MINIZ";
             break; case SHOCO: return "SHOCO";
-            break; case LZLIB: return "LZLIB";
+            break; case LZIP: return "LZIP";
+            break; case LZMASDK: return "LZMA";
             /* for archival reasons: */
             // break; case LZHAM: return "LZHAM";
         }
@@ -229,7 +213,8 @@ namespace bundle {
             break; case LZ4: return "lz4";
             break; case MINIZ: return "miniz";
             break; case SHOCO: return "shoco";
-            break; case LZLIB: return "lz";
+            break; case LZIP: return "lz";
+            break; case LZMASDK: return "lzma";
             /* for archival reasons: */
             // break; case LZHAM: return "lzham";
         }
@@ -239,7 +224,7 @@ namespace bundle {
         unsigned char *mem = (unsigned char *)ptr;
         //std::string s; s.resize( size ); memcpy( &s[0], mem, size );
         //std::cout << hexdump( s) << std::endl;
-        if( size >= 4 && mem && mem[0] == 'L' && mem[1] == 'Z' && mem[2] == 'I' && mem[3] == 'P' ) return LZLIB;
+        if( size >= 4 && mem && mem[0] == 'L' && mem[1] == 'Z' && mem[2] == 'I' && mem[3] == 'P' ) return LZIP;
         if( size >= 1 && mem && mem[0] == 0xEC ) return MINIZ;
         if( size >= 1 && mem && mem[0] >= 0xF0 ) return LZ4;
         return NONE;
@@ -264,7 +249,8 @@ namespace bundle {
                 break; case LZ4: outlen = LZ4_compress( (const char *)in, (char *)out, inlen );
                 break; case MINIZ: outlen = tdefl_compress_mem_to_mem( out, outlen, in, inlen, TDEFL_DEFAULT_MAX_PROBES ); //TDEFL_MAX_PROBES_MASK ); //
                 break; case SHOCO: outlen = shoco_compress( (const char *)in, inlen, (char *)out, outlen );
-                break; case LZLIB: { int l; outlen = 0; if( lzip_compress( (const uint8_t *)in, inlen, (uint8_t *)out, &l ) ) outlen = l; }
+                break; case LZMASDK: outlen = lzma_compress<0>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen );
+                break; case LZIP: outlen = lzma_compress<1>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen );
                 /* for archival reasons: */
                 // break; case LZHAM: { lzham_z_ulong l; lzham_z_compress( (unsigned char *)out, &l, (const unsigned char *)in, inlen ); outlen = l; }
             }
@@ -285,7 +271,8 @@ namespace bundle {
                 break; case LZ4: bytes_read = LZ4_uncompress( (const char *)in, (char *)out, outlen );
                 break; case MINIZ: bytes_read = inlen; tinfl_decompress_mem_to_mem( out, outlen, in, inlen, TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF );
                 break; case SHOCO: bytes_read = inlen; shoco_decompress( (const char *)in, inlen, (char *)out, outlen );
-                break; case LZLIB: bytes_read = 0; { int l = outlen; if( lzip_decompress( (const uint8_t *)in, inlen, (uint8_t *)out, &l ) ) { outlen = l; bytes_read = inlen; } }
+                break; case LZMASDK: bytes_read = 0; if( lzma_decompress<0>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen ) ) bytes_read = inlen;
+                break; case LZIP: bytes_read = 0; if( lzma_decompress<1>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen ) ) bytes_read = inlen;
                 /* for archival reasons: */
                 // break; case LZHAM: bytes_read = inlen; { lzham_z_ulong l = outlen; lzham_z_uncompress( (unsigned char *)out, &l, (const unsigned char *)in, inlen ); }
             }

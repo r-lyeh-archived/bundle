@@ -1,0 +1,8 @@
+1. more tests - live round trip tests using lzip and lzmautils if available
+   on build system
+2. proper handling of two different lzip compression versions
+3. multiple files on command line
+4. example code
+5. doxygen output - html and man pages
+6. preservation of permissions
+7. --keep and --force flags functioning properly

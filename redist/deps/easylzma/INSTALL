@@ -1,0 +1,9 @@
+How to build (and eventually install) the easylzma library and
+bundled command line tools
+
+1. get cmake version 2.6 or greater
+2. mkdir build
+3. cd build
+4. cmake ..
+5. make
+6. build output is in build/easylzma-x.y.z/ *
