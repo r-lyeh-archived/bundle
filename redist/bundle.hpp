@@ -48,19 +48,26 @@
 namespace bundle
 {
     // per lib
-    enum { UNDEFINED, SHOCO, LZ4, MINIZ, LZIP, LZMASDK };
+    enum { UNDEFINED, SHOCO, LZ4, MINIZ, LZIP, LZMASDK, ZPAQ };
     // per family
-    enum { NONE = UNDEFINED, ASCII = SHOCO, LZ77 = LZ4, DEFLATE = MINIZ, LZMA = LZMASDK };
+    enum { NONE = UNDEFINED, ASCII = SHOCO, LZ77 = LZ4, DEFLATE = MINIZ, LZMA = LZMASDK, CM = ZPAQ };
     // per context
-    enum { UNCOMPRESSED = NONE, ENTROPY = ASCII, FAST = LZ77, DEFAULT = DEFLATE, EXTRA = LZMA };
+    enum { UNCOMPRESSED = NONE, ENTROPY = ASCII, FAST = LZ77, DEFAULT = DEFLATE, EXTRA = LZMA, UBER = CM };
 
     // dont compress if compression ratio is below 5%
     enum { NO_COMPRESSION_TRESHOLD = 5 };
 
-    // high level API
+    // low level API
 
-    //std::string pack( unsigned q, const std::string &self );
-    //std::string unpack( const std::string &self );
+    unsigned type_of( const void *mem, size_t size );
+    const char *const name_of( unsigned q );
+    const char *const version_of( unsigned q );
+    const char *const ext_of( unsigned q );
+    size_t bound( unsigned q, size_t len );
+    bool pack( unsigned q, const void *in, size_t len, void *out, size_t &zlen );
+    bool unpack( unsigned q, const void *in, size_t len, void *out, size_t &zlen );
+
+    // high level API
 
     unsigned type_of( const std::string &self );
     std::string name_of( const std::string &self );
@@ -70,17 +77,7 @@ namespace bundle
     size_t zlength( const std::string &self );
     void *zptr( const std::string &self );
 
-    // low level API
-
-      bool pack( unsigned q, const void *in, size_t len, void *out, size_t &zlen );
-      bool unpack( unsigned q, const void *in, size_t len, void *out, size_t &zlen );
-    size_t bound( unsigned q, size_t len );
-    const char *const name_of( unsigned q );
-    const char *const version_of( unsigned q );
-    const char *const ext_of( unsigned q );
-    unsigned type_of( const void *mem, size_t size );
-
-    // template API
+    // high level API, templates
 
     template < class T1, class T2 >
     static inline bool pack( unsigned q, T2 &buffer_out, const T1 &buffer_in ) {
@@ -176,6 +173,7 @@ namespace bundle
             all.push_back( MINIZ );
             all.push_back( LZIP );
             all.push_back( LZMASDK );
+            all.push_back( ZPAQ );
             all.push_back( NONE );
         }
         return all;
@@ -184,6 +182,7 @@ namespace bundle
 #if BUNDLE_CXX11
 
     // measures for all given encodings
+    template<typename T>
     struct measure {
         unsigned q = NONE;
         double ratio = 0;
@@ -191,6 +190,7 @@ namespace bundle
         double dectime = 0;
         double memusage = 0;
         bool pass = 0;
+        T zipped, unzipped;
         std::string str() const {
             std::stringstream ss;
             ss << ( pass ? "[ OK ] " : "[FAIL] ") << name_of(q) << ": ratio=" << ratio << "% enctime=" << enctime << "ms dectime=" << dectime << " ms";
@@ -199,36 +199,35 @@ namespace bundle
     };
 
     template< class T, bool do_enc = true, bool do_dec = true, bool do_verify = true >
-    std::vector< measure > measures( const T& original, const std::vector<unsigned> &use_encodings = encodings() ) {
-        std::vector< measure > results;
-        T zipped, unzipped;
+    std::vector< measure<T> > measures( const T& original, const std::vector<unsigned> &use_encodings = encodings() ) {
+        std::vector< measure<T> > results;
 
         for( auto encoding : use_encodings ) {
-            results.push_back( measure() );
+            results.push_back( measure<T>() );
             auto &r = results.back();
             r.q = encoding;
-            r.pass = false;
+            r.pass = true;
 
             if( do_enc ) {
                 auto begin = std::chrono::high_resolution_clock::now();
-                zipped = pack( encoding, original );
+                r.zipped = pack( encoding, original );
                 auto end = std::chrono::high_resolution_clock::now();
                 r.enctime = std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count();
-                r.ratio = 100 - 100 * ( double( zipped.size() ) / original.size() );
+                r.ratio = 100 - 100 * ( double( r.zipped.size() ) / original.size() );
+                r.pass = r.pass && (encoding != NONE ? is_packed(r.zipped) : 1);
             }
 
             if( do_dec ) {
                 auto begin = std::chrono::high_resolution_clock::now();
-                unzipped = unpack( zipped );
+                r.unzipped = unpack( r.zipped );
                 auto end = std::chrono::high_resolution_clock::now();
                 r.dectime = std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count();
-                r.pass = ( original == unzipped );
+                r.pass = r.pass && (is_unpacked(r.unzipped));
             }
 
-            if( encoding == NONE )
-                r.pass = r.pass && do_verify && do_enc && do_dec && is_unpacked(zipped) && is_unpacked(unzipped) && original == unzipped;
-            else
-                r.pass = r.pass && do_verify && do_enc && do_dec && is_packed(zipped) && is_unpacked(unzipped) && original == unzipped;
+            if( do_verify ) {
+                r.pass = r.pass && (original == r.unzipped);
+            }
         }
 
         return results;
@@ -236,51 +235,48 @@ namespace bundle
 
     // find best choice for given data
     template< class T >
-    unsigned find_smallest_compressor( const T& original, const std::vector<unsigned> &use_encodings = encodings() ) {
-        unsigned q = bundle::NONE;
+    measure<T> find_smallest_compressor( const std::vector< measure<T> > &measures ) {
+        const measure<T> *q = 0;
         double ratio = 0;
 
-        auto results = measures< true, false, false >( original, use_encodings );
-        for( auto &r : results ) {
+        for( auto &r : measures ) {
             if( r.pass && r.ratio > ratio && r.ratio >= (100 - NO_COMPRESSION_TRESHOLD / 100.0) ) {
                 ratio = r.ratio;
-                q = r.q;
+                q = &r;
             }
         }
 
-        return q;
+        return q ? *q : measure<T>();
     }
 
     template< class T >
-    unsigned find_fastest_compressor( const T& original, const std::vector<unsigned> &use_encodings = encodings() ) {
-        unsigned q = bundle::NONE;
+    measure<T> find_fastest_compressor( const std::vector< measure<T> > &measures ) {
+        const measure<T> *q = 0;
         double enctime = 9999999;
 
-        auto results = measures< true, false, false >( original, use_encodings );
-        for( auto &r : results ) {
-            if( r.pass && r.enctime < enctime ) {
+        for( auto &r : measures ) {
+            if( r.pass && r.enctime < enctime && r.q != NONE ) {
                 enctime = r.enctime;
-                q = r.q;
+                q = &r;
             }
         }
 
-        return q;
+        return q ? *q : measure<T>();
     }
 
     template< class T >
-    unsigned find_fastest_decompressor( const T& original, const std::vector<unsigned> &use_encodings = encodings() ) {
-        unsigned q = bundle::NONE;
+    measure<T> find_fastest_decompressor( const std::vector< measure<T> > &measures ) {
+        const measure<T> *q = 0;
         double dectime = 9999999;
 
-        auto results = measures< false, true, false >( original, encodings );
-        for( auto &r : results ) {
-            if( r.pass && r.dectime < dectime ) {
+        for( auto &r : measures ) {
+            if( r.pass && r.dectime < dectime && r.q != NONE ) {
                 dectime = r.dectime;
-                q = r.q;
+                q = &r;
             }
         }
 
-        return q;
+        return q ? *q : measure<T>();
     }
 
 #endif

@@ -35,6 +35,7 @@
 
 #include "bundle.hpp"
 
+// easylzma interface
 namespace {
     /* callbacks for streamed input and output */
 
@@ -42,48 +43,56 @@ namespace {
         size_t pos;
         const size_t size;
         uint8_t *const data;
+
+        wrbuf( uint8_t *const data_, size_t size_ ) : pos(0), size(size_), data(data_)
+        {}
+
+        size_t writebuf( const void *buf, size_t len ) {
+            if( pos + len > size ) {
+                len = size - pos;
+            }
+            memcpy( &data[ pos ], buf, len );
+            pos += len;
+            return len;
+        }
     };
 
     struct rdbuf {
         size_t pos;
         const size_t size;
         const uint8_t *const data;
+
+        rdbuf( const uint8_t *const data_, size_t size_ ) : pos(0), size(size_), data(data_)
+        {}
+
+        size_t readbuf( void *buf, size_t len ) {
+            if( pos + len > size ) {
+                len = size - pos;
+            }
+            memcpy( buf, &data[ pos ], len );
+            pos += len;
+            return len;
+        }
     };
 
     size_t elzma_write_callback( void *ctx, const void *buf, size_t size ) {
         wrbuf * f = (wrbuf *) ctx;
         assert( f );
-
-        if( f->pos + size > f->size ) {
-            size = f->size - f->pos;
-        }
-
-        memcpy( &f->data[ f->pos ], buf, size );
-        f->pos += size;
-
-        return size;
+        return f->writebuf( buf, size );
     }
 
     int elzma_read_callback( void *ctx, void *buf, size_t *size ) {
         rdbuf * f = (rdbuf *) ctx;
         assert( f );
-
-        if( f->pos + *size > f->size ) {
-            *size = f->size - f->pos;
-        }
-
-        memcpy( buf, &f->data[ f->pos ], *size );
-        f->pos += *size;
-
-        return 0;
+        return *size = f->readbuf( buf, *size ), 0;
     }
 
     template<bool is_lzip>
     size_t lzma_decompress( const uint8_t * const data, const size_t size,
                           uint8_t * const new_data, size_t * const out_sizep )
     {
-        rdbuf rd = { 0, size, data };
-        wrbuf wr = { 0, *out_sizep, new_data };
+        rdbuf rd( data, size );
+        wrbuf wr( new_data, *out_sizep );
 
         elzma_file_format format = is_lzip ? ELZMA_lzip : ELZMA_lzma;
         elzma_decompress_handle hand = elzma_decompress_alloc();
@@ -133,8 +142,8 @@ namespace {
         int rv;
         int pCtx = 0;
 
-        rdbuf rd = { 0, size, data };
-        wrbuf wr = { 0, *out_sizep, new_data };
+        rdbuf rd( data, size );
+        wrbuf wr( new_data, *out_sizep );
 
         rv = elzma_compress_run(hand, elzma_read_callback, (void *) &rd,
                                 elzma_write_callback, (void *) &wr,
@@ -151,8 +160,69 @@ namespace {
         elzma_compress_free(&hand);
         return wr.pos;
     }
+}
 
+// zpaq interface
+namespace
+{
+    class In: public libzpaq::Reader, public rdbuf {
+        public:
+        In( const uint8_t *const data_, size_t size_ ) : rdbuf( data_, size_ )
+        {}
+        int get() {
+            if( pos >= size ) {
+                return -1;
+            }
+            return data[pos++];
+        }
+        int read(char* buf, int n) {
+            return this->readbuf( buf, n );
+        }
+    };
 
+    class Out: public libzpaq::Writer, public wrbuf {
+        public:
+        Out( uint8_t *const data_, size_t size_ ) : wrbuf( data_, size_ )
+        {}
+        void put(int c) {
+            if( pos < size ) {
+                data[pos++] = (unsigned char)(c);
+            }
+        }
+        int write(char* buf, int n) {
+            return this->writebuf( buf, n );
+        }
+    };
+
+    size_t zpaq_compress( const uint8_t * const data, const size_t size,
+                        uint8_t * const new_data, size_t * const out_sizep )
+    {
+        In rd( data, size );
+        Out wr( new_data, *out_sizep );
+
+        libzpaq::compress(&rd, &wr, 3);  // level [1..3]
+        *out_sizep = wr.pos;
+
+        return wr.pos;
+    }
+
+    size_t zpaq_decompress( const uint8_t * const data, const size_t size,
+                          uint8_t * const new_data, size_t * const out_sizep )
+    {
+        In rd( data, size );
+        Out wr( new_data, *out_sizep );
+
+        libzpaq::decompress( &rd, &wr );
+
+        return 1;
+    }
+}
+namespace libzpaq {
+    // Implement error handler
+    void error(const char* msg) {
+        fprintf( stderr, "<bundle/bunle.cpp> says: ZPAQ fatal error! %s\n", msg );
+        exit(1);
+    }
 }
 
 
@@ -198,6 +268,7 @@ namespace bundle {
             break; case SHOCO: return "SHOCO";
             break; case LZIP: return "LZIP";
             break; case LZMASDK: return "LZMA";
+            break; case ZPAQ: return "ZPAQ";
             /* for archival reasons: */
             // break; case LZHAM: return "LZHAM";
         }
@@ -215,6 +286,7 @@ namespace bundle {
             break; case SHOCO: return "shoco";
             break; case LZIP: return "lz";
             break; case LZMASDK: return "lzma";
+            break; case ZPAQ: return "zpaq";
             /* for archival reasons: */
             // break; case LZHAM: return "lzham";
         }
@@ -247,10 +319,11 @@ namespace bundle {
             switch( q ) {
                 break; default: ok = false;
                 break; case LZ4: outlen = LZ4_compress( (const char *)in, (char *)out, inlen );
-                break; case MINIZ: outlen = tdefl_compress_mem_to_mem( out, outlen, in, inlen, TDEFL_DEFAULT_MAX_PROBES ); //TDEFL_MAX_PROBES_MASK ); //
+                break; case MINIZ: outlen = tdefl_compress_mem_to_mem( out, outlen, in, inlen, TDEFL_MAX_PROBES_MASK ); // TDEFL_DEFAULT_MAX_PROBES );
                 break; case SHOCO: outlen = shoco_compress( (const char *)in, inlen, (char *)out, outlen );
                 break; case LZMASDK: outlen = lzma_compress<0>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen );
                 break; case LZIP: outlen = lzma_compress<1>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen );
+                break; case ZPAQ: outlen = zpaq_compress( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen );
                 /* for archival reasons: */
                 // break; case LZHAM: { lzham_z_ulong l; lzham_z_compress( (unsigned char *)out, &l, (const unsigned char *)in, inlen ); outlen = l; }
             }
@@ -273,6 +346,7 @@ namespace bundle {
                 break; case SHOCO: bytes_read = inlen; shoco_decompress( (const char *)in, inlen, (char *)out, outlen );
                 break; case LZMASDK: bytes_read = 0; if( lzma_decompress<0>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen ) ) bytes_read = inlen;
                 break; case LZIP: bytes_read = 0; if( lzma_decompress<1>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen ) ) bytes_read = inlen;
+                break; case ZPAQ: bytes_read = 0; if( zpaq_decompress( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen ) ) bytes_read = inlen;
                 /* for archival reasons: */
                 // break; case LZHAM: bytes_read = inlen; { lzham_z_ulong l = outlen; lzham_z_uncompress( (unsigned char *)out, &l, (const unsigned char *)in, inlen ); }
             }
@@ -287,17 +361,9 @@ namespace bundle {
 namespace bundle
 {
     // public API
-    /*
-    bool is_packed( const std::string &self ) {
-        return self.size() > 0 && '\0' == self[ 0 ];
-    }
-    bool is_unpacked( const std::string &self ) {
-        return !is_packed( self );
-    }
-    */
 
     unsigned type_of( const std::string &self ) {
-        return is_packed( self ) ? self[ 1 ] : NONE;
+        return is_packed( self ) ? self[ 1 ] & 0x0F : NONE;
     }
     std::string name_of( const std::string &self ) {
         return bundle::name_of( type_of(self) );
@@ -325,45 +391,6 @@ namespace bundle
         } while( size_t(*i++) & 0x80 );
         return out;
     }
-
-    /*
-    std::string pack( unsigned q, const std::string &input ) {
-        if( is_packed( input ) )
-            return input;
-
-        if( !input.size() )
-            return input;
-
-        std::string output( bound( q, input.size() ), '\0' );
-
-        // compress
-        size_t len = output.size();
-        if( !pack( q, &input[0], input.size(), &output[0], len ) )
-            return input;
-        output.resize( len );
-
-        // encapsulate
-        return std::string() + char(0) + char(q & 0xff) + vlebit(input.size()) + vlebit(output.size()) + output;
-    }
-
-    std::string unpack( const std::string &self ) {
-        if( is_packed( self ) ) {
-            // decapsulate
-            unsigned Q = self[1];
-            const char *ptr = &self[2];
-            size_t size1 = vlebit(ptr);
-            size_t size2 = vlebit(ptr);
-
-            std::string output( size1, '\0' );
-
-            // decompress
-            size_t len = output.size();
-            if( unpack( Q, ptr, size2, &output[0], len ) )
-                return output;
-        }
-
-        return self;
-    } */
 }
 
 namespace bundle
@@ -489,7 +516,7 @@ namespace bundle
                         break; case DEFAULT: default: quality = MZ_DEFAULT_LEVEL;
                         break; case UNCOMPRESSED: quality = MZ_NO_COMPRESSION;
                         break; case FAST: case ASCII: quality = MZ_BEST_SPEED;
-                        break; case EXTRA: quality = MZ_BEST_COMPRESSION;
+                        break; case EXTRA: case UBER: quality = MZ_BEST_COMPRESSION;
                     }
 
 					std::string pathfile = filename->second;

@@ -41,8 +41,8 @@ elzma_compress_alloc()
     hand->props.pb = 2;
     hand->props.level = 9; // default: 5, max: 9
     hand->props.algo = 1;
-    hand->props.fb = 32; // default: 32, max: 273
-    hand->props.dictSize = 1 << 22; // default: 1<<24 16MiB
+    hand->props.fb = 273; // default: 32, max: 273
+    hand->props.dictSize = 1 << 24; // default: 1<<24 16MiB
     hand->props.btMode = 1;
     hand->props.numHashBytes = 4;
     hand->props.mc = 32;

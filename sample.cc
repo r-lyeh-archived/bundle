@@ -70,15 +70,19 @@ int main( int argc, char **argv )
             std::cout << in.str() << std::endl;
         }
 
-        std::cout << "compressing " << original.size() << " bytes..." << std::endl;
+        std::cout << "fastest decompressor: " << name_of( find_fastest_decompressor(data).zipped ) << std::endl;
+        std::cout << "fastest compressor: " << name_of( find_fastest_compressor(data).zipped ) << std::endl;
+        std::cout << "smallest compressor: " << name_of( find_smallest_compressor(data).zipped ) << std::endl;
 
         bundle::pak pak;
 
-        for( auto &encoding : encodings() ) {
-            pak.push_back( pakfile() );
-            pak.back()["filename"] = std::string() + name_of(encoding);
-            pak.back()["ext"] = std::string() + ext_of(encoding);
-            pak.back()["content"] = pack( encoding, original );
+        for( auto &result : data ) {
+            if( result.pass ) {
+                pak.push_back( pakfile() );
+                pak.back()["filename"] = std::string() + name_of(result.q);
+                pak.back()["ext"] = std::string() + ext_of(result.q);
+                pak.back()["content"] = result.zipped;
+            }
         }
 
         std::cout << "toc:\n" << pak.toc() << std::endl;

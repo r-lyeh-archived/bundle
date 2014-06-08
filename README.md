@@ -1,7 +1,7 @@
 bundle
 ======
 
-- Bundle is a lightweight C++ compression library that provides interface for ZIP, LZMA, LZIP, LZ4 and SHOCO algorithms.
+- Bundle is a lightweight C++ compression library that provides interface for ZIP, LZMA, LZIP, ZPAQ, LZ4 and SHOCO algorithms.
 - Bundle is easy to integrate, comes in an amalgamated distribution.
 - Bundle is tiny. All dependencies included. Self-contained.
 - Bundle is cross-platform.
@@ -14,7 +14,7 @@ int main() {
     std::string original( "There's a lady who's sure all that glitters is gold" );
     for (int i = 0; i < 20; ++i) original += original;
 
-    for( auto &encoding : { LZ4, SHOCO, MINIZ, LZIP, LZMA, NONE } ) {
+    for( auto &encoding : { LZ4, SHOCO, MINIZ, LZIP, LZMA, ZPAQ, NONE } ) {
         std::string encname = bundle::name(encoding);
         std::string zipped = bundle::pack(original, encoding);
         std::string unzipped = bundle::unpack(compressed);
@@ -28,20 +28,21 @@ int main() {
 
 ### possible output
 ```
-LZ4: 53477376 to 209793 bytes
-SHOCO: 53477376 to 38797329 bytes
-MINIZ: 53477376 to 155658 bytes
+LZ4: 53477376 to 209785 bytes
+SHOCO: 53477376 to 38797322 bytes
+MINIZ: 53477376 to 155650 bytes
 LZIP: 53477376 to 7695 bytes
 LZMA: 53477376 to 7690 bytes
+ZPAQ: 53477376 to 1347 bytes
 NONE: 53477376 to 53477376 bytes
 All ok.
 ```
 
 ### on picking up compressors
-- sorted by compression time: lz4 < miniz < lzma2
-- sorted by decompression time: lz4 < miniz < lzma2
-- sorted by memory overhead: lz4 < miniz < lzma2
-- sorted by disk space: lzma2 < miniz < lz4
+- sorted by compression time: lz4 < miniz < lzma << zpaq
+- sorted by decompression time: lz4 < miniz < lzma << zpaq
+- sorted by memory overhead: lz4 < miniz < lzma < zpaq
+- sorted by disk space: zpaq < lzma < miniz < lz4
 - and maybe use SHOCO for plain text ascii IDs (SHOCO is an entropy text-compressor)
 
 ### public api (@todocument)
@@ -77,6 +78,7 @@ All ok.
 ### licenses
 - [bundle](https://github.com/r-lyeh/bundle), MIT license.
 - [easylzma](https://github.com/lloyd/easylzma) by Igor Pavlov and Lloyd Hilaiel, public domain.
+- [libzpaq](https://github.com/zpaq/zpaq) by Matt Mahoney, public domain.
 - [LZ4](https://code.google.com/p/lz4/) by Yann Collet, BSD license.
 - [miniz](https://code.google.com/p/miniz/) by Rich Geldreich, public domain.
 - [SHOCO](https://github.com/Ed-von-Schleck/shoco) by Christian Schramm, MIT license.
