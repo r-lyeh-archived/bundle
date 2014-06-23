@@ -54,6 +54,7 @@ int main( int argc, char **argv )
         // 50 mb dataset
         std::string original( "There's a lady who's sure all that glitters is gold" );
         for (int i = 0; i < 20; ++i) original += original;
+        original += "!";
 
         if( argc > 1 ) {
             std::ifstream ifs( argv[1], std::ios::binary );
@@ -70,9 +71,9 @@ int main( int argc, char **argv )
             std::cout << in.str() << std::endl;
         }
 
-        std::cout << "fastest decompressor: " << name_of( find_fastest_decompressor(data).zipped ) << std::endl;
-        std::cout << "fastest compressor: " << name_of( find_fastest_compressor(data).zipped ) << std::endl;
-        std::cout << "smallest compressor: " << name_of( find_smallest_compressor(data).zipped ) << std::endl;
+        std::cout << "fastest decompressor: " << name_of( find_fastest_decompressor(data) ) << std::endl;
+        std::cout << "fastest compressor: " << name_of( find_fastest_compressor(data) ) << std::endl;
+        std::cout << "smallest compressor: " << name_of( find_smallest_compressor(data) ) << std::endl;
 
         bundle::pak pak;
 
@@ -81,7 +82,7 @@ int main( int argc, char **argv )
                 pak.push_back( pakfile() );
                 pak.back()["filename"] = std::string() + name_of(result.q);
                 pak.back()["ext"] = std::string() + ext_of(result.q);
-                pak.back()["content"] = result.zipped;
+                pak.back()["content"] = result.packed;
             }
         }
 

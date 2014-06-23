@@ -34,6 +34,31 @@ elzma_compress_alloc()
     elzma_compress_handle hand = (elzma_compress_handle)malloc(sizeof(struct _elzma_compress_handle));
     memset((void *) hand, 0, sizeof(struct _elzma_compress_handle));
 
+/*  info
+
+  -d{N}:  set dictionary - [0,28], default: 23 (2^23 = 8MB)
+
+  -fb{N}: set number of fast bytes - [5, 255], default: 128
+          Usually big number gives a little bit better compression ratio
+          and slower compression process.
+
+  -lc{N}: set number of literal context bits - [0, 8], default: 3
+          Sometimes lc=4 gives gain for big files.
+
+  -lp{N}: set number of literal pos bits - [0, 4], default: 0
+          lp switch is intended for periodical data when period is
+          equal 2^value (where lp=value). For example, for 32-bit (4 bytes)
+          periodical data you can use lp=2. Often it's better to set lc=0,
+          if you change lp switch.
+
+  -pb{N}: set number of pos bits - [0, 4], default: 2
+          pb switch is intended for periodical data
+          when period is equal 2^value (where lp=value).
+
+  -eos:   write End Of Stream marker
+
+*/
+
     /* "reasonable" defaults for props */
     LzmaEncProps_Init(&(hand->props));
     hand->props.lc = 3;
@@ -41,8 +66,8 @@ elzma_compress_alloc()
     hand->props.pb = 2;
     hand->props.level = 9; // default: 5, max: 9
     hand->props.algo = 1;
-    hand->props.fb = 273; // default: 32, max: 273
-    hand->props.dictSize = 1 << 24; // default: 1<<24 16MiB
+    hand->props.fb = 32; // default: 32, max: 273
+    hand->props.dictSize = 1 << 20; // default: 1<<24 16MiB
     hand->props.btMode = 1;
     hand->props.numHashBytes = 4;
     hand->props.mc = 32;

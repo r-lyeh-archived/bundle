@@ -1,24 +1,88 @@
 /** this is an amalgamated file. do not edit.
  */
 
+#if 0
+// lzham
+#define LZHAM_NO_ZLIB_COMPATIBLE_NAMES
+#if defined(_WIN32) && !defined(WIN32)
+#define WIN32
+#endif
+#include "deps/lzham/src/lzham_core.h"
+#include "deps/lzham/src/lzham_lzbase.cpp"
+#include "deps/lzham/src/lzham_lzcomp.cpp"
+#include "deps/lzham/src/lzham_lzcomp_internal.cpp"
+#include "deps/lzham/src/lzham_lzcomp_state.cpp"
+#include "deps/lzham/src/lzham_match_accel.cpp"
+#include "deps/lzham/src/lzham_pthreads_threading.cpp"
+#include "deps/lzham/src/lzham_win32_threading.cpp"
+#include "deps/lzham/src/lzham_assert.cpp"
+#include "deps/lzham/src/lzham_checksum.cpp"
+#include "deps/lzham/src/lzham_huffman_codes.cpp"
+#include "deps/lzham/src/lzham_lzdecomp.cpp"
+#include "deps/lzham/src/lzham_lzdecompbase.cpp"
+#include "deps/lzham/src/lzham_platform.cpp"
+#define sym_freq sym_freq2
+#include "deps/lzham/src/lzham_polar_codes.cpp"
+#undef sym_freq
+#include "deps/lzham/src/lzham_prefix_coding.cpp"
+#include "deps/lzham/src/lzham_symbol_codec.cpp"
+#include "deps/lzham/src/lzham_timer.cpp"
+#include "deps/lzham/src/lzham_vector.cpp"
+#include "deps/lzham/lzhamlib/lzham_lib.cpp"
+#include "deps/lzham/src/lzham_mem.cpp"
+#endif
+
 // headers
 #include "bundle.hpp"
+#if 0
+#include "deps/lzp1/lzp1.hpp"
+#endif
 #include "deps/lz4/lz4.h"
+#include "deps/lz4/lz4hc.h"
 #include "deps/shoco/shoco.h"
 #include "deps/easylzma/src/easylzma/compress.h"
 #include "deps/easylzma/src/easylzma/decompress.h"
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include "deps/zpaq/libzpaq.h"
 
+#if 1
 // miniz
 #define MINIZ_NO_ZLIB_COMPATIBLE_NAMES 1
 //#define MINIZ_USE_UNALIGNED_LOADS_AND_STORES 1
 //#define MINIZ_HAS_64BIT_REGISTERS 1
 #include "deps/miniz/miniz.c"
-// lz4 defines 'inline' and 'restrict' which is later required by shoco
+#endif
+
+#if 1
+// lz4, which defines 'inline' and 'restrict' which is later required by shoco
 #include "deps/lz4/lz4.c"
+#undef ALLOCATOR
+#define U16_S U16_S2
+#define U32_S U32_S2
+#define U64_S U64_S2
+#undef AARCH
+#undef HASHTABLESIZE
+#undef MAX_DISTANCE
+#undef ML_MASK
+#define limitedOutput_directive limitedOutput_directive2
+#undef STEPSIZE
+#undef LZ4_COPYSTEP
+#undef LZ4_WILDCOPY
+#define LZ4_NbCommonBytes LZ4_NbCommonBytes2
+#include "deps/lz4/lz4hc.c"
+#undef KB
+#undef MB
+#undef MAX_DISTANCE
+#endif
+
+#if 1
 // shoco
 #include "deps/shoco/shoco.c"
+#endif
 
+#if 1
 // easylzma
 #include "deps/easylzma/src/common_internal.c"
 #include "deps/easylzma/src/compress.c"
@@ -43,7 +107,9 @@
 #undef kNumFullDistances
 #undef kTopValue
 #include "deps/easylzma/src/pavlov/Bcj2.c"
+#endif
 
+#if 1
 // zpaq
 #if defined __X86__ || defined __i386__ || defined i386 || defined _M_IX86 || defined __386__ || defined __x86_64__ || defined _M_X64
 #   define BUNDLE_CPU_X86 1
@@ -62,9 +128,92 @@
 //#include "deps/zpaq/divsufsort.h"
 //#include "deps/zpaq/divsufsort.c"
 #include "deps/zpaq/libzpaq.cpp"
+#endif
+
+#if 0
+// lzfx
+#include "deps/lzfx/lzfx.h"
+#include "deps/lzfx/lzfx.c"
+#endif
+
+#if 0
+// lzp1
+#include "deps/lzp1/lzp1.cpp"
+#endif
+
+#if 0
+// fse
+#include "deps/fse/fse.h"
+#include "deps/fse/fse.c"
+#endif
+
+#if 0
+// blosc
+#include "deps/c-blosc/blosc/blosc.h"
+#include "deps/c-blosc/blosc/blosclz.h"
+#include "deps/c-blosc/blosc/shuffle.h"
+#include "deps/c-blosc/blosc/blosc.c"
+#include "deps/c-blosc/blosc/blosclz.c"
+#include "deps/c-blosc/blosc/shuffle.c"
+struct init_blosc {
+    init_blosc() {
+        blosc_init();
+        blosc_set_nthreads(1);
+    }
+    ~init_blosc() {
+        blosc_destroy();
+    }
+} _;
+#endif
+
+#if 0
+// bsc
+#pragma comment(lib, "Advapi32.lib")
+#include "deps/libbsc/libbsc/libbsc.h"
+#include "deps/libbsc/libbsc/libbsc/libbsc.cpp"
+#include "deps/libbsc/libbsc/lzp/lzp.cpp"
+#include "deps/libbsc/libbsc/bwt/bwt.cpp"
+#include "deps/libbsc/libbsc/bwt/divsufsort/divsufsort.c"
+#include "deps/libbsc/libbsc/adler32/adler32.cpp"
+#include "deps/libbsc/libbsc/platform/platform.cpp"
+#include "deps/libbsc/libbsc/st/st.cpp"
+#include "deps/libbsc/libbsc/coder/qlfc/qlfc.cpp"
+#include "deps/libbsc/libbsc/coder/qlfc/qlfc_model.cpp"
+#include "deps/libbsc/libbsc/coder/coder.cpp"
+//#include "deps/libbsc/libbsc/filters/detectors.cpp"
+//#include "deps/libbsc/libbsc/filters/preprocessing.cpp"
+struct init_bsc {
+    init_bsc() {
+        bsc_init(0);
+    }
+} __;
+#endif
+
+#if 0
+// bzip2
+#define BZ_NO_STDIO
+extern "C" void bz_internal_error(int errcode) {
+    exit(-1);
+}
+#undef GET_BIT
+#undef True
+#undef False
+#define Bool Bool2
+#define UInt64 UInt642
+#include "deps/bzip2/bzlib.h"
+#include "deps/bzip2/crctable.c"
+#include "deps/bzip2/compress_.c"
+#include "deps/bzip2/decompress_.c"
+#include "deps/bzip2/blocksort.c"
+#undef SET_BINARY_MODE
+#include "deps/bzip2/bzlib.c"
+#include "deps/bzip2/randtable.c"
+#include "deps/bzip2/huffman.c"
+#endif
 
 // bundle
 #ifdef swap
 #undef swap
 #endif
 #include "bundle.cpp"
+

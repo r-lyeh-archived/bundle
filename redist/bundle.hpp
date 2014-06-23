@@ -1,28 +1,3 @@
-/*
- * Simple compression interface.
- * Copyright (c) 2013, 2014, Mario 'rlyeh' Rodriguez
-
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
-
- * - rlyeh ~~ listening to Boris / Missing Pieces
- */
-
 #ifndef BUNDLE_HPP
 #define BUNDLE_HPP
 
@@ -40,17 +15,22 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <limits>
 
 #if BUNDLE_CXX11
 #include <chrono>
 #endif
 
+#ifdef BUNDLE_USE_OMP_TIMER
+#include <omp.h>
+#endif
+
 namespace bundle
 {
     // per lib
-    enum { UNDEFINED, SHOCO, LZ4, MINIZ, LZIP, LZMASDK, ZPAQ };
+    enum { UNDEFINED, SHOCO, LZ4, MINIZ, LZIP, LZMASDK, ZPAQ, LZ4HC}; /* archival: BZIP2, LZFX, LZHAM, LZP1, FSE, BLOSC */
     // per family
-    enum { NONE = UNDEFINED, ASCII = SHOCO, LZ77 = LZ4, DEFLATE = MINIZ, LZMA = LZMASDK, CM = ZPAQ };
+    enum { NONE = UNDEFINED, ASCII = SHOCO, LZ77 = LZ4, DEFLATE = MINIZ, LZMA = LZMASDK, CM = ZPAQ }; /* archival: BWT = BZIP2 */
     // per context
     enum { UNCOMPRESSED = NONE, ENTROPY = ASCII, FAST = LZ77, DEFAULT = DEFLATE, EXTRA = LZMA, UBER = CM };
 
@@ -64,8 +44,12 @@ namespace bundle
     const char *const version_of( unsigned q );
     const char *const ext_of( unsigned q );
     size_t bound( unsigned q, size_t len );
+    size_t unc_payload( unsigned q );
     bool pack( unsigned q, const void *in, size_t len, void *out, size_t &zlen );
     bool unpack( unsigned q, const void *in, size_t len, void *out, size_t &zlen );
+
+    std::string vlebit( size_t i );
+    size_t vlebit( const char *&i );
 
     // high level API
 
@@ -79,37 +63,6 @@ namespace bundle
 
     // high level API, templates
 
-    template < class T1, class T2 >
-    static inline bool pack( unsigned q, T2 &buffer_out, const T1 &buffer_in ) {
-        // sanity checks
-        assert( sizeof(buffer_in.at(0)) == 1 && "size of input elements != 1" );
-        assert( sizeof(buffer_out.at(0)) == 1 && "size of output elements != 1" );
-
-        // resize to worst case
-        size_t zlen = bound(q, buffer_in.size());
-        buffer_out.resize( zlen );
-
-        // compress
-        bool result = pack( q, &buffer_in.at(0), buffer_in.size(), &buffer_out.at(0), zlen );
-
-        // resize properly
-        return result ? ( buffer_out.resize( zlen ), true ) : ( buffer_out = T2(), false );
-    }
-
-    template < class T1, class T2 >
-    static inline bool unpack( unsigned q, T2 &buffer_out, const T1 &buffer_in ) {
-        // sanity checks
-        assert( sizeof(buffer_in.at(0)) == 1 && "size of input elements != 1" );
-        assert( sizeof(buffer_out.at(0)) == 1 && "size of output elements != 1" );
-
-        // note: buffer_out must be resized properly before calling this function!!
-        size_t zlen = buffer_out.size();
-        return unpack( q, &buffer_in.at(0), buffer_in.size(), &buffer_out.at(0), zlen );
-    }
-
-    std::string vlebit( size_t i );
-    size_t vlebit( const char *&i );
-
     template<typename container>
     static inline bool is_packed( const container &input ) {
         return input.size() >= 2 && 0 == input[0] && input[1] >= 0x70 && input[1] <= 0x7F;
@@ -120,61 +73,99 @@ namespace bundle
         return !is_packed(input);
     }
 
-    template<typename container>
-    static inline container pack( unsigned q, const container &input ) {
-        if( is_packed( input ) )
-            return input;
-
+    template < class T1, class T2 >
+    static inline bool unpack( T2 &output, const T1 &input ) {
         // sanity checks
         assert( sizeof(input.at(0)) == 1 && "size of input elements != 1" );
+        assert( sizeof(output.at(0)) == 1 && "size of output elements != 1" );
 
-        container output( bound( q, input.size() ), '\0' );
+        if( is_packed( input ) ) {
+            // decapsulate
+            unsigned Q = input[1] & 0x0F;
+            const char *ptr = (const char *)&input[2];
+            size_t size1 = vlebit(ptr);
+            size_t size2 = vlebit(ptr);
 
-        // compress
-        size_t len = output.size();
-        if( !pack( q, &input[0], input.size(), &output[0], len ) )
-            return input;
-        output.resize( len );
+            // decompress
+            size1 += unc_payload(Q);
+            output.resize( size1 );
 
-        // encapsulate
-        output = std::string() + char(0) + char(0x70 | (q & 0x0F)) + vlebit(input.size()) + vlebit(output.size()) + output;
+            // note: output must be resized properly before calling this function!!
+            if( unpack( Q, ptr, size2, &output[0], size1 ) ) {
+                output.resize( size1 );
+                return true;
+            }
+        }
+
+        output = input;
+        return false;
+    }
+
+    template < class T1 >
+    static inline T1 unpack( const T1 &input ) {
+        T1 output;
+        unpack( output, input );
         return output;
     }
 
-    template<typename container>
-    static inline container unpack( const container &input ) {
-        if( is_unpacked( input ) )
-            return input;
-
+    template < class T1, class T2 >
+    static inline bool pack( unsigned q, T2 &output, const T1 &input ) {
         // sanity checks
         assert( sizeof(input.at(0)) == 1 && "size of input elements != 1" );
+        assert( sizeof(output.at(0)) == 1 && "size of output elements != 1" );
 
-        // decapsulate
-        unsigned Q = input[1] & 0x0F;
-        const char *ptr = (const char *)&input[2];
-        size_t size1 = vlebit(ptr);
-        size_t size2 = vlebit(ptr);
+        if( is_unpacked( input ) ) {
+            // resize to worst case
+            size_t zlen = bound(q, input.size());
+            output.resize( zlen );
 
-        container output( size1, '\0' );
+            // compress
+            if( pack( q, &input.at(0), input.size(), &output.at(0), zlen ) ) {
+                // resize properly
+                output.resize( zlen );
 
-        // decompress
-        size_t len = output.size();
-        if( !unpack( Q, ptr, size2, &output[0], len ) )
-            return input;
+                // encapsulate
+                std::string header = std::string() + char(0) + char(0x70 | (q & 0x0F)) + vlebit(input.size()) + vlebit(output.size());
+                unsigned header_len = header.size();
+                output.resize( zlen + header_len );
+                memmove( &output[header_len], &output[0], zlen );
+                memcpy( &output[0], &header[0], header_len );
+                return true;
+            }
+        }
 
+        output = input;
+        return false;
+    }
+
+    template<typename container>
+    static inline container pack( unsigned q, const container &input ) {
+        container output;
+        pack( q, output, input );
         return output;
     }
 
     static inline std::vector<unsigned> encodings() {
         static std::vector<unsigned> all;
         if( all.empty() ) {
+            all.push_back( NONE );
             all.push_back( LZ4 );
             all.push_back( SHOCO );
             all.push_back( MINIZ );
             all.push_back( LZIP );
             all.push_back( LZMASDK );
             all.push_back( ZPAQ );
-            all.push_back( NONE );
+            all.push_back( LZ4HC );
+#if 0
+            // for archival purposes
+            all.push_back( BZIP2 );
+            all.push_back( LZFX );
+            all.push_back( BSC );
+            all.push_back( LZHAM );
+            all.push_back( LZP1 );
+            all.push_back( FSE );
+            all.push_back( BLOSC );
+#endif
         }
         return all;
     }
@@ -190,10 +181,10 @@ namespace bundle
         double dectime = 0;
         double memusage = 0;
         bool pass = 0;
-        T zipped, unzipped;
+        T packed, unpacked;
         std::string str() const {
             std::stringstream ss;
-            ss << ( pass ? "[ OK ] " : "[FAIL] ") << name_of(q) << ": ratio=" << ratio << "% enctime=" << enctime << "ms dectime=" << dectime << " ms";
+            ss << ( pass ? "[ OK ] " : "[FAIL] ") << name_of(q) << ": ratio=" << ratio << "% enctime=" << int(enctime) << "us dectime=" << int(dectime) << "us";
             return ss.str();
         }
     };
@@ -208,25 +199,41 @@ namespace bundle
             r.q = encoding;
             r.pass = true;
 
-            if( do_enc ) {
-                auto begin = std::chrono::high_resolution_clock::now();
-                r.zipped = pack( encoding, original );
-                auto end = std::chrono::high_resolution_clock::now();
-                r.enctime = std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count();
-                r.ratio = 100 - 100 * ( double( r.zipped.size() ) / original.size() );
-                r.pass = r.pass && (encoding != NONE ? is_packed(r.zipped) : 1);
+            if( r.pass && do_enc ) {
+#ifdef BUNDLE_USE_OMP_TIMER
+                auto start = omp_get_wtime();
+                r.packed = pack( encoding, original );
+                auto end = omp_get_wtime();
+                r.enctime = ( end - start ) * 1000000;
+#else
+                auto start = std::chrono::steady_clock::now();
+                r.packed = pack( encoding, original );
+                auto end = std::chrono::steady_clock::now();
+                r.enctime = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+#endif
+                r.ratio = 100 - 100 * ( double( r.packed.size() ) / original.size() );
+                if( encoding != NONE )
+                r.pass = r.pass && is_packed(r.packed);
             }
 
-            if( do_dec ) {
-                auto begin = std::chrono::high_resolution_clock::now();
-                r.unzipped = unpack( r.zipped );
-                auto end = std::chrono::high_resolution_clock::now();
-                r.dectime = std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count();
-                r.pass = r.pass && (is_unpacked(r.unzipped));
+            if( r.pass && do_dec ) {
+#ifdef BUNDLE_USE_OMP_TIMER
+                auto start = omp_get_wtime();
+                r.unpacked = unpack( r.packed );
+                auto end = omp_get_wtime();
+                r.dectime = ( end - start ) * 1000000;
+#else
+                auto start = std::chrono::steady_clock::now();
+                r.unpacked = unpack( r.packed );
+                auto end = std::chrono::steady_clock::now();
+                r.dectime = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+#endif
+                if( encoding != NONE )
+                r.pass = r.pass && (do_verify ? original == r.unpacked : r.pass);
             }
 
-            if( do_verify ) {
-                r.pass = r.pass && (original == r.unzipped);
+            if( !r.pass ) {
+                r.ratio = r.enctime = r.dectime = 0;
             }
         }
 
@@ -235,48 +242,42 @@ namespace bundle
 
     // find best choice for given data
     template< class T >
-    measure<T> find_smallest_compressor( const std::vector< measure<T> > &measures ) {
-        const measure<T> *q = 0;
-        double ratio = 0;
-
+    unsigned find_smallest_compressor( const std::vector< measure<T> > &measures ) {
+        unsigned q = NONE;
+        double ratio = -1;
         for( auto &r : measures ) {
             if( r.pass && r.ratio > ratio && r.ratio >= (100 - NO_COMPRESSION_TRESHOLD / 100.0) ) {
                 ratio = r.ratio;
-                q = &r;
+                q = type_of(r.packed);
             }
         }
-
-        return q ? *q : measure<T>();
+        return q;
     }
 
     template< class T >
-    measure<T> find_fastest_compressor( const std::vector< measure<T> > &measures ) {
-        const measure<T> *q = 0;
-        double enctime = 9999999;
-
+    unsigned find_fastest_compressor( const std::vector< measure<T> > &measures ) {
+        unsigned q = NONE;
+        double enctime = std::numeric_limits<double>::max();
         for( auto &r : measures ) {
             if( r.pass && r.enctime < enctime && r.q != NONE ) {
                 enctime = r.enctime;
-                q = &r;
+                q = type_of(r.packed);
             }
         }
-
-        return q ? *q : measure<T>();
+        return q;
     }
 
     template< class T >
-    measure<T> find_fastest_decompressor( const std::vector< measure<T> > &measures ) {
-        const measure<T> *q = 0;
-        double dectime = 9999999;
-
+    unsigned find_fastest_decompressor( const std::vector< measure<T> > &measures ) {
+        unsigned q = NONE;
+        double dectime = std::numeric_limits<double>::max();
         for( auto &r : measures ) {
             if( r.pass && r.dectime < dectime && r.q != NONE ) {
                 dectime = r.dectime;
-                q = &r;
+                q = type_of(r.packed);
             }
         }
-
-        return q ? *q : measure<T>();
+        return q;
     }
 
 #endif
@@ -386,3 +387,4 @@ namespace bundle
 }
 
 #endif
+

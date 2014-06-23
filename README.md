@@ -2,24 +2,37 @@ bundle
 ======
 
 - Bundle is a lightweight C++ compression library that provides interface for ZIP, LZMA, LZIP, ZPAQ, LZ4 and SHOCO algorithms.
+- Bundle is optimized for highest compression ratios on each compressor, wherever possible.
+- Bundle is optimized for fastest decompression times on each decompressor, wherever possible.
 - Bundle is easy to integrate, comes in an amalgamated distribution.
 - Bundle is tiny. All dependencies included. Self-contained.
 - Bundle is cross-platform.
 - Bundle is MIT licensed.
 
-### sample
+### licensing details
+- [bundle](https://github.com/r-lyeh/bundle), MIT license.
+- [easylzma](https://github.com/lloyd/easylzma) by Igor Pavlov and Lloyd Hilaiel, public domain.
+- [libzpaq](https://github.com/zpaq/zpaq) by Matt Mahoney, public domain.
+- [LZ4](https://code.google.com/p/lz4/) by Yann Collet, BSD license.
+- [miniz](https://code.google.com/p/miniz/) by Rich Geldreich, public domain.
+- [SHOCO](https://github.com/Ed-von-Schleck/shoco) by Christian Schramm, MIT license.
+
+### sample usage
 ```c++
+#include <cassert>
+#include "bundle.hpp"
+using namespace bundle;
+
 int main() {
     // 50 mb dataset
     std::string original( "There's a lady who's sure all that glitters is gold" );
     for (int i = 0; i < 20; ++i) original += original;
 
-    for( auto &encoding : { LZ4, SHOCO, MINIZ, LZIP, LZMA, ZPAQ, NONE } ) {
-        std::string encname = bundle::name(encoding);
-        std::string zipped = bundle::pack(original, encoding);
-        std::string unzipped = bundle::unpack(compressed);
-        std::cout << encname << ": " << original.size() << " to " << zipped.size() << " bytes" << std::endl;
-        assert( original == unzipped );
+    for( auto &encoding : { LZ4, LZ4HC, SHOCO, MINIZ, LZIP, LZMA, ZPAQ, NONE } ) {
+        std::string packed = pack(original, encoding);
+        std::string unpacked = unpack(compressed);
+        std::cout << name(encoding) << ": " << original.size() << " to " << packed.size() << " bytes" << std::endl;
+        assert( original == unpacked );
     }
 
     std::cout << "All ok." << std::endl;
@@ -29,6 +42,7 @@ int main() {
 ### possible output
 ```
 LZ4: 53477376 to 209785 bytes
+LZ4HC: 53477376 to 209785 bytes
 SHOCO: 53477376 to 38797322 bytes
 MINIZ: 53477376 to 155650 bytes
 LZIP: 53477376 to 7695 bytes
@@ -39,10 +53,10 @@ All ok.
 ```
 
 ### on picking up compressors
-- sorted by compression time: lz4 < miniz < lzma << zpaq
-- sorted by decompression time: lz4 < miniz < lzma << zpaq
-- sorted by memory overhead: lz4 < miniz < lzma < zpaq
-- sorted by disk space: zpaq < lzma < miniz < lz4
+- sorted by compression ratio `zpaq < lzma < lzip < miniz < lz4hc < lz4`
+- sorted by compression time `lz4 < lz4hc < miniz < lzma < lzip << zpaq`
+- sorted by decompression time `lz4hc < lz4 < miniz < lzma < lzip << zpaq`
+- sorted by memory overhead `lz4 < lz4hc < miniz < lzma < zpaq`
 - and maybe use SHOCO for plain text ascii IDs (SHOCO is an entropy text-compressor)
 
 ### public api (@todocument)
@@ -69,16 +83,18 @@ All ok.
 - also, pakfile
 - also, pak
 
-### evaluated libraries
-- [LZO](http://www.oberhumer.com/opensource/lzo/), [LibLZF](http://freshmeat.net/projects/liblzf), [FastLZ](http://fastlz.org/), replaced by [LZ4](https://code.google.com/p/lz4/)
-- [ZLIB](http://www.zlib.net/), replaced by [miniz](https://code.google.com/p/miniz/)
-- [LZHAM](https://code.google.com/p/lzham/), [lzlib](http://www.nongnu.org/lzip/lzlib.html), replaced by [easylzma](https://github.com/lloyd/easylzma)
-- [SMAZ](https://github.com/antirez/smaz), replaced by [SHOCO](https://github.com/Ed-von-Schleck/shoco)
-
-### licenses
-- [bundle](https://github.com/r-lyeh/bundle), MIT license.
-- [easylzma](https://github.com/lloyd/easylzma) by Igor Pavlov and Lloyd Hilaiel, public domain.
-- [libzpaq](https://github.com/zpaq/zpaq) by Matt Mahoney, public domain.
-- [LZ4](https://code.google.com/p/lz4/) by Yann Collet, BSD license.
-- [miniz](https://code.google.com/p/miniz/) by Rich Geldreich, public domain.
-- [SHOCO](https://github.com/Ed-von-Schleck/shoco) by Christian Schramm, MIT license.
+### some evaluated libraries
+- [BSC](https://github.com/IlyaGrebnov/libbsc)
+- [FastLZ](http://fastlz.org/)
+- [FLZP](http://cs.fit.edu/~mmahoney/compression/#flzp)
+- [LibLZF](http://freshmeat.net/projects/liblzf)
+- [LZFX](https://code.google.com/p/lzfx/)
+- [LZHAM](https://code.google.com/p/lzham/)
+- [LZJB](http://en.wikipedia.org/wiki/LZJB)
+- [LZLIB](http://www.nongnu.org/lzip/lzlib.html)
+- [LZO](http://www.oberhumer.com/opensource/lzo/)
+- [LZP](http://www.cbloom.com/src/index_lz.html)
+- [SMAZ](https://github.com/antirez/smaz)
+- [Snappy](https://code.google.com/p/snappy/)
+- [ZLIB](http://www.zlib.net/)
+- [bzip2](http://www.bzip2.org/)
