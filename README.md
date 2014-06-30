@@ -9,13 +9,30 @@ bundle
 - Bundle is cross-platform.
 - Bundle is MIT licensed.
 
-### licensing details
-- [bundle](https://github.com/r-lyeh/bundle), MIT license.
-- [easylzma](https://github.com/lloyd/easylzma) by Igor Pavlov and Lloyd Hilaiel, public domain.
-- [libzpaq](https://github.com/zpaq/zpaq) by Matt Mahoney, public domain.
-- [LZ4](https://code.google.com/p/lz4/) by Yann Collet, BSD license.
-- [miniz](https://code.google.com/p/miniz/) by Rich Geldreich, public domain.
-- [SHOCO](https://github.com/Ed-von-Schleck/shoco) by Christian Schramm, MIT license.
+### bundle stream format 
+
+```
+[b000000000111xxxx]  Header (12 bits). De/compression algorithm (4 bits)
+                     { NONE, SHOCO, LZ4, DEFLATE, LZIP, LZMASDK, ZPAQ, LZ4HC }.
+[vle_unpacked_size]  Unpacked size of the stream (N bytes). Data is stored in a variable
+                     length encoding value, where bytes are just shifted and added into a
+                     big accumulator until MSB is found.
+[vle_packed_size]    Packed size of the stream (N bytes). Data is stored in a variable
+                     length encoding value, where bytes are just shifted and added into a
+                     big accumulator until MSB is found.
+[bitstream]          Compressed bitstream (N bytes). As returned by compressor.
+                     If possible, header-less bitstreams are preferred.
+```
+
+### bundle archive format
+
+```
+- Files/datas are packed into streams by using any compression method (see above)
+- Streams are archived into a standard ZIP file:
+  - ZIP entry compression is (0) for packed streams and (1-9) for unpacked streams.
+  - ZIP entry comment is a serialized JSON of (file) meta-datas (@todo).
+- Note: you can mix streams of different algorithms into the very same ZIP archive.
+```
 
 ### sample usage
 ```c++
@@ -83,18 +100,13 @@ All ok.
 - also, pakfile
 - also, pak
 
-### some evaluated libraries
-- [BSC](https://github.com/IlyaGrebnov/libbsc)
-- [FastLZ](http://fastlz.org/)
-- [FLZP](http://cs.fit.edu/~mmahoney/compression/#flzp)
-- [LibLZF](http://freshmeat.net/projects/liblzf)
-- [LZFX](https://code.google.com/p/lzfx/)
-- [LZHAM](https://code.google.com/p/lzham/)
-- [LZJB](http://en.wikipedia.org/wiki/LZJB)
-- [LZLIB](http://www.nongnu.org/lzip/lzlib.html)
-- [LZO](http://www.oberhumer.com/opensource/lzo/)
-- [LZP](http://www.cbloom.com/src/index_lz.html)
-- [SMAZ](https://github.com/antirez/smaz)
-- [Snappy](https://code.google.com/p/snappy/)
-- [ZLIB](http://www.zlib.net/)
-- [bzip2](http://www.bzip2.org/)
+### licenses
+- [bundle](https://github.com/r-lyeh/bundle), MIT license.
+- [easylzma](https://github.com/lloyd/easylzma) by Igor Pavlov and Lloyd Hilaiel, public domain.
+- [libzpaq](https://github.com/zpaq/zpaq) by Matt Mahoney, public domain.
+- [LZ4](https://code.google.com/p/lz4/) by Yann Collet, BSD license.
+- [miniz](https://code.google.com/p/miniz/) by Rich Geldreich, public domain.
+- [SHOCO](https://github.com/Ed-von-Schleck/shoco) by Christian Schramm, MIT license.
+
+### evaluated alternatives
+[BSC](https://github.com/IlyaGrebnov/libbsc), [FastLZ](http://fastlz.org/), [FLZP](http://cs.fit.edu/~mmahoney/compression/#flzp), [LibLZF](http://freshmeat.net/projects/liblzf), [LZFX](https://code.google.com/p/lzfx/), [LZHAM](https://code.google.com/p/lzham/), [LZJB](http://en.wikipedia.org/wiki/LZJB), [LZLIB](http://www.nongnu.org/lzip/lzlib.html), [LZO](http://www.oberhumer.com/opensource/lzo/), [LZP](http://www.cbloom.com/src/index_lz.html), [SMAZ](https://github.com/antirez/smaz), [Snappy](https://code.google.com/p/snappy/), [ZLIB](http://www.zlib.net/), [bzip2](http://www.bzip2.org/)
