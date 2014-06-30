@@ -9,7 +9,7 @@ bundle
 - Bundle is cross-platform.
 - Bundle is MIT licensed.
 
-### bundle stream format 
+### bundle stream format
 
 ```
 [b000000000111xxxx]  Header (12 bits). De/compression algorithm (4 bits)
@@ -104,9 +104,9 @@ All ok.
 - [bundle](https://github.com/r-lyeh/bundle), MIT license.
 - [easylzma](https://github.com/lloyd/easylzma) by Igor Pavlov and Lloyd Hilaiel, public domain.
 - [libzpaq](https://github.com/zpaq/zpaq) by Matt Mahoney, public domain.
-- [LZ4](https://code.google.com/p/lz4/) by Yann Collet, BSD license.
+- [lz4](https://github.com/Cyan4973/lz4) by Yann Collet, BSD license.
 - [miniz](https://code.google.com/p/miniz/) by Rich Geldreich, public domain.
-- [SHOCO](https://github.com/Ed-von-Schleck/shoco) by Christian Schramm, MIT license.
+- [shoco](https://github.com/Ed-von-Schleck/shoco) by Christian Schramm, MIT license.
 
 ### evaluated alternatives
 [BSC](https://github.com/IlyaGrebnov/libbsc), [FastLZ](http://fastlz.org/), [FLZP](http://cs.fit.edu/~mmahoney/compression/#flzp), [LibLZF](http://freshmeat.net/projects/liblzf), [LZFX](https://code.google.com/p/lzfx/), [LZHAM](https://code.google.com/p/lzham/), [LZJB](http://en.wikipedia.org/wiki/LZJB), [LZLIB](http://www.nongnu.org/lzip/lzlib.html), [LZO](http://www.oberhumer.com/opensource/lzo/), [LZP](http://www.cbloom.com/src/index_lz.html), [SMAZ](https://github.com/antirez/smaz), [Snappy](https://code.google.com/p/snappy/), [ZLIB](http://www.zlib.net/), [bzip2](http://www.bzip2.org/)

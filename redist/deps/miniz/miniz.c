@@ -2946,11 +2946,27 @@ void *tdefl_write_image_to_png_file_in_memory(const void *pImage, int w, int h, 
 
 #define MZ_TOLOWER(c) ((((c) >= 'A') && ((c) <= 'Z')) ? ((c) - 'A' + 'a') : (c))
 
+#ifndef _0x06054b50
+#define _0x06054b50 0x06054b50
+#endif
+
+#ifndef _0x02014b50
+#define _0x02014b50 0x02014b50
+#endif
+
+#ifndef _0x04034b50
+#define _0x04034b50 0x04034b50
+#endif
+
+#ifndef _0x08074b50
+#define _0x08074b50 0x08074b50
+#endif
+
 // Various ZIP archive enums. To completely avoid cross platform compiler alignment and platform endian issues, miniz.c doesn't use structs for any of this stuff.
 enum
 {
   // ZIP archive identifiers and record sizes
-  MZ_ZIP_END_OF_CENTRAL_DIR_HEADER_SIG = 0x06054b50, MZ_ZIP_CENTRAL_DIR_HEADER_SIG = 0x02014b50, MZ_ZIP_LOCAL_DIR_HEADER_SIG = 0x04034b50,
+  MZ_ZIP_END_OF_CENTRAL_DIR_HEADER_SIG = _0x06054b50, MZ_ZIP_CENTRAL_DIR_HEADER_SIG = _0x02014b50, MZ_ZIP_LOCAL_DIR_HEADER_SIG = _0x04034b50,
   MZ_ZIP_LOCAL_DIR_HEADER_SIZE = 30, MZ_ZIP_CENTRAL_DIR_HEADER_SIZE = 46, MZ_ZIP_END_OF_CENTRAL_DIR_HEADER_SIZE = 22,
   // Central directory header record offsets
   MZ_ZIP_CDH_SIG_OFS = 0, MZ_ZIP_CDH_VERSION_MADE_BY_OFS = 4, MZ_ZIP_CDH_VERSION_NEEDED_OFS = 6, MZ_ZIP_CDH_BIT_FLAG_OFS = 8,
@@ -4665,7 +4681,7 @@ mz_bool mz_zip_writer_add_from_zip_reader(mz_zip_archive *pZip, mz_zip_archive *
       return MZ_FALSE;
     }
 
-    n = sizeof(mz_uint32) * ((MZ_READ_LE32(pBuf) == 0x08074b50) ? 4 : 3);
+    n = sizeof(mz_uint32) * ((MZ_READ_LE32(pBuf) == _0x08074b50) ? 4 : 3);
     if (pZip->m_pWrite(pZip->m_pIO_opaque, cur_dst_file_ofs, pBuf, n) != n)
     {
       pZip->m_pFree(pZip->m_pAlloc_opaque, pBuf);

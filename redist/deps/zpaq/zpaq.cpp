@@ -1,6 +1,6 @@
 // zpaq.cpp - Journaling incremental deduplicating archiver
 
-#define ZPAQ_VERSION "6.52"
+#define ZPAQ_VERSION "6.54"
 
 /*  Copyright (C) 2009-2014, Dell Inc. Written by Matt Mahoney.
 
@@ -208,7 +208,7 @@ different.
 
 If -all is specified, then all versions are kept unchanged. The archive
 is simply copied unless -key or -newkey is specified to change the
-password, or the input is a multi-part archive to be concatenated.
+password, or if the input is a multi-part archive to be concatenated.
 
 
 Options:
@@ -374,7 +374,7 @@ could be achieved using 13 random letters and digits or 4 random words.
 There is no authentication or protection from tampering. If an attacker
 knows or can guess any bits of the plaintext, then he can set those
 bits without knowing the password. You can test for tampering using the
-sha1 or sha256 command to see if the hash has changed. However, this
+zpaqd sha1 command to see if the hash has changed. However, this
 does not protect against attacks where the attacker can change the file
 after testing, such as when the attacker can inject packets on a
 network between the user and an encrypted archive on an NFS server.
@@ -390,7 +390,20 @@ will be overwritten with random bytes.
 
 Specify the encryption key for the output of purge. If password is
 omitted, then prompt twice. The default is to output without encryption,
-even if the input is encrypted.
+even if the input is encrypted. A new, random salt is used.
+
+If an encrypted archive is truncated before update (using zpaq add -until,
+or by deleting the last part of a multi-part archive), then the truncated
+part, if it contains known plaintext and is not deleted securely, can
+reveal the keystream and therefore the plaintext of the newly added data.
+This attack does not require knowing the password, nor does it reveal the
+password. You can protect against this attack,as follows:
+
+  zpaq purge archive -key ... -to new_arcive -newkey ... -all
+
+where -all tells the purge command to do a simple copy with decryption
+and encryption with a new salt and keystream. The old and new passwords
+may be the same.
 
   -quiet [N[k|m|g]]
 
@@ -488,7 +501,7 @@ N2 selects the preprocessing step as follows:
   3 = BWT.
   4..7 = 0..3 with E8E9 transform applied first.
 
-The E8E9 tranform scans the input block from back to front for
+The E8E9 transform scans the input block from back to front for
 5 byte sequences of the form (E8|E9 xx xx xx 00|FF) and adds
 the block offset of the sequence start (0..n-4) to the middle 3 bytes,
 interpreted LSB first. It improves the compression of x86 .exe and
@@ -690,7 +703,7 @@ Default is t8,24. Memory usage is 2^(N1+2) bytes.
 
 Specifies an SSE. An SSE, like an ICM, uses a context to adjust the
 prediction of the previous component, but does so using the direct
-context (via a 2-D lookup table of the quantized and intertolated
+context (via a 2-D lookup table of the quantized and interpolated
 prediction) rather than a linear adjustment based on the bit history.
 Thus, it has more parameters, making a smaller context more appropriate.
 
@@ -715,7 +728,7 @@ The ZPAQL language is described in libzpaq.h. N1..N9 are passed
 as arguments $1..$9, except that $1 may be reduced such that
 the actual block size is at most 2^$1 bytes.
 If there is a post-processor (PCOMP) section, then
-it must correcty invert any preprocessing steps specified by the N2
+it must correctly invert any preprocessing steps specified by the N2
 argument to x. The PCOMP argument, normally the name of an external
 preprocessor command, is ignored. The .cfg filename extension is optional.
 Component specifications other than x are ignored.
@@ -5253,7 +5266,7 @@ int Jidac::add() {
         // Analyze fragment for redundancy, x86, text.
         // Test for text: letters, digits, '.' and ',' followed by spaces
         //   and no invalid UTF-8.
-        // Text for exe: 139 (mov reg, r/m) in lots of contexts.
+        // Test for exe: 139 (mov reg, r/m) in lots of contexts.
         // 4 tests for redundancy, measured as hits/sz. Take the highest of:
         //   1. Successful prediction count in o1.
         //   2. Non-uniform distribution in o1 (counted in o2).

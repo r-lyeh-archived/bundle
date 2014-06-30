@@ -64,13 +64,14 @@
 #define U64_S U64_S2
 #undef AARCH
 #undef HASHTABLESIZE
-#undef MAX_DISTANCE
-#undef ML_MASK
-#define limitedOutput_directive limitedOutput_directive2
-#undef STEPSIZE
 #undef LZ4_COPYSTEP
 #undef LZ4_WILDCOPY
+#undef MAX_DISTANCE
+#undef ML_MASK
+#undef STEPSIZE
 #define LZ4_NbCommonBytes LZ4_NbCommonBytes2
+#define limitedOutput limitedOutput2
+#define limitedOutput_directive limitedOutput_directive2
 #include "deps/lz4/lz4hc.c"
 #undef KB
 #undef MB

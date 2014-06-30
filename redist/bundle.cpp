@@ -326,6 +326,7 @@ namespace bundle {
         switch( q ) {
             break; default : zlen = zlen * 2;
             break; case LZ4: case LZ4HC: zlen = LZ4_compressBound((int)(len));
+            break; case MINIZ: zlen = mz_compressBound(len);
 #if 0
             // for archival purposes
 
@@ -404,24 +405,22 @@ namespace bundle {
             ok = true;
             switch( q ) {
                 break; default: ok = false;
-                break; case LZ4: case LZ4HC: bytes_read = LZ4_uncompress( (const char *)in, (char *)out, outlen );
+                break; case LZ4: case LZ4HC: if( LZ4_decompress_safe( (const char *)in, (char *)out, inlen, outlen ) >= 0 ) bytes_read = inlen; // faster: bytes_read = LZ4_uncompress( (const char *)in, (char *)out, outlen );
                 break; case MINIZ: bytes_read = inlen; tinfl_decompress_mem_to_mem( out, outlen, in, inlen, TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF );
                 break; case SHOCO: bytes_read = inlen; shoco_decompress( (const char *)in, inlen, (char *)out, outlen );
-                break; case LZMASDK: bytes_read = 0; if( lzma_decompress<0>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen ) ) bytes_read = inlen;
-                break; case LZIP: bytes_read = 0; if( lzma_decompress<1>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen ) ) bytes_read = inlen;
-                break; case ZPAQ: bytes_read = 0; if( zpaq_decompress( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen ) ) bytes_read = inlen;
+                break; case LZMASDK: if( lzma_decompress<0>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen ) ) bytes_read = inlen;
+                break; case LZIP: if( lzma_decompress<1>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen ) ) bytes_read = inlen;
+                break; case ZPAQ: if( zpaq_decompress( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen ) ) bytes_read = inlen;
 #if 0
                 // for archival purposes
-                break; case BZIP2: bytes_read = 0; { unsigned int o(outlen); if( BZ_OK == BZ2_bzBuffToBuffDecompress( (char *)out, &o, (char *)in, inlen, 0 /*fast*/, 0 /*verbosity*/ ) ) { bytes_read = inlen; outlen = o; }}
+                break; case BZIP2: { unsigned int o(outlen); if( BZ_OK == BZ2_bzBuffToBuffDecompress( (char *)out, &o, (char *)in, inlen, 0 /*fast*/, 0 /*verbosity*/ ) ) { bytes_read = inlen; outlen = o; }}
                 break; case BLOSC: if( blosc_decompress( in, out, outlen ) > 0 ) bytes_read = inlen;
                 break; case BSC: bsc_decompress((const unsigned char *)in, inlen, (unsigned char *)out, outlen, /*LIBBSC_FEATURE_FASTMODE | */0); bytes_read = inlen;
-                break; case FSE: bytes_read = 0; { int r = FSE_decompress( (unsigned char*)out, outlen, (const void *)in ); if( r >= 0 ) bytes_read = r; }
-                break; case LZFX: bytes_read = 0; if( lzfx_decompress( in, inlen, out, &outlen ) >= 0 ) bytes_read = inlen;
-                break; case LZP1: bytes_read = 0; lzp_decompress( (const uint8_t *)in, inlen, (uint8_t *)out, outlen ); bytes_read = inlen;
+                break; case FSE: { int r = FSE_decompress( (unsigned char*)out, outlen, (const void *)in ); if( r >= 0 ) bytes_read = r; }
+                break; case LZFX: if( lzfx_decompress( in, inlen, out, &outlen ) >= 0 ) bytes_read = inlen;
+                break; case LZP1: lzp_decompress( (const uint8_t *)in, inlen, (uint8_t *)out, outlen ); bytes_read = inlen;
                 break; case LZHAM: {
                     //bytes_read = inlen; { lzham_z_ulong l = outlen; lzham_z_uncompress( (unsigned char *)out, &l, (const unsigned char *)in, inlen ); }
-
-                    bytes_read = 0;
 
                     lzham_decompress_params decomp_params = {0};
                     decomp_params.m_struct_size = sizeof(decomp_params);
