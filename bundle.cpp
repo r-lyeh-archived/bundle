@@ -151,6 +151,11 @@ namespace bundle
 		assert( sizeof(input.at(0)) == 1 && "size of input elements != 1" );
 		assert( sizeof(output.at(0)) == 1 && "size of output elements != 1" );
 
+		if( input.empty() ) {
+			output = input;
+			return true;
+		}
+
 		if( 1 /* is_unpacked( input ) */ ) {
 			// resize to worst case
 			size_t zlen = bound(q, input.size());
@@ -5795,13 +5800,20 @@ mz_bool mz_zip_writer_add_mem_ex(mz_zip_archive *pZip, const char *pArchive_name
 	  return MZ_FALSE;
   }
 
+  /* align file offset (@r-lyeh) { */
+  {
+	mz_uint offset = cur_archive_file_ofs + sizeof(local_dir_header) + archive_name_size + comment_size;
+	num_alignment_padding_bytes = (pZip->m_file_offset_alignment - (offset & (pZip->m_file_offset_alignment - 1))) % pZip->m_file_offset_alignment;
+  }
+  /* } align file offset (@r-lyeh) */
+
   if (!mz_zip_writer_write_zeros(pZip, cur_archive_file_ofs, num_alignment_padding_bytes + sizeof(local_dir_header)))
   {
 	pZip->m_pFree(pZip->m_pAlloc_opaque, pComp);
 	return MZ_FALSE;
   }
   local_dir_header_ofs += num_alignment_padding_bytes;
-  if (pZip->m_file_offset_alignment) { MZ_ASSERT((local_dir_header_ofs & (pZip->m_file_offset_alignment - 1)) == 0); }
+  /* if (pZip->m_file_offset_alignment) { MZ_ASSERT((local_dir_header_ofs & (pZip->m_file_offset_alignment - 1)) == 0); } */
   cur_archive_file_ofs += num_alignment_padding_bytes + sizeof(local_dir_header);
 
   MZ_CLEAR_OBJ(local_dir_header);
@@ -20614,6 +20626,8 @@ namespace bundle
 		{
 			mz_zip_archive zip_archive;
 			memset( &zip_archive, 0, sizeof(zip_archive) );
+
+			zip_archive.m_file_offset_alignment = 8;
 
 			mz_bool status = mz_zip_writer_init_heap( &zip_archive, 0, 0 );
 

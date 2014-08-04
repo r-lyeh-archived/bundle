@@ -116,6 +116,11 @@ namespace bundle
 		assert( sizeof(input.at(0)) == 1 && "size of input elements != 1" );
 		assert( sizeof(output.at(0)) == 1 && "size of output elements != 1" );
 
+		if( input.empty() ) {
+			output = input;
+			return true;
+		}
+
 		if( 1 /* is_unpacked( input ) */ ) {
 			// resize to worst case
 			size_t zlen = bound(q, input.size());

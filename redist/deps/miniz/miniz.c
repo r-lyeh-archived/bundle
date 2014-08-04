@@ -7,6 +7,7 @@
    MINIZ_NO_ARCHIVE_APIS, or to get rid of all stdio usage define MINIZ_NO_STDIO (see the list below for more macros).
 
    * Change History
+     8/04/14 v1.15 r4.1 - Bugfixed alignment on data with no compression (@r-lyeh)
      10/13/13 v1.15 r4 - Interim bugfix release while I work on the next major release with Zip64 support (almost there!):
        - Critical fix for the MZ_ZIP_FLAG_DO_NOT_SORT_CENTRAL_DIRECTORY bug (thanks kahmyong.moon@hp.com) which could cause locate files to not find files. This bug
         would only have occured in earlier versions if you explicitly used this flag, OR if you used mz_zip_extract_archive_file_to_heap() or mz_zip_add_mem_to_archive_file_in_place()
@@ -4339,13 +4340,20 @@ mz_bool mz_zip_writer_add_mem_ex(mz_zip_archive *pZip, const char *pArchive_name
       return MZ_FALSE;
   }
 
+  /* align file offset (@r-lyeh) { */
+  {
+    mz_uint offset = cur_archive_file_ofs + sizeof(local_dir_header) + archive_name_size + comment_size;
+    num_alignment_padding_bytes = (pZip->m_file_offset_alignment - (offset & (pZip->m_file_offset_alignment - 1))) % pZip->m_file_offset_alignment;
+  }
+  /* } align file offset (@r-lyeh) */
+
   if (!mz_zip_writer_write_zeros(pZip, cur_archive_file_ofs, num_alignment_padding_bytes + sizeof(local_dir_header)))
   {
     pZip->m_pFree(pZip->m_pAlloc_opaque, pComp);
     return MZ_FALSE;
   }
   local_dir_header_ofs += num_alignment_padding_bytes;
-  if (pZip->m_file_offset_alignment) { MZ_ASSERT((local_dir_header_ofs & (pZip->m_file_offset_alignment - 1)) == 0); }
+  /* if (pZip->m_file_offset_alignment) { MZ_ASSERT((local_dir_header_ofs & (pZip->m_file_offset_alignment - 1)) == 0); } */
   cur_archive_file_ofs += num_alignment_padding_bytes + sizeof(local_dir_header);
 
   MZ_CLEAR_OBJ(local_dir_header);

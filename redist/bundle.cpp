@@ -578,6 +578,8 @@ namespace bundle
             mz_zip_archive zip_archive;
             memset( &zip_archive, 0, sizeof(zip_archive) );
 
+            zip_archive.m_file_offset_alignment = 8;
+
             mz_bool status = mz_zip_writer_init_heap( &zip_archive, 0, 0 );
 
             if( !status ) {
