@@ -212,6 +212,9 @@ extern "C" void bz_internal_error(int errcode) {
 #include "deps/bzip2/huffman.c"
 #endif
 
+//#include "deps/yappy/yappy.h"
+//#include "deps/yappy/yappy.cpp"
+
 // bundle
 #ifdef swap
 #undef swap

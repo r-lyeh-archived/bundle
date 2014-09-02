@@ -28,7 +28,7 @@
 namespace bundle
 {
     // per lib
-    enum { UNDEFINED, SHOCO, LZ4, MINIZ, LZIP, LZMASDK, ZPAQ, LZ4HC}; /* archival: BZIP2, LZFX, LZHAM, LZP1, FSE, BLOSC */
+    enum { UNDEFINED, SHOCO, LZ4, MINIZ, LZIP, LZMASDK, ZPAQ, LZ4HC }; /* archival: BZIP2, LZFX, LZHAM, LZP1, FSE, BLOSC, YAPPY */
     // per family
     enum { NONE = UNDEFINED, ASCII = SHOCO, LZ77 = LZ4, DEFLATE = MINIZ, LZMA = LZMASDK, CM = ZPAQ }; /* archival: BWT = BZIP2 */
     // per context
@@ -170,6 +170,7 @@ namespace bundle
             all.push_back( LZP1 );
             all.push_back( FSE );
             all.push_back( BLOSC );
+            all.push_back( YAPPY );
 #endif
         }
         return all;

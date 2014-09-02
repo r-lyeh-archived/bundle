@@ -279,6 +279,7 @@ namespace bundle {
             break; case LZFX: return "LZFX";
             break; case LZHAM: return "LZHAM";
             break; case LZP1: return "LZP1";
+            break; case YAPPY: return "YAPPY";
 #endif
         }
     }
@@ -306,6 +307,7 @@ namespace bundle {
             break; case LZFX: return "lzfx";
             break; case LZHAM: return "lzham";
             break; case LZP1: return "lzp1";
+            break; case YAPPY: return "yappy";
 #endif
         }
     }
@@ -348,6 +350,9 @@ namespace bundle {
         return payload;
     }
 
+      // for archival purposes:
+      // const bool pre_init = (Yappy_FillTables(), true);
+
       bool pack( unsigned q, const void *in, size_t inlen, void *out, size_t &outlen ) {
         bool ok = false;
         if( in && inlen && out && outlen >= inlen ) {
@@ -362,7 +367,8 @@ namespace bundle {
                 break; case LZIP: outlen = lzma_compress<1>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen );
                 break; case ZPAQ: outlen = zpaq_compress( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen );
 #if 0
-                // for archival purposes
+                // for archival purposes:
+                break; case YAPPY: outlen = Yappy_Compress( (const unsigned char *)in, (unsigned char *)out, inlen ) - out;
                 break; case BZIP2: { unsigned int o(outlen); if( BZ_OK != BZ2_bzBuffToBuffCompress( (char *)out, &o, (char *)in, inlen, 9 /*level*/, 0 /*verbosity*/, 30 /*default*/ ) ) outlen = 0; else outlen = o; }
                 break; case BLOSC: { int clevel = 9, doshuffle = 0, typesize = 1;
                     int r = blosc_compress( clevel, doshuffle, typesize, inlen, in, out, outlen);
@@ -412,7 +418,8 @@ namespace bundle {
                 break; case LZIP: if( lzma_decompress<1>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen ) ) bytes_read = inlen;
                 break; case ZPAQ: if( zpaq_decompress( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen ) ) bytes_read = inlen;
 #if 0
-                // for archival purposes
+                // for archival purposes:
+                break; case YAPPY: Yappy_UnCompress( (const unsigned char *)in, ((const unsigned char *)in) + inlen, (unsigned char *)out ); bytes_read = inlen;
                 break; case BZIP2: { unsigned int o(outlen); if( BZ_OK == BZ2_bzBuffToBuffDecompress( (char *)out, &o, (char *)in, inlen, 0 /*fast*/, 0 /*verbosity*/ ) ) { bytes_read = inlen; outlen = o; }}
                 break; case BLOSC: if( blosc_decompress( in, out, outlen ) > 0 ) bytes_read = inlen;
                 break; case BSC: bsc_decompress((const unsigned char *)in, inlen, (unsigned char *)out, outlen, /*LIBBSC_FEATURE_FASTMODE | */0); bytes_read = inlen;
