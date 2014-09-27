@@ -7,7 +7,7 @@ bundle
 - Bundle is easy to integrate, comes in an amalgamated distribution.
 - Bundle is tiny. All dependencies included. Self-contained.
 - Bundle is cross-platform.
-- Bundle is MIT licensed.
+- Bundle is BOOST licensed.
 
 ### bundle stream format
 
@@ -101,7 +101,7 @@ All ok.
 - also, pak
 
 ### licenses
-- [bundle](https://github.com/r-lyeh/bundle), MIT license.
+- [bundle](https://github.com/r-lyeh/bundle), BOOST license.
 - [easylzma](https://github.com/lloyd/easylzma) by Igor Pavlov and Lloyd Hilaiel, public domain.
 - [libzpaq](https://github.com/zpaq/zpaq) by Matt Mahoney, public domain.
 - [lz4](https://github.com/Cyan4973/lz4) by Yann Collet, BSD license.
