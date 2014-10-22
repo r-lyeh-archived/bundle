@@ -270,6 +270,7 @@ namespace bundle {
             break; case LZMASDK: return "LZMA";
             break; case ZPAQ: return "ZPAQ";
             break; case LZ4HC: return "LZ4HC";
+            break; case BROTLI: return "BROTLI";
 #if 0
             // for archival purposes
             break; case BZIP2: return "BZIP2";
@@ -298,6 +299,7 @@ namespace bundle {
             break; case LZMASDK: return "lzma";
             break; case ZPAQ: return "zpaq";
             break; case LZ4HC: return "lz4";
+            break; case BROTLI: return "brotli";
 #if 0
             // for archival purposes
             break; case BZIP2: return "bz2";
@@ -366,6 +368,10 @@ namespace bundle {
                 break; case LZMASDK: outlen = lzma_compress<0>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen );
                 break; case LZIP: outlen = lzma_compress<1>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen );
                 break; case ZPAQ: outlen = zpaq_compress( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen );
+                break; case BROTLI: {
+                        brotli::BrotliParams bp; bp.mode = brotli::BrotliParams::MODE_TEXT;
+                        ok = (1 == brotli::BrotliCompressBuffer( bp, inlen, (const uint8_t *)in, &outlen, (uint8_t *)out ));
+                }
 #if 0
                 // for archival purposes:
                 break; case YAPPY: outlen = Yappy_Compress( (const unsigned char *)in, (unsigned char *)out, inlen ) - out;
@@ -417,6 +423,7 @@ namespace bundle {
                 break; case LZMASDK: if( lzma_decompress<0>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen ) ) bytes_read = inlen;
                 break; case LZIP: if( lzma_decompress<1>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen ) ) bytes_read = inlen;
                 break; case ZPAQ: if( zpaq_decompress( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen ) ) bytes_read = inlen;
+                break; case BROTLI: if( 1 == BrotliDecompressBuffer(inlen, (const uint8_t *)in, &outlen, (uint8_t *)out ) ) bytes_read = inlen;
 #if 0
                 // for archival purposes:
                 break; case YAPPY: Yappy_UnCompress( (const unsigned char *)in, ((const unsigned char *)in) + inlen, (unsigned char *)out ); bytes_read = inlen;

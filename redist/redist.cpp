@@ -1,6 +1,29 @@
 /** this is an amalgamated file. do not edit.
  */
 
+// headers
+#include "bundle.hpp"
+
+// brotli
+#include "deps/brotli/enc/backward_references.cc"
+#include "deps/brotli/enc/block_splitter.cc"
+#include "deps/brotli/enc/encode.cc"
+#include "deps/brotli/enc/entropy_encode.cc"
+#include "deps/brotli/enc/histogram.cc"
+#include "deps/brotli/enc/literal_cost.cc"
+#include "deps/brotli/enc/prefix.cc"
+#define kBrotliDictionary                 kBrotliDictionary2
+#define kBrotliDictionaryOffsetsByLength  kBrotliDictionaryOffsetsByLength2
+#define kBrotliDictionarySizeBitsByLength kBrotliDictionarySizeBitsByLength2
+#define kMaxDictionaryWordLength          kMaxDictionaryWordLength2
+#define kMinDictionaryWordLength          kMinDictionaryWordLength2
+#include "deps/brotli/dec/bit_reader.c"
+#include "deps/brotli/dec/decode.c"
+#include "deps/brotli/dec/huffman.c"
+#include "deps/brotli/dec/safe_malloc.c"
+#include "deps/brotli/dec/streams.c"
+
+
 #if 0
 // lzham
 #define LZHAM_NO_ZLIB_COMPATIBLE_NAMES
@@ -32,13 +55,11 @@
 #include "deps/lzham/src/lzham_mem.cpp"
 #endif
 
-// headers
-#include "bundle.hpp"
 #if 0
 #include "deps/lzp1/lzp1.hpp"
 #endif
-#include "deps/lz4/lz4.h"
-#include "deps/lz4/lz4hc.h"
+//#include "deps/lz4/lz4.h"
+//#include "deps/lz4/lz4hc.h"
 #include "deps/shoco/shoco.h"
 #include "deps/easylzma/src/easylzma/compress.h"
 #include "deps/easylzma/src/easylzma/decompress.h"
@@ -72,6 +93,21 @@
 #define LZ4_NbCommonBytes LZ4_NbCommonBytes2
 #define limitedOutput limitedOutput2
 #define limitedOutput_directive limitedOutput_directive2
+#define LZ4_stream_t LZ4_stream_t2
+#define LZ4_streamDecode_t LZ4_streamDecode_t2
+#define LZ4_resetStream LZ4_resetStream2
+#define LZ4_createStream LZ4_createStream2
+#define LZ4_freeStream LZ4_freeStream2
+#define LZ4_loadDict LZ4_loadDict2
+#define LZ4_compress_continue LZ4_compress_continue2
+#define LZ4_compress_limitedOutput_continue LZ4_compress_limitedOutput_continue2
+#define LZ4_saveDict LZ4_saveDict2
+#define LZ4_setStreamDecode LZ4_setStreamDecode2
+#define LZ4_streamDecode_t2 LZ4_streamDecode_t22
+#define LZ4_createStreamDecode LZ4_createStreamDecode2
+#define LZ4_freeStreamDecode LZ4_freeStreamDecode2
+#define LZ4_decompress_safe_continue LZ4_decompress_safe_continue2
+#define LZ4_decompress_fast_continue LZ4_decompress_fast_continue2
 #include "deps/lz4/lz4hc.c"
 #undef KB
 #undef MB
@@ -215,9 +251,11 @@ extern "C" void bz_internal_error(int errcode) {
 //#include "deps/yappy/yappy.h"
 //#include "deps/yappy/yappy.cpp"
 
-// bundle
+//
 #ifdef swap
 #undef swap
 #endif
+
+// bundle
 #include "bundle.cpp"
 

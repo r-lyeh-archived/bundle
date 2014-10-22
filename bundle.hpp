@@ -28,7 +28,7 @@
 namespace bundle
 {
     // per lib
-    enum { UNDEFINED, SHOCO, LZ4, MINIZ, LZIP, LZMASDK, ZPAQ, LZ4HC }; /* archival: BZIP2, LZFX, LZHAM, LZP1, FSE, BLOSC, YAPPY */
+    enum { UNDEFINED, SHOCO, LZ4, MINIZ, LZIP, LZMASDK, ZPAQ, LZ4HC, BROTLI }; /* archival: BZIP2, LZFX, LZHAM, LZP1, FSE, BLOSC, YAPPY */
     // per family
     enum { NONE = UNDEFINED, ASCII = SHOCO, LZ77 = LZ4, DEFLATE = MINIZ, LZMA = LZMASDK, CM = ZPAQ }; /* archival: BWT = BZIP2 */
     // per context
@@ -161,6 +161,7 @@ namespace bundle
             all.push_back( LZMASDK );
             all.push_back( ZPAQ );
             all.push_back( LZ4HC );
+            all.push_back( BROTLI );
 #if 0
             // for archival purposes
             all.push_back( BZIP2 );
@@ -252,7 +253,7 @@ namespace bundle
         unsigned q = NONE;
         double ratio = -1;
         for( auto &r : measures ) {
-            if( r.pass && r.ratio > ratio && r.ratio >= (100 - NO_COMPRESSION_TRESHOLD / 100.0) ) {
+            if( r.pass && r.ratio > ratio && r.ratio >= (NO_COMPRESSION_TRESHOLD / 1.0) ) {
                 ratio = r.ratio;
                 q = type_of(r.packed);
             }
