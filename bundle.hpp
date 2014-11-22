@@ -16,6 +16,7 @@
 #include <string>
 #include <vector>
 #include <limits>
+#include <cstring>
 
 #if BUNDLE_CXX11
 #include <chrono>
