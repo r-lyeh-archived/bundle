@@ -9,13 +9,14 @@
 
 #include <cassert>
 #include <cstdio>
+#include <cstring>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <sstream>
 #include <string>
 #include <vector>
-#include <limits>
 
 #if BUNDLE_CXX11
 #include <chrono>
@@ -249,42 +250,63 @@ namespace bundle
 
     // find best choice for given data
     template< class T >
-    unsigned find_smallest_compressor( const std::vector< measure<T> > &measures ) {
-        unsigned q = NONE;
+    unsigned find_slot_for_smallest_compressor( const std::vector< measure<T> > &measures, double no_compression_treshold = NO_COMPRESSION_TRESHOLD / 1.0 ) {
+        unsigned q = ~0;
         double ratio = -1;
-        for( auto &r : measures ) {
-            if( r.pass && r.ratio > ratio && r.ratio >= (NO_COMPRESSION_TRESHOLD / 1.0) ) {
+        for( auto end = measures.size(), it = 0u; it < end; ++it ) {
+            auto &r = measures[ it ];
+            if( r.pass && r.ratio > ratio && r.ratio >= no_compression_treshold ) {
                 ratio = r.ratio;
-                q = type_of(r.packed);
+                q = it;
             }
         }
         return q;
+    }
+
+    template< class T >
+    unsigned find_slot_for_fastest_compressor( const std::vector< measure<T> > &measures ) {
+        unsigned q = ~0;
+        double enctime = std::numeric_limits<double>::max();
+        for( auto end = measures.size(), it = 0u; it < end; ++it ) {
+            auto &r = measures[ it ];
+            if( r.pass && r.enctime < enctime && r.q != NONE ) {
+                enctime = r.enctime;
+                q = it;
+            }
+        }
+        return q;
+    }
+
+    template< class T >
+    unsigned find_slot_for_fastest_decompressor( const std::vector< measure<T> > &measures ) {
+        unsigned q = ~0;
+        double dectime = std::numeric_limits<double>::max();
+        for( auto end = measures.size(), it = 0u; it < end; ++it ) {
+            auto &r = measures[ it ];
+            if( r.pass && r.dectime < dectime && r.q != NONE ) {
+                dectime = r.dectime;
+                q = it;
+            }
+        }
+        return q;
+    }
+
+    template< class T >
+    unsigned find_smallest_compressor( const std::vector< measure<T> > &measures, double no_compression_treshold = NO_COMPRESSION_TRESHOLD / 1.0 ) {
+        auto slot = find_slot_for_smallest_compressor( measures, no_compression_treshold );
+        return slot == ~0 ? NONE : type_of( measures[slot].packed );
     }
 
     template< class T >
     unsigned find_fastest_compressor( const std::vector< measure<T> > &measures ) {
-        unsigned q = NONE;
-        double enctime = std::numeric_limits<double>::max();
-        for( auto &r : measures ) {
-            if( r.pass && r.enctime < enctime && r.q != NONE ) {
-                enctime = r.enctime;
-                q = type_of(r.packed);
-            }
-        }
-        return q;
+        auto slot = find_slot_for_fastest_compressor( measures );
+        return slot == ~0 ? NONE : type_of( measures[slot].packed );
     }
 
     template< class T >
     unsigned find_fastest_decompressor( const std::vector< measure<T> > &measures ) {
-        unsigned q = NONE;
-        double dectime = std::numeric_limits<double>::max();
-        for( auto &r : measures ) {
-            if( r.pass && r.dectime < dectime && r.q != NONE ) {
-                dectime = r.dectime;
-                q = type_of(r.packed);
-            }
-        }
-        return q;
+        auto slot = find_slot_for_fastest_decompressor( measures );
+        return slot == ~0 ? NONE : type_of( measures[slot].packed );
     }
 
 #endif
