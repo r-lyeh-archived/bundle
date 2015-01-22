@@ -24,6 +24,9 @@
  */
 
 #include <cassert>
+#include <stdio.h>
+#include <stdint.h>
+
 #include <cctype>  // std::isprint
 #include <cstdio>  // std::sprintf
 #include <iomanip>
@@ -34,6 +37,7 @@
 #include <algorithm>
 
 #include "bundle.hpp"
+#include "deps/giant/giant.hpp"
 
 // easylzma interface
 namespace {
@@ -70,8 +74,8 @@ namespace {
                 len = size - pos;
             }
             memcpy( buf, &data[ pos ], len );
-            pos += len;
-            return len;
+            pos += len; 
+            return len; 
         }
     };
 
@@ -250,7 +254,7 @@ namespace bundle {
                 out2 += spr;
             }
 
-            return out1 + "[...] (" + out2 + "[...])";
+            return out2 + "[...] (" + out1 + "[...])";
         }
 
         void shout( unsigned q, const char *context, size_t from, size_t to ) {
@@ -271,6 +275,7 @@ namespace bundle {
             break; case ZPAQ: return "ZPAQ";
             break; case LZ4HC: return "LZ4HC";
             break; case BROTLI: return "BROTLI";
+            break; case AUTO: return "AUTO";
 #if 0
             // for archival purposes
             break; case BZIP2: return "BZIP2";
@@ -291,15 +296,16 @@ namespace bundle {
 
     const char *const ext_of( unsigned q ) {
         switch( q ) {
-            break; default : return "unc";
+            break; default : return "";
             break; case LZ4: return "lz4";
-            break; case MINIZ: return "miniz";
+            break; case MINIZ: return "zip";
             break; case SHOCO: return "shoco";
             break; case LZIP: return "lz";
             break; case LZMASDK: return "lzma";
             break; case ZPAQ: return "zpaq";
             break; case LZ4HC: return "lz4";
             break; case BROTLI: return "brotli";
+            break; case AUTO: return "auto";
 #if 0
             // for archival purposes
             break; case BZIP2: return "bz2";
@@ -363,9 +369,43 @@ namespace bundle {
                 break; default: ok = false;
                 break; case LZ4: outlen = LZ4_compress( (const char *)in, (char *)out, inlen );
                 break; case LZ4HC: outlen = LZ4_compressHC2( (const char *)in, (char *)out, inlen, 16 );
-                break; case MINIZ: outlen = tdefl_compress_mem_to_mem( out, outlen, in, inlen, TDEFL_MAX_PROBES_MASK ); // TDEFL_DEFAULT_MAX_PROBES );
+                break; case MINIZ: case AUTO: outlen = tdefl_compress_mem_to_mem( out, outlen, in, inlen, TDEFL_MAX_PROBES_MASK ); // TDEFL_DEFAULT_MAX_PROBES );
                 break; case SHOCO: outlen = shoco_compress( (const char *)in, inlen, (char *)out, outlen );
-                break; case LZMASDK: outlen = lzma_compress<0>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen );
+                break; case LZMASDK: { //outlen = lzma_compress<0>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen );
+                        unsigned propsSize = LZMA_PROPS_SIZE;
+                        outlen = outlen - LZMA_PROPS_SIZE - 8;
+#if 0
+                        ok = ( SZ_OK == LzmaCompress(
+                        &((unsigned char *)out)[LZMA_PROPS_SIZE + 8], &outlen,
+                        (const unsigned char *)in, inlen,
+                        &((unsigned char *)out)[0], &propsSize,
+                        level, dictSize, lc, lp, pb, fb, numThreads ) ); 
+#else
+                        CLzmaEncProps props;
+                        LzmaEncProps_Init(&props);
+                        props.level = 9;                 /* 0 <= level <= 9, default = 5 */
+                        props.dictSize = 1 << 20;        /* default = (1 << 24) */
+                        props.lc = 3;                    /* 0 <= lc <= 8, default = 3  */
+                        props.lp = 0;                    /* 0 <= lp <= 4, default = 0  */
+                        props.pb = 2;                    /* 0 <= pb <= 4, default = 2  */
+                        props.fb = 32;                   /* 5 <= fb <= 273, default = 32 */
+                        props.numThreads = 1;            /* 1 or 2, default = 2 */
+                        props.writeEndMark = 1;          /* 0 or 1, default = 0 */
+
+                        ok = (SZ_OK == LzmaEncode(
+                        &((unsigned char *)out)[LZMA_PROPS_SIZE + 8], &outlen,
+                        (const unsigned char *)in, inlen,
+                        &props, &((unsigned char *)out)[0], &propsSize, props.writeEndMark,
+                        NULL, &g_Alloc, &g_Alloc));
+                        ok = ok && (propsSize == LZMA_PROPS_SIZE);
+#endif
+                        if( ok ) {
+                            // serialize outsize as well (classic 13-byte LZMA header)
+                            uint64_t x = giant::htole( (uint64_t)outlen );
+                            memcpy( &((unsigned char *)out)[LZMA_PROPS_SIZE], (unsigned char *)&x, 8 );
+                            outlen = outlen + LZMA_PROPS_SIZE + 8;
+                        }
+                }
                 break; case LZIP: outlen = lzma_compress<1>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen );
                 break; case ZPAQ: outlen = zpaq_compress( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen );
                 break; case BROTLI: {
@@ -411,6 +451,17 @@ namespace bundle {
       }
 
     bool unpack( unsigned q, const void *in, size_t inlen, void *out, size_t &outlen ) {
+        if( q == AUTO ) {
+            size_t outlen2;
+            if( outlen2 = outlen, unpack(LZ4, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
+            if( outlen2 = outlen, unpack(MINIZ, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
+            if( outlen2 = outlen, unpack(BROTLI, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
+            if( outlen2 = outlen, unpack(LZMASDK, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
+            if( outlen2 = outlen, unpack(LZIP, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
+            if( outlen2 = outlen, unpack(SHOCO, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
+            //if( outlen2 = outlen, unpack(ZPAQ, in, inlen, out, outlen ) ) return outlen = outlen2, true; // ignored (returns true always)
+            return false;
+        }
         bool ok = false;
         size_t bytes_read = 0;
         if( in && inlen && out && outlen ) {
@@ -418,14 +469,20 @@ namespace bundle {
             switch( q ) {
                 break; default: ok = false;
                 break; case LZ4: case LZ4HC: if( LZ4_decompress_safe( (const char *)in, (char *)out, inlen, outlen ) >= 0 ) bytes_read = inlen; // faster: bytes_read = LZ4_uncompress( (const char *)in, (char *)out, outlen );
-                break; case MINIZ: bytes_read = inlen; tinfl_decompress_mem_to_mem( out, outlen, in, inlen, TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF );
-                break; case SHOCO: bytes_read = inlen; shoco_decompress( (const char *)in, inlen, (char *)out, outlen );
-                break; case LZMASDK: if( lzma_decompress<0>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen ) ) bytes_read = inlen;
+                break; case MINIZ: if( TINFL_DECOMPRESS_MEM_TO_MEM_FAILED != tinfl_decompress_mem_to_mem( out, outlen, in, inlen, TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF ) ) bytes_read = inlen;
+                break; case SHOCO: bytes_read = shoco_decompress( (const char *)in, inlen, (char *)out, outlen ) == outlen ? inlen : 0;
+                break; case LZMASDK: {
+                        size_t inlen2 = inlen - LZMA_PROPS_SIZE - 8;
+                        if( SZ_OK == LzmaUncompress((unsigned char *)out, &outlen, (unsigned char *)in + LZMA_PROPS_SIZE + 8, &inlen2, (unsigned char *)in, LZMA_PROPS_SIZE) ) {
+                            bytes_read = inlen;
+                        }
+                }
                 break; case LZIP: if( lzma_decompress<1>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen ) ) bytes_read = inlen;
                 break; case ZPAQ: if( zpaq_decompress( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen ) ) bytes_read = inlen;
                 break; case BROTLI: if( 1 == BrotliDecompressBuffer(inlen, (const uint8_t *)in, &outlen, (uint8_t *)out ) ) bytes_read = inlen;
 #if 0
                 // for archival purposes:
+                break; case EASYLZMA: if( lzma_decompress<0>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen ) ) bytes_read = inlen;
                 break; case YAPPY: Yappy_UnCompress( (const unsigned char *)in, ((const unsigned char *)in) + inlen, (unsigned char *)out ); bytes_read = inlen;
                 break; case BZIP2: { unsigned int o(outlen); if( BZ_OK == BZ2_bzBuffToBuffDecompress( (char *)out, &o, (char *)in, inlen, 0 /*fast*/, 0 /*verbosity*/ ) ) { bytes_read = inlen; outlen = o; }}
                 break; case BLOSC: if( blosc_decompress( in, out, outlen ) > 0 ) bytes_read = inlen;
@@ -620,12 +677,12 @@ namespace bundle
                         break; case EXTRA: case UBER: quality = MZ_BEST_COMPRESSION;
                     }
 
-					std::string pathfile = filename->second;
-					std::replace( pathfile.begin(), pathfile.end(), '\\', '/');
+                    std::string pathfile = filename->second;
+                    std::replace( pathfile.begin(), pathfile.end(), '\\', '/');
 
                     //std::cout << hexdump(content->second) << std::endl;
 
-					if( comment == it->end() )
+                    if( comment == it->end() )
                     status = mz_zip_writer_add_mem_ex( &zip_archive, pathfile.c_str(), content->second.c_str(), bufsize,
                         0, 0, quality, 0, 0 );
                     else

@@ -46534,6 +46534,9 @@ extern "C" void bz_internal_error(int errcode) {
  */
 
 #include <cassert>
+#include <stdio.h>
+#include <stdint.h>
+
 #include <cctype>  // std::isprint
 #include <cstdio>  // std::sprintf
 #include <iomanip>
@@ -46544,6 +46547,132 @@ extern "C" void bz_internal_error(int errcode) {
 #include <algorithm>
 
 #include "bundle.hpp"
+
+//#line 1 "giant.hpp"
+//#pragma once
+
+#include <cassert>
+#include <algorithm>
+#include <type_traits>
+
+#if defined (__GLIBC__)
+#   include <endian.h>
+#endif
+
+namespace giant
+{
+
+#if defined(_LITTLE_ENDIAN) \
+	|| ( defined(BYTE_ORDER) && defined(LITTLE_ENDIAN) && BYTE_ORDER == LITTLE_ENDIAN ) \
+	|| ( defined(_BYTE_ORDER) && defined(_LITTLE_ENDIAN) && _BYTE_ORDER == _LITTLE_ENDIAN ) \
+	|| ( defined(__BYTE_ORDER) && defined(__LITTLE_ENDIAN) && __BYTE_ORDER == __LITTLE_ENDIAN ) \
+	|| defined(__i386__) || defined(__alpha__) \
+	|| defined(__ia64) || defined(__ia64__) \
+	|| defined(_M_IX86) || defined(_M_IA64) \
+	|| defined(_M_ALPHA) || defined(__amd64) \
+	|| defined(__amd64__) || defined(_M_AMD64) \
+	|| defined(__x86_64) || defined(__x86_64__) \
+	|| defined(_M_X64)
+	enum { type = 'xinu', is_little = 1, is_big = 0 };
+#elif defined(_BIG_ENDIAN) \
+	|| ( defined(BYTE_ORDER) && defined(BIG_ENDIAN) && BYTE_ORDER == BIG_ENDIAN ) \
+	|| ( defined(_BYTE_ORDER) && defined(_BIG_ENDIAN) && _BYTE_ORDER == _BIG_ENDIAN ) \
+	|| ( defined(__BYTE_ORDER) && defined(__BIG_ENDIAN) && __BYTE_ORDER == __BIG_ENDIAN ) \
+	|| defined(__sparc) || defined(__sparc__) \
+	|| defined(_POWER) || defined(__powerpc__) \
+	|| defined(__ppc__) || defined(__hpux) \
+	|| defined(_MIPSEB) || defined(_POWER) \
+	|| defined(__s390__)
+	enum { type = 'unix', is_little = 0, is_big = 1 };
+#else
+#   error <giant/giant.hpp> says: Middle endian/NUXI order is not supported
+	enum { type = 'nuxi', is_little = 0, is_big = 0 };
+#endif
+
+	template<typename T>
+	T swap( T out )
+	{
+		static union autodetect {
+			int word = 1;
+			char byte[ sizeof(int) ];
+			autodetect() {
+				assert(( "<giant/giant.hpp> says: wrong endianness detected!", (!byte[0] && is_big) || (byte[0] && is_little) ));
+			}
+		} _;
+
+		if( !std::is_pod<T>::value ) {
+			return out;
+		}
+
+		char *ptr;
+
+		switch( sizeof( T ) ) {
+			case 0:
+			case 1:
+				break;
+			case 2:
+				ptr = reinterpret_cast<char *>(&out);
+				std::swap( ptr[0], ptr[1] );
+				break;
+			case 4:
+				ptr = reinterpret_cast<char *>(&out);
+				std::swap( ptr[0], ptr[3] );
+				std::swap( ptr[1], ptr[2] );
+				break;
+			case 8:
+				ptr = reinterpret_cast<char *>(&out);
+				std::swap( ptr[0], ptr[7] );
+				std::swap( ptr[1], ptr[6] );
+				std::swap( ptr[2], ptr[5] );
+				std::swap( ptr[3], ptr[4] );
+				break;
+			case 16:
+				ptr = reinterpret_cast<char *>(&out);
+				std::swap( ptr[0], ptr[15] );
+				std::swap( ptr[1], ptr[14] );
+				std::swap( ptr[2], ptr[13] );
+				std::swap( ptr[3], ptr[12] );
+				std::swap( ptr[4], ptr[11] );
+				std::swap( ptr[5], ptr[10] );
+				std::swap( ptr[6], ptr[9] );
+				std::swap( ptr[7], ptr[8] );
+				break;
+			default:
+				assert( !"<giant/giant.hpp> says: POD type bigger than 256 bits (?)" );
+				break;
+		}
+
+		return out;
+	}
+
+	template<typename T>
+	T letobe( const T &in ) {
+		return swap( in );
+	}
+	template<typename T>
+	T betole( const T &in ) {
+		return swap( in );
+	}
+
+	template<typename T>
+	T letoh( const T &in ) {
+		return type == 'xinu' ? in : swap( in );
+	}
+	template<typename T>
+	T htole( const T &in ) {
+		return type == 'xinu' ? in : swap( in );
+	}
+
+	template<typename T>
+	T betoh( const T &in ) {
+		return type == 'unix' ? in : swap( in );
+	}
+	template<typename T>
+	T htobe( const T &in ) {
+		return type == 'unix' ? in : swap( in );
+	}
+}
+
 
 // easylzma interface
 namespace {
@@ -46759,7 +46888,7 @@ namespace bundle {
 				out2 += spr;
 			}
 
-			return out1 + "[...] (" + out2 + "[...])";
+			return out2 + "[...] (" + out1 + "[...])";
 		}
 
 		void shout( unsigned q, const char *context, size_t from, size_t to ) {
@@ -46780,6 +46909,7 @@ namespace bundle {
 			break; case ZPAQ: return "ZPAQ";
 			break; case LZ4HC: return "LZ4HC";
 			break; case BROTLI: return "BROTLI";
+			break; case AUTO: return "AUTO";
 #if 0
 			// for archival purposes
 			break; case BZIP2: return "BZIP2";
@@ -46800,15 +46930,16 @@ namespace bundle {
 
 	const char *const ext_of( unsigned q ) {
 		switch( q ) {
-			break; default : return "unc";
+			break; default : return "";
 			break; case LZ4: return "lz4";
-			break; case MINIZ: return "miniz";
+			break; case MINIZ: return "zip";
 			break; case SHOCO: return "shoco";
 			break; case LZIP: return "lz";
 			break; case LZMASDK: return "lzma";
 			break; case ZPAQ: return "zpaq";
 			break; case LZ4HC: return "lz4";
 			break; case BROTLI: return "brotli";
+			break; case AUTO: return "auto";
 #if 0
 			// for archival purposes
 			break; case BZIP2: return "bz2";
@@ -46872,9 +47003,43 @@ namespace bundle {
 				break; default: ok = false;
 				break; case LZ4: outlen = LZ4_compress( (const char *)in, (char *)out, inlen );
 				break; case LZ4HC: outlen = LZ4_compressHC2( (const char *)in, (char *)out, inlen, 16 );
-				break; case MINIZ: outlen = tdefl_compress_mem_to_mem( out, outlen, in, inlen, TDEFL_MAX_PROBES_MASK ); // TDEFL_DEFAULT_MAX_PROBES );
+				break; case MINIZ: case AUTO: outlen = tdefl_compress_mem_to_mem( out, outlen, in, inlen, TDEFL_MAX_PROBES_MASK ); // TDEFL_DEFAULT_MAX_PROBES );
 				break; case SHOCO: outlen = shoco_compress( (const char *)in, inlen, (char *)out, outlen );
-				break; case LZMASDK: outlen = lzma_compress<0>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen );
+				break; case LZMASDK: { //outlen = lzma_compress<0>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen );
+						unsigned propsSize = LZMA_PROPS_SIZE;
+						outlen = outlen - LZMA_PROPS_SIZE - 8;
+#if 0
+						ok = ( SZ_OK == LzmaCompress(
+						&((unsigned char *)out)[LZMA_PROPS_SIZE + 8], &outlen,
+						(const unsigned char *)in, inlen,
+						&((unsigned char *)out)[0], &propsSize,
+						level, dictSize, lc, lp, pb, fb, numThreads ) );
+#else
+						CLzmaEncProps props;
+						LzmaEncProps_Init(&props);
+						props.level = 9;                 /* 0 <= level <= 9, default = 5 */
+						props.dictSize = 1 << 20;        /* default = (1 << 24) */
+						props.lc = 3;                    /* 0 <= lc <= 8, default = 3  */
+						props.lp = 0;                    /* 0 <= lp <= 4, default = 0  */
+						props.pb = 2;                    /* 0 <= pb <= 4, default = 2  */
+						props.fb = 32;                   /* 5 <= fb <= 273, default = 32 */
+						props.numThreads = 1;            /* 1 or 2, default = 2 */
+						props.writeEndMark = 1;          /* 0 or 1, default = 0 */
+
+						ok = (SZ_OK == LzmaEncode(
+						&((unsigned char *)out)[LZMA_PROPS_SIZE + 8], &outlen,
+						(const unsigned char *)in, inlen,
+						&props, &((unsigned char *)out)[0], &propsSize, props.writeEndMark,
+						NULL, &g_Alloc, &g_Alloc));
+						ok = ok && (propsSize == LZMA_PROPS_SIZE);
+#endif
+						if( ok ) {
+							// serialize outsize as well (classic 13-byte LZMA header)
+							uint64_t x = giant::htole( (uint64_t)outlen );
+							memcpy( &((unsigned char *)out)[LZMA_PROPS_SIZE], (unsigned char *)&x, 8 );
+							outlen = outlen + LZMA_PROPS_SIZE + 8;
+						}
+				}
 				break; case LZIP: outlen = lzma_compress<1>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen );
 				break; case ZPAQ: outlen = zpaq_compress( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen );
 				break; case BROTLI: {
@@ -46920,6 +47085,17 @@ namespace bundle {
 	  }
 
 	bool unpack( unsigned q, const void *in, size_t inlen, void *out, size_t &outlen ) {
+		if( q == AUTO ) {
+			size_t outlen2;
+			if( outlen2 = outlen, unpack(LZ4, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
+			if( outlen2 = outlen, unpack(MINIZ, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
+			if( outlen2 = outlen, unpack(BROTLI, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
+			if( outlen2 = outlen, unpack(LZMASDK, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
+			if( outlen2 = outlen, unpack(LZIP, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
+			if( outlen2 = outlen, unpack(SHOCO, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
+			//if( outlen2 = outlen, unpack(ZPAQ, in, inlen, out, outlen ) ) return outlen = outlen2, true; // ignored (returns true always)
+			return false;
+		}
 		bool ok = false;
 		size_t bytes_read = 0;
 		if( in && inlen && out && outlen ) {
@@ -46927,14 +47103,20 @@ namespace bundle {
 			switch( q ) {
 				break; default: ok = false;
 				break; case LZ4: case LZ4HC: if( LZ4_decompress_safe( (const char *)in, (char *)out, inlen, outlen ) >= 0 ) bytes_read = inlen; // faster: bytes_read = LZ4_uncompress( (const char *)in, (char *)out, outlen );
-				break; case MINIZ: bytes_read = inlen; tinfl_decompress_mem_to_mem( out, outlen, in, inlen, TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF );
-				break; case SHOCO: bytes_read = inlen; shoco_decompress( (const char *)in, inlen, (char *)out, outlen );
-				break; case LZMASDK: if( lzma_decompress<0>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen ) ) bytes_read = inlen;
+				break; case MINIZ: if( TINFL_DECOMPRESS_MEM_TO_MEM_FAILED != tinfl_decompress_mem_to_mem( out, outlen, in, inlen, TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF ) ) bytes_read = inlen;
+				break; case SHOCO: bytes_read = shoco_decompress( (const char *)in, inlen, (char *)out, outlen ) == outlen ? inlen : 0;
+				break; case LZMASDK: {
+						size_t inlen2 = inlen - LZMA_PROPS_SIZE - 8;
+						if( SZ_OK == LzmaUncompress((unsigned char *)out, &outlen, (unsigned char *)in + LZMA_PROPS_SIZE + 8, &inlen2, (unsigned char *)in, LZMA_PROPS_SIZE) ) {
+							bytes_read = inlen;
+						}
+				}
 				break; case LZIP: if( lzma_decompress<1>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen ) ) bytes_read = inlen;
 				break; case ZPAQ: if( zpaq_decompress( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen ) ) bytes_read = inlen;
 				break; case BROTLI: if( 1 == BrotliDecompressBuffer(inlen, (const uint8_t *)in, &outlen, (uint8_t *)out ) ) bytes_read = inlen;
 #if 0
 				// for archival purposes:
+				break; case EASYLZMA: if( lzma_decompress<0>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen ) ) bytes_read = inlen;
 				break; case YAPPY: Yappy_UnCompress( (const unsigned char *)in, ((const unsigned char *)in) + inlen, (unsigned char *)out ); bytes_read = inlen;
 				break; case BZIP2: { unsigned int o(outlen); if( BZ_OK == BZ2_bzBuffToBuffDecompress( (char *)out, &o, (char *)in, inlen, 0 /*fast*/, 0 /*verbosity*/ ) ) { bytes_read = inlen; outlen = o; }}
 				break; case BLOSC: if( blosc_decompress( in, out, outlen ) > 0 ) bytes_read = inlen;

@@ -1,11 +1,11 @@
 bundle
 ======
 
-- Bundle is a lightweight C++ compression library that provides interface for ZIP, LZMA, LZIP, ZPAQ, LZ4, BROTLI and SHOCO algorithms.
+- Bundle is an embeddable compression library that supports ZIP, LZMA, LZIP, ZPAQ, LZ4, BROTLI and SHOCO (C++03)(C++11).
 - Bundle is optimized for highest compression ratios on each compressor, wherever possible.
 - Bundle is optimized for fastest decompression times on each decompressor, wherever possible.
 - Bundle is easy to integrate, comes in an amalgamated distribution.
-- Bundle is tiny. All dependencies included. Self-contained.
+- Bundle is tiny. Header and source files. Self-contained, dependencies included. 
 - Bundle is cross-platform.
 - Bundle is BOOST licensed.
 
@@ -34,21 +34,21 @@ bundle
 - Note: you can mix streams of different algorithms into the very same ZIP archive.
 ```
 
-### sample usage
+### sample 
 ```c++
 #include <cassert>
 #include "bundle.hpp"
-using namespace bundle;
 
 int main() {
     // 50 mb dataset
     std::string original( "There's a lady who's sure all that glitters is gold" );
     for (int i = 0; i < 20; ++i) original += original;
 
-    for( auto &encoding : { LZ4, LZ4HC, SHOCO, MINIZ, LZIP, LZMA, ZPAQ, BROTLI, NONE } ) {
-        std::string packed = pack(original, encoding);
-        std::string unpacked = unpack(compressed);
-        std::cout << name(encoding) << ": " << original.size() << " to " << packed.size() << " bytes" << std::endl;
+    using namespace bundle;
+    for( auto &encoding : std::vector<unsigned> { NONE, LZ4, LZ4HC, SHOCO, MINIZ, LZIP, LZMA, ZPAQ, BROTLI } ) {
+        std::string packed = pack(encoding, original);
+        std::string unpacked = unpack(packed);
+        std::cout << name_of(encoding) << ": " << original.size() << " to " << packed.size() << " bytes" << std::endl;
         assert( original == unpacked );
     }
 
@@ -58,15 +58,15 @@ int main() {
 
 ### possible output
 ```
-[ OK ] NONE: ratio=0% enctime=40077us dectime=18497us
-[ OK ] LZ4: ratio=99.6077% enctime=22494us dectime=22573us
-[ OK ] SHOCO: ratio=27.451% enctime=406648us dectime=257531us
-[ OK ] MINIZ: ratio=99.7089% enctime=179023us dectime=32941us
-[ OK ] LZIP: ratio=99.9856% enctime=2175282us dectime=179508us
-[ OK ] LZMA: ratio=99.9856% enctime=2056503us dectime=59310us
-[ OK ] ZPAQ: ratio=99.9972% enctime=97356947us dectime=99716381us
-[ OK ] LZ4HC: ratio=99.6077% enctime=19169us dectime=22363us
-[ OK ] BROTLI: ratio=99.9993% enctime=5306407us dectime=116716us
+[ OK ] NONE: ratio=0% enctime=27000us dectime=14000us
+[ OK ] LZ4: ratio=99.6077% enctime=19000us dectime=18000us
+[ OK ] SHOCO: ratio=27.451% enctime=385000us dectime=265000us
+[ OK ] MINIZ: ratio=99.7089% enctime=179000us dectime=33000us
+[ OK ] LZIP: ratio=99.9856% enctime=2038000us dectime=178000us
+[ OK ] LZMA: ratio=99.9856% enctime=1879000us dectime=48000us
+[ OK ] ZPAQ: ratio=99.9972% enctime=98658000us dectime=100083000us
+[ OK ] LZ4HC: ratio=99.6077% enctime=20000us dectime=20000us
+[ OK ] BROTLI: ratio=99.9993% enctime=5446000us dectime=114000us
 All ok.
 ```
 
@@ -78,6 +78,7 @@ All ok.
 - and maybe use SHOCO for plain text ascii IDs (SHOCO is an entropy text-compressor)
 
 ### public api (@todocument)
+```c++
 - bool is_packed( T )
 - bool is_unpacked( T )
 - T pack( unsigned q, T )
@@ -100,9 +101,11 @@ All ok.
 - unsigned type_of( const void *mem, size_t size )
 - also, pakfile
 - also, pak
+```
 
 ### licenses
 - [bundle](https://github.com/r-lyeh/bundle), BOOST license.
+- [giant](https://githhub.com/r-lyeh/giant), BOOST license.
 - [easylzma](https://github.com/lloyd/easylzma) by Igor Pavlov and Lloyd Hilaiel, public domain.
 - [libzpaq](https://github.com/zpaq/zpaq) by Matt Mahoney, public domain.
 - [lz4](https://github.com/Cyan4973/lz4) by Yann Collet, BSD license.
