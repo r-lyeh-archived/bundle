@@ -276,6 +276,7 @@ namespace bundle {
             break; case LZ4HC: return "LZ4HC";
             break; case BROTLI: return "BROTLI";
             break; case AUTO: return "AUTO";
+            break; case ZSTD: return "ZSTD";
 #if 0
             // for archival purposes
             break; case BZIP2: return "BZIP2";
@@ -306,6 +307,7 @@ namespace bundle {
             break; case LZ4HC: return "lz4";
             break; case BROTLI: return "brotli";
             break; case AUTO: return "auto";
+            break; case ZSTD: return "zstd";
 #if 0
             // for archival purposes
             break; case BZIP2: return "bz2";
@@ -337,6 +339,7 @@ namespace bundle {
             break; default : zlen = zlen * 2;
             break; case LZ4: case LZ4HC: zlen = LZ4_compressBound((int)(len));
             break; case MINIZ: zlen = mz_compressBound(len);
+            break; case ZSTD: zlen = ZSTD_compressBound(len);
 #if 0
             // for archival purposes
 
@@ -412,6 +415,7 @@ namespace bundle {
                         brotli::BrotliParams bp; bp.mode = brotli::BrotliParams::MODE_TEXT;
                         ok = (1 == brotli::BrotliCompressBuffer( bp, inlen, (const uint8_t *)in, &outlen, (uint8_t *)out ));
                 }
+                break; case ZSTD: outlen = ZSTD_compress( out, outlen, in, inlen ); if( ZSTD_isError(outlen) ) outlen = 0;
 #if 0
                 // for archival purposes:
                 break; case YAPPY: outlen = Yappy_Compress( (const unsigned char *)in, (unsigned char *)out, inlen ) - out;
@@ -459,6 +463,7 @@ namespace bundle {
             if( outlen2 = outlen, unpack(LZMASDK, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
             if( outlen2 = outlen, unpack(LZIP, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
             if( outlen2 = outlen, unpack(SHOCO, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
+            if( outlen2 = outlen, unpack(ZSTD, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
             //if( outlen2 = outlen, unpack(ZPAQ, in, inlen, out, outlen ) ) return outlen = outlen2, true; // ignored (returns true always)
             return false;
         }
@@ -480,6 +485,7 @@ namespace bundle {
                 break; case LZIP: if( lzma_decompress<1>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen ) ) bytes_read = inlen;
                 break; case ZPAQ: if( zpaq_decompress( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen ) ) bytes_read = inlen;
                 break; case BROTLI: if( 1 == BrotliDecompressBuffer(inlen, (const uint8_t *)in, &outlen, (uint8_t *)out ) ) bytes_read = inlen;
+                break; case ZSTD: bytes_read = ZSTD_decompress( out, outlen, in, inlen ); if( !ZSTD_isError(bytes_read) ) bytes_read = inlen;
 #if 0
                 // for archival purposes:
                 break; case EASYLZMA: if( lzma_decompress<0>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen ) ) bytes_read = inlen;
@@ -551,27 +557,27 @@ namespace bundle
 
 namespace bundle
 {
-    bool pakfile::has( const std::string &property ) const {
+    bool file::has( const std::string &property ) const {
         return this->find( property ) != this->end();
     }
 
     // binary serialization
 
-    bool pak::bin( const std::string &bin_import ) //const
+    bool archive::bin( const std::string &binary )
     {
         this->clear();
-        std::vector<pakfile> result;
+        std::vector<file> result;
 
-        if( !bin_import.size() )
+        if( !binary.size() )
             return true; // :)
 
-        if( type == paktype::ZIP )
+        if( type == container::ZIP )
         {
             // Try to open the archive.
             mz_zip_archive zip_archive;
             memset(&zip_archive, 0, sizeof(zip_archive));
 
-            mz_bool status = mz_zip_reader_init_mem( &zip_archive, (void *)bin_import.c_str(), bin_import.size(), 0 );
+            mz_bool status = mz_zip_reader_init_mem( &zip_archive, (void *)binary.c_str(), binary.size(), 0 );
 
             if( !status )
                 return "mz_zip_reader_init_file() failed!", false;
@@ -587,7 +593,7 @@ namespace bundle
                     return "mz_zip_reader_file_stat() failed!", false;
                 }
 
-                result.push_back( pakfile() );
+                result.push_back( file() );
 
                 result.back()["filename"] = file_stat.m_filename;
                 result.back()["comment"] = file_stat.m_comment;
@@ -640,11 +646,11 @@ namespace bundle
         return true;
     }
 
-    std::string pak::bin( unsigned q ) const
+    std::string archive::bin( unsigned q ) const
     {
         std::string result;
 
-        if( type == paktype::ZIP )
+        if( type == container::ZIP )
         {
             mz_zip_archive zip_archive;
             memset( &zip_archive, 0, sizeof(zip_archive) );

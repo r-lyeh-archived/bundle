@@ -256,6 +256,13 @@ extern "C" void bz_internal_error(int errcode) {
 #undef swap
 #endif
 
+#undef HASH_MASK
+#undef HASH_LOG
+#include "deps/zstd/lib/fse.h"
+#include "deps/zstd/lib/fse.c"
+#include "deps/zstd/lib/zstd.h"
+#include "deps/zstd/lib/zstd.c"
+
 // bundle
 #include "bundle.cpp"
 

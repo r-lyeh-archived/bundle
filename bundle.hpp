@@ -28,12 +28,12 @@
 
 namespace bundle
 {
-    // per lib
-    enum { UNDEFINED, SHOCO, LZ4, MINIZ, LZIP, LZMASDK, ZPAQ, LZ4HC, BROTLI, AUTO }; /* archival: BZIP2, LZFX, LZHAM, LZP1, FSE, BLOSC, YAPPY */
-    // per family
-    enum { NONE = UNDEFINED, ASCII = SHOCO, LZ77 = LZ4, DEFLATE = MINIZ, LZMA = LZMASDK, CM = ZPAQ }; /* archival: BWT = BZIP2 */
-    // per context
-    enum { UNCOMPRESSED = NONE, ENTROPY = ASCII, FAST = LZ77, DEFAULT = DEFLATE, EXTRA = LZMA, UBER = CM };
+    // libraries and/or compression modes
+    enum { RAW, SHOCO, LZ4, MINIZ, LZIP, LZMASDK, ZPAQ, LZ4HC, BROTLI, ZSTD }; /* archival: BZIP2, LZFX, LZHAM, LZP1, FSE, BLOSC, YAPPY */
+    // some algorithm aliases
+    enum { UNDEFINED = RAW, ASCII = SHOCO, BINARY = MINIZ, LZ77 = LZ4HC, DEFLATE = MINIZ, LZMA = LZMASDK, CM = ZPAQ }; /* archival: BWT = BZIP2 */
+    // speed/ratio aliases
+    enum { NONE = RAW, UNCOMPRESSED = RAW, VERY_FAST = LZ4, FAST = LZ4HC, DEFAULT = MINIZ, EXTRA = LZMASDK, UBER = ZPAQ, AUTO = ~0u };
 
     // dont compress if compression ratio is below 5%
     enum { NO_COMPRESSION_TRESHOLD = 5 };
@@ -163,6 +163,7 @@ namespace bundle
             all.push_back( ZPAQ );
             all.push_back( LZ4HC );
             all.push_back( BROTLI );
+            all.push_back( ZSTD ); 
 #if 0
             // for archival purposes
             all.push_back( BZIP2 );
@@ -192,7 +193,7 @@ namespace bundle
         T packed, unpacked;
         std::string str() const {
             std::stringstream ss;
-            ss << ( pass ? "[ OK ] " : "[FAIL] ") << name_of(q) << ": ratio=" << ratio << "% enctime=" << int(enctime) << "us dectime=" << int(dectime) << "us";
+            ss << ( pass ? "[ OK ] " : "[FAIL] ") << name_of(q) << ": ratio=" << ratio << "% enctime=" << int(enctime) << "us dectime=" << int(dectime) << "us (zlen=" << packed.size() << " bytes)";
             return ss.str();
         }
     };
@@ -314,11 +315,6 @@ namespace bundle
 
 namespace bundle
 {
-    struct paktype
-    {
-        enum enumeration { ZIP };
-    };
-
     class string : public std::string
     {
         public:
@@ -367,7 +363,7 @@ namespace bundle
         }
     };
 
-    struct pakfile : public std::map< std::string, bundle::string >
+    struct file : public std::map< std::string, bundle::string >
     {
         bool has( const std::string &property ) const;
 
@@ -377,19 +373,19 @@ namespace bundle
         }
     };
 
-    class pak : public std::vector< pakfile >
+    class archive : public std::vector< bundle::file >
     {
         public:
 
-        const paktype::enumeration type;
+        enum container { ZIP } type;
 
         explicit
-        pak( const paktype::enumeration &etype = paktype::ZIP ) : type(etype)
+        archive( const container &type = ZIP ) : type(type)
         {}
 
         // binary serialization
 
-        bool bin( const std::string &bin_import ); //const
+        bool bin( const std::string &binary );
         std::string bin( unsigned q = EXTRA ) const;
 
         // debug
@@ -398,9 +394,9 @@ namespace bundle
             // @todo: add offset in file
             std::string ret;
             for( const_iterator it = this->begin(), end = this->end(); it != end; ++it ) {
-                const pakfile &file = *it;
+                const bundle::file &file = *it;
                 ret += "\t{\n";
-                for( pakfile::const_iterator it = file.begin(), end = file.end(); it != end; ++it ) {
+                for( bundle::file::const_iterator it = file.begin(), end = file.end(); it != end; ++it ) {
                     const std::pair< std::string, bundle::string > &property = *it;
                     if( property.first == "content" )
                         ret += "\t\t\"size\":\"" + string( property.second.size() ) + "\",\n";

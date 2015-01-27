@@ -11,7 +11,7 @@ int main( int argc, char **argv )
 
     if( const bool saving_test = true )
     {
-        bundle::pak pak;
+        bundle::archive pak;
 
         pak.resize(2);
 
@@ -33,7 +33,7 @@ int main( int argc, char **argv )
     {
         std::cout << "unzipping files..." << std::endl;
 
-        bundle::pak pak;
+        bundle::archive pak;
         pak.bin( binary );
 
         std::cout << "loading test:\n" << pak.toc() << std::endl;
@@ -75,11 +75,11 @@ int main( int argc, char **argv )
         std::cout << "fastest compressor: " << name_of( find_fastest_compressor(data) ) << std::endl;
         std::cout << "smallest compressor: " << name_of( find_smallest_compressor(data) ) << std::endl;
 
-        bundle::pak pak;
+        bundle::archive pak;
 
         for( auto &result : data ) {
             if( result.pass ) {
-                pak.push_back( pakfile() );
+                pak.push_back( bundle::file() );
                 pak.back()["filename"] = std::string() + name_of(result.q);
                 pak.back()["ext"] = std::string() + ext_of(result.q);
                 pak.back()["content"] = result.packed;
