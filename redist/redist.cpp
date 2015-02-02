@@ -71,6 +71,7 @@
 #if 1
 // miniz
 #define MINIZ_NO_ZLIB_COMPATIBLE_NAMES 1
+#define MINIZ_NO_STDIO 1
 //#define MINIZ_USE_UNALIGNED_LOADS_AND_STORES 1
 //#define MINIZ_HAS_64BIT_REGISTERS 1
 #include "deps/miniz/miniz.c"
@@ -258,10 +259,15 @@ extern "C" void bz_internal_error(int errcode) {
 
 #undef HASH_MASK
 #undef HASH_LOG
+#if defined(__clang__) || defined(__GNUC__)
+#include "deps/../deps/zstd/lib/zstd.h"
+#include "deps/../deps/zstd/lib/zstd.c"
+#else
 #include "deps/zstd/lib/fse.h"
 #include "deps/zstd/lib/fse.c"
 #include "deps/zstd/lib/zstd.h"
 #include "deps/zstd/lib/zstd.c"
+#endif
 
 // bundle
 #include "bundle.cpp"

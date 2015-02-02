@@ -375,7 +375,7 @@ namespace bundle {
                 break; case MINIZ: case AUTO: outlen = tdefl_compress_mem_to_mem( out, outlen, in, inlen, TDEFL_MAX_PROBES_MASK ); // TDEFL_DEFAULT_MAX_PROBES );
                 break; case SHOCO: outlen = shoco_compress( (const char *)in, inlen, (char *)out, outlen );
                 break; case LZMASDK: { //outlen = lzma_compress<0>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen );
-                        unsigned propsSize = LZMA_PROPS_SIZE;
+                        SizeT propsSize = LZMA_PROPS_SIZE;
                         outlen = outlen - LZMA_PROPS_SIZE - 8;
 #if 0
                         ok = ( SZ_OK == LzmaCompress(
