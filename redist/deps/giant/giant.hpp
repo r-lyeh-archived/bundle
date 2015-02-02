@@ -36,7 +36,7 @@ namespace giant
     || defined(__amd64__) || defined(_M_AMD64) \
     || defined(__x86_64) || defined(__x86_64__) \
     || defined(_M_X64)
-    enum { type = 'xinu', is_little = 1, is_big = 0 };
+    enum { xinu = 0, unix = 1, nuxi = 2, type = xinu, is_little = 1, is_big = 0 };
 #elif defined(_BIG_ENDIAN) \
     || ( defined(BYTE_ORDER) && defined(BIG_ENDIAN) && BYTE_ORDER == BIG_ENDIAN ) \
     || ( defined(_BYTE_ORDER) && defined(_BIG_ENDIAN) && _BYTE_ORDER == _BIG_ENDIAN ) \
@@ -46,19 +46,19 @@ namespace giant
     || defined(__ppc__) || defined(__hpux) \
     || defined(_MIPSEB) || defined(_POWER) \
     || defined(__s390__)
-    enum { type = 'unix', is_little = 0, is_big = 1 };
+    enum { xinu = 0, unix = 1, nuxi = 2, type = unix, is_little = 0, is_big = 1 };
 #else
 #   error <giant/giant.hpp> says: Middle endian/NUXI order is not supported
-    enum { type = 'nuxi', is_little = 0, is_big = 0 };
+    enum { xinu = 0, unix = 1, nuxi = 2, type = nuxi, is_little = 0, is_big = 0 };
 #endif
 
     template<typename T>
     T swap( T out )
     {
         static union autodetect {
-            int word = 1;
+            int word;
             char byte[ sizeof(int) ];
-            autodetect() {
+            autodetect() : word(1) {
                 assert(( "<giant/giant.hpp> says: wrong endianness detected!", (!byte[0] && is_big) || (byte[0] && is_little) ));
             }
         } _;
@@ -119,19 +119,19 @@ namespace giant
 
     template<typename T>
     T letoh( const T &in ) {
-        return type == 'xinu' ? in : swap( in );
+        return type == xinu ? in : swap( in );
     }
     template<typename T>
     T htole( const T &in ) {
-        return type == 'xinu' ? in : swap( in );
+        return type == xinu ? in : swap( in );
     }
 
     template<typename T>
     T betoh( const T &in ) {
-        return type == 'unix' ? in : swap( in );
+        return type == unix ? in : swap( in );
     }
     template<typename T>
     T htobe( const T &in ) {
-        return type == 'unix' ? in : swap( in );
+        return type == unix ? in : swap( in );
     }
 }
