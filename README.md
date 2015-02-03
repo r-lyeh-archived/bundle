@@ -1,4 +1,4 @@
-bundle
+bundle <img src="https://api.travis-ci.org/r-lyeh/bundle.svg" align="right" />
 ======
 
 - Bundle is an embeddable compression library that supports ZIP, LZMA, LZIP, ZPAQ, LZ4, ZSTD, BROTLI and SHOCO (C++03)(C++11).

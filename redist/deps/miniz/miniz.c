@@ -7,6 +7,7 @@
    MINIZ_NO_ARCHIVE_APIS, or to get rid of all stdio usage define MINIZ_NO_STDIO (see the list below for more macros).
 
    * Change History
+     3/02/15 v1.15 r4.2 - Bugfixed warning "expression result unused" (@r-lyeh)
      8/04/14 v1.15 r4.1 - Bugfixed alignment on data with no compression (@r-lyeh)
      10/13/13 v1.15 r4 - Interim bugfix release while I work on the next major release with Zip64 support (almost there!):
        - Critical fix for the MZ_ZIP_FLAG_DO_NOT_SORT_CENTRAL_DIRECTORY bug (thanks kahmyong.moon@hp.com) which could cause locate files to not find files. This bug
@@ -4113,7 +4114,7 @@ mz_bool mz_zip_writer_init_from_reader(mz_zip_archive *pZip, const char *pFilena
   if (pState->m_pFile)
   {
 #ifdef MINIZ_NO_STDIO
-    pFilename; return MZ_FALSE;
+    (void)pFilename; return MZ_FALSE;
 #else
     // Archive is being read from stdio - try to reopen as writable.
     if (pZip->m_pIO_opaque != pZip)

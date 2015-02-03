@@ -31283,7 +31283,7 @@ mz_bool mz_zip_writer_init_from_reader(mz_zip_archive *pZip, const char *pFilena
   if (pState->m_pFile)
   {
 #ifdef MINIZ_NO_STDIO
-	pFilename; return MZ_FALSE;
+	(void)pFilename; return MZ_FALSE;
 #else
 	// Archive is being read from stdio - try to reopen as writable.
 	if (pZip->m_pIO_opaque != pZip)
@@ -56066,7 +56066,7 @@ namespace bundle
 			mz_bool status = mz_zip_reader_init_mem( &zip_archive, (void *)binary.c_str(), binary.size(), 0 );
 
 			if( !status )
-				return "mz_zip_reader_init_file() failed!", false;
+				return false; //"mz_zip_reader_init_file() failed!"
 
 			// Get and print information about each file in the archive.
 			for( unsigned int i = 0; i < mz_zip_reader_get_num_files(&zip_archive); i++ )
@@ -56076,7 +56076,7 @@ namespace bundle
 				if( !mz_zip_reader_file_stat( &zip_archive, i, &file_stat ) )
 				{
 					mz_zip_reader_end( &zip_archive );
-					return "mz_zip_reader_file_stat() failed!", false;
+					return false; //"mz_zip_reader_file_stat() failed!"
 				}
 
 				result.push_back( file() );
@@ -56100,7 +56100,7 @@ namespace bundle
 					if( !p )
 					{
 						mz_zip_reader_end(&zip_archive);
-						return "mz_zip_reader_extract_file_to_heap() failed!", false;
+						return false; //"mz_zip_reader_extract_file_to_heap() failed!"
 					}
 
 					// Make sure the extraction really succeeded.
@@ -56109,7 +56109,7 @@ namespace bundle
 					{
 					free(p);
 					mz_zip_reader_end(&zip_archive);
-					return "mz_zip_reader_extract_file_to_heap() failed to extract the proper data", false;
+					return false; //"mz_zip_reader_extract_file_to_heap() failed to extract the proper data"
 					}
 					*/
 
@@ -56147,7 +56147,7 @@ namespace bundle
 
 			if( !status ) {
 				assert( status );
-				return "mz_zip_writer_init_heap() failed!", std::string();
+				return std::string(); //"mz_zip_writer_init_heap() failed!"
 			}
 
 			for( const_iterator it = this->begin(), end = this->end(); it != end; ++it ) {
@@ -56184,7 +56184,7 @@ namespace bundle
 					//status = mz_zip_writer_add_mem( &zip_archive, filename->second.c_str(), content->second.c_str(), bufsize, quality );
 					if( !status ) {
 						assert( status );
-						return "mz_zip_writer_add_mem() failed!", std::string();
+						return std::string(); //"mz_zip_writer_add_mem() failed!"
 					}
 				}
 			}
@@ -56195,7 +56195,7 @@ namespace bundle
 			status = mz_zip_writer_finalize_heap_archive( &zip_archive, &pBuf, &pSize);
 			if( !status ) {
 				assert( status );
-				return "mz_zip_writer_finalize_heap_archive() failed!", std::string();
+				return std::string(); //"mz_zip_writer_finalize_heap_archive() failed!"
 			}
 
 			// Ends archive writing, freeing all allocations, and closing the output file if mz_zip_writer_init_file() was used.
@@ -56203,7 +56203,7 @@ namespace bundle
 			status = mz_zip_writer_end( &zip_archive );
 			if( !status ) {
 				assert( status );
-				return "mz_zip_writer_end() failed!", std::string();
+				return std::string(); //"mz_zip_writer_end() failed!"
 			}
 
 			result.resize( pSize );
