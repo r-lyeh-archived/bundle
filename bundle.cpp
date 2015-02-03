@@ -55412,7 +55412,6 @@ size_t ZSTD_decompressContinue(ZSTD_dctx_t dctx, void* dst, size_t maxDstSize, c
 
 namespace giant
 {
-	enum { xinu_type = 0, unix_type = 1, nuxi_type = 2 };
 
 #if defined(_LITTLE_ENDIAN) \
 	|| ( defined(BYTE_ORDER) && defined(LITTLE_ENDIAN) && BYTE_ORDER == LITTLE_ENDIAN ) \
@@ -55425,7 +55424,7 @@ namespace giant
 	|| defined(__amd64__) || defined(_M_AMD64) \
 	|| defined(__x86_64) || defined(__x86_64__) \
 	|| defined(_M_X64)
-	enum { type = xinu_type, is_little = 1, is_big = 0 };
+	enum { xinu_type = 0, unix_type = 1, nuxi_type = 2, type = xinu_type, is_little = 1, is_big = 0 };
 #elif defined(_BIG_ENDIAN) \
 	|| ( defined(BYTE_ORDER) && defined(BIG_ENDIAN) && BYTE_ORDER == BIG_ENDIAN ) \
 	|| ( defined(_BYTE_ORDER) && defined(_BIG_ENDIAN) && _BYTE_ORDER == _BIG_ENDIAN ) \
@@ -55435,10 +55434,10 @@ namespace giant
 	|| defined(__ppc__) || defined(__hpux) \
 	|| defined(_MIPSEB) || defined(_POWER) \
 	|| defined(__s390__)
-	enum { type = unix_type, is_little = 0, is_big = 1 };
+	enum { xinu_type = 0, unix_type = 1, nuxi_type = 2, type = unix_type, is_little = 0, is_big = 1 };
 #else
 #   error <giant/giant.hpp> says: Middle endian/NUXI order is not supported
-	enum { type = nuxi_type, is_little = 0, is_big = 0 };
+	enum { xinu_type = 0, unix_type = 1, nuxi_type = 2, type = nuxi_type, is_little = 0, is_big = 0 };
 #endif
 
 	template<typename T>
