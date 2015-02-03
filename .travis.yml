@@ -11,4 +11,4 @@ install:
   - if [ "$CXX" = "g++" ]; then export CXX="g++-4.9" CC="gcc-4.9"; fi
 
 script:
-  - $CXX -std=c++11 bundle.cpp tests.cxx -o test && ./test
+  - $CXX -std=c++11 -O2 bundle.cpp tests.cxx -o test && ./test
