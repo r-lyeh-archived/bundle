@@ -1,24 +1,9 @@
 /*
  * Simple compression interface.
- * Copyright (c) 2013, 2014, Mario 'rlyeh' Rodriguez
-
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
+ * Copyright (c) 2013, 2014, 2015, Mario 'rlyeh' Rodriguez
  *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
+ * Distributed under the Boost Software License, Version 1.0.
+ * (See license copy at http://www.boost.org/LICENSE_1_0.txt)
 
  * - rlyeh ~~ listening to Boris / Missing Pieces
  */
@@ -224,7 +209,7 @@ namespace
 namespace libzpaq {
     // Implement error handler
     void error(const char* msg) {
-        fprintf( stderr, "<bundle/bunle.cpp> says: ZPAQ fatal error! %s\n", msg );
+        fprintf( stderr, "<bundle/bundle.cpp> says: ZPAQ fatal error! %s\n", msg );
         exit(1);
     }
 }
@@ -271,7 +256,8 @@ namespace bundle {
             break; case MINIZ: return "MINIZ";
             break; case SHOCO: return "SHOCO";
             break; case LZIP: return "LZIP";
-            break; case LZMASDK: return "LZMA";
+            break; case LZMA20: return "LZMA20";
+            break; case LZMA25: return "LZMA25";
             break; case ZPAQ: return "ZPAQ";
             break; case LZ4HC: return "LZ4HC";
             break; case BROTLI: return "BROTLI";
@@ -302,7 +288,8 @@ namespace bundle {
             break; case MINIZ: return "zip";
             break; case SHOCO: return "shoco";
             break; case LZIP: return "lz";
-            break; case LZMASDK: return "lzma";
+            break; case LZMA20: return "lzma";
+            break; case LZMA25: return "lzma";
             break; case ZPAQ: return "zpaq";
             break; case LZ4HC: return "lz4";
             break; case BROTLI: return "brotli";
@@ -374,7 +361,7 @@ namespace bundle {
                 break; case LZ4HC: outlen = LZ4_compressHC2( (const char *)in, (char *)out, inlen, 16 );
                 break; case MINIZ: case AUTO: outlen = tdefl_compress_mem_to_mem( out, outlen, in, inlen, TDEFL_MAX_PROBES_MASK ); // TDEFL_DEFAULT_MAX_PROBES );
                 break; case SHOCO: outlen = shoco_compress( (const char *)in, inlen, (char *)out, outlen );
-                break; case LZMASDK: { //outlen = lzma_compress<0>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen );
+                break; case LZMA20: case LZMA25: { //outlen = lzma_compress<0>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen );
                         unsigned propsSize = LZMA_PROPS_SIZE;
                         outlen = outlen - LZMA_PROPS_SIZE - 8;
 #if 0
@@ -386,14 +373,14 @@ namespace bundle {
 #else
                         CLzmaEncProps props;
                         LzmaEncProps_Init(&props);
-                        props.level = 9;                 /* 0 <= level <= 9, default = 5 */
-                        props.dictSize = 1 << 20;        /* default = (1 << 24) */
-                        props.lc = 3;                    /* 0 <= lc <= 8, default = 3  */
-                        props.lp = 0;                    /* 0 <= lp <= 4, default = 0  */
-                        props.pb = 2;                    /* 0 <= pb <= 4, default = 2  */
-                        props.fb = 32;                   /* 5 <= fb <= 273, default = 32 */
-                        props.numThreads = 1;            /* 1 or 2, default = 2 */
-                        props.writeEndMark = 1;          /* 0 or 1, default = 0 */
+                        props.level = 9;                                      /* 0 <= level <= 9, default = 5 */
+                        props.dictSize = 1 << (q == LZMA25 ? 25 : 20);        /* default = (1 << 24) */
+                        props.lc = 3;                                         /* 0 <= lc <= 8, default = 3  */
+                        props.lp = 0;                                         /* 0 <= lp <= 4, default = 0  */
+                        props.pb = 2;                                         /* 0 <= pb <= 4, default = 2  */
+                        props.fb = 32;                                        /* 5 <= fb <= 273, default = 32 */
+                        props.numThreads = 1;                                 /* 1 or 2, default = 2 */
+                        props.writeEndMark = 1;                               /* 0 or 1, default = 0 */
 
                         ok = (SZ_OK == LzmaEncode(
                         &((unsigned char *)out)[LZMA_PROPS_SIZE + 8], &outlen,
@@ -460,7 +447,7 @@ namespace bundle {
             if( outlen2 = outlen, unpack(LZ4, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
             if( outlen2 = outlen, unpack(MINIZ, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
             if( outlen2 = outlen, unpack(BROTLI, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
-            if( outlen2 = outlen, unpack(LZMASDK, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
+            if( outlen2 = outlen, unpack(LZMA20, in, inlen, out, outlen2 ) ) return outlen = outlen2, true; // LZMA25 enters here too
             if( outlen2 = outlen, unpack(LZIP, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
             if( outlen2 = outlen, unpack(SHOCO, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
             if( outlen2 = outlen, unpack(ZSTD, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
@@ -476,7 +463,7 @@ namespace bundle {
                 break; case LZ4: case LZ4HC: if( LZ4_decompress_safe( (const char *)in, (char *)out, inlen, outlen ) >= 0 ) bytes_read = inlen; // faster: bytes_read = LZ4_uncompress( (const char *)in, (char *)out, outlen );
                 break; case MINIZ: if( TINFL_DECOMPRESS_MEM_TO_MEM_FAILED != tinfl_decompress_mem_to_mem( out, outlen, in, inlen, TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF ) ) bytes_read = inlen;
                 break; case SHOCO: bytes_read = shoco_decompress( (const char *)in, inlen, (char *)out, outlen ) == outlen ? inlen : 0;
-                break; case LZMASDK: {
+                break; case LZMA20: case LZMA25: {
                         size_t inlen2 = inlen - LZMA_PROPS_SIZE - 8;
                         if( SZ_OK == LzmaUncompress((unsigned char *)out, &outlen, (unsigned char *)in + LZMA_PROPS_SIZE + 8, &inlen2, (unsigned char *)in, LZMA_PROPS_SIZE) ) {
                             bytes_read = inlen;
@@ -595,10 +582,10 @@ namespace bundle
 
                 result.push_back( file() );
 
-                result.back()["filename"] = file_stat.m_filename;
-                result.back()["comment"] = file_stat.m_comment;
+                result.back()["/**/"] = file_stat.m_comment;
+                result.back()["name"] = file_stat.m_filename;
                 result.back()["size"] = (unsigned int)file_stat.m_uncomp_size;
-                result.back()["size_z"] = (unsigned int)file_stat.m_comp_size;
+                result.back()["zlen"] = (unsigned int)file_stat.m_comp_size;
                 //result.back()["modify_time"] = ze.mtime;
                 //result.back()["access_time"] = ze.atime;
                 //result.back()["create_time"] = ze.ctime;
@@ -627,8 +614,8 @@ namespace bundle
                     }
                     */
 
-                    result.back()["content"].resize( uncomp_size );
-                    memcpy( (void *)result.back()["content"].data(), p, uncomp_size );
+                    result.back()["data"].resize( uncomp_size );
+                    memcpy( (void *)result.back()["data"].data(), p, uncomp_size );
 
                     free(p);
                 }
@@ -665,15 +652,15 @@ namespace bundle
             }
 
             for( const_iterator it = this->begin(), end = this->end(); it != end; ++it ) {
-                std::map< std::string, bundle::string >::const_iterator filename = it->find("filename");
-                std::map< std::string, bundle::string >::const_iterator content = it->find("content");
-                std::map< std::string, bundle::string >::const_iterator comment = it->find("comment");
+                std::map< std::string, bundle::string >::const_iterator filename = it->find("name");
+                std::map< std::string, bundle::string >::const_iterator content = it->find("data");
+                std::map< std::string, bundle::string >::const_iterator comment = it->find("/**/");
                 if( filename != it->end() && content != it->end() ) {
                     const size_t bufsize = content->second.size();
 
                     int quality = q;
-                    if( it->find("compression") != it->end() ) {
-                        std::stringstream ss( it->find("compression")->second );
+                    if( it->find("comp") != it->end() ) {
+                        std::stringstream ss( it->find("comp")->second );
                         if( !(ss >> quality) ) quality = q;
                     }
                     switch( quality ) {

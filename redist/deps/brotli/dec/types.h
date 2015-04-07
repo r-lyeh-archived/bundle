@@ -11,9 +11,9 @@
    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
    See the License for the specific language governing permissions and
    limitations under the License.
-
-   Common types
 */
+
+/* Common types */
 
 #ifndef BROTLI_DEC_TYPES_H_
 #define BROTLI_DEC_TYPES_H_
@@ -22,10 +22,11 @@
 
 #ifndef _MSC_VER
 #include <inttypes.h>
-#ifdef __STRICT_ANSI__
-#define BROTLI_INLINE
-#else  /* __STRICT_ANSI__ */
+#if defined(__cplusplus) || !defined(__STRICT_ANSI__) \
+    || __STDC_VERSION__ >= 199901L
 #define BROTLI_INLINE inline
+#else
+#define BROTLI_INLINE
 #endif
 #else
 typedef signed   char int8_t;

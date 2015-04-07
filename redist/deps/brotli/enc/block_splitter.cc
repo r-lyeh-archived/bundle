@@ -33,7 +33,7 @@ namespace brotli {
 
 static const int kMaxLiteralHistograms = 100;
 static const int kMaxCommandHistograms = 50;
-static const double kLiteralBlockSwitchCost = 26;
+static const double kLiteralBlockSwitchCost = 28.1;
 static const double kCommandBlockSwitchCost = 13.5;
 static const double kDistanceBlockSwitchCost = 14.6;
 static const int kLiteralStrideLength = 70;
@@ -51,7 +51,7 @@ void CopyLiteralsToByteArray(const std::vector<Command>& cmds,
   // Count how many we have.
   size_t total_length = 0;
   for (int i = 0; i < cmds.size(); ++i) {
-    total_length += cmds[i].insert_length_;
+    total_length += cmds[i].insert_len_;
   }
   if (total_length == 0) {
     return;
@@ -64,9 +64,9 @@ void CopyLiteralsToByteArray(const std::vector<Command>& cmds,
   size_t pos = 0;
   size_t from_pos = 0;
   for (int i = 0; i < cmds.size() && pos < total_length; ++i) {
-    memcpy(&(*literals)[pos], data + from_pos, cmds[i].insert_length_);
-    pos += cmds[i].insert_length_;
-    from_pos += cmds[i].insert_length_ + cmds[i].copy_length_;
+    memcpy(&(*literals)[pos], data + from_pos, cmds[i].insert_len_);
+    pos += cmds[i].insert_len_;
+    from_pos += cmds[i].insert_len_ + cmds[i].copy_len_;
   }
 }
 
@@ -75,11 +75,19 @@ void CopyCommandsToByteArray(const std::vector<Command>& cmds,
                              std::vector<uint8_t>* distance_prefixes) {
   for (int i = 0; i < cmds.size(); ++i) {
     const Command& cmd = cmds[i];
-    insert_and_copy_codes->push_back(cmd.command_prefix_);
-    if (cmd.copy_length_ > 0 && cmd.distance_prefix_ != 0xffff) {
-      distance_prefixes->push_back(cmd.distance_prefix_);
+    insert_and_copy_codes->push_back(cmd.cmd_prefix_);
+    if (cmd.copy_len_ > 0 && cmd.cmd_prefix_ >= 128) {
+      distance_prefixes->push_back(cmd.dist_prefix_);
     }
   }
+}
+
+inline static unsigned int MyRand(unsigned int* seed) {
+  *seed *= 16807U;
+  if (*seed == 0) {
+    *seed = 1;
+  }
+  return *seed;
 }
 
 template<typename HistogramType, typename DataType>
@@ -97,8 +105,7 @@ void InitialEntropyCodes(const DataType* data, size_t length,
   for (int i = 0; i < total_histograms; ++i) {
     int pos = length * i / total_histograms;
     if (i != 0) {
-      srand(seed);
-      pos += rand() % block_length;
+      pos += MyRand(&seed) % block_length;
     }
     if (pos + stride >= length) {
       pos = length - stride - 1;
@@ -120,8 +127,7 @@ void RandomSample(unsigned int* seed,
     pos = 0;
     stride = length;
   } else {
-    srand(*seed);
-    pos = rand() % (length - stride + 1);
+    pos = MyRand(seed) % (length - stride + 1);
   }
   sample->Add(data + pos, stride);
 }
@@ -278,21 +284,21 @@ void ClusterBlocks(const DataType* data, const size_t length,
 void BuildBlockSplit(const std::vector<uint8_t>& block_ids, BlockSplit* split) {
   int cur_id = block_ids[0];
   int cur_length = 1;
-  split->num_types_ = -1;
+  split->num_types = -1;
   for (int i = 1; i < block_ids.size(); ++i) {
     if (block_ids[i] != cur_id) {
-      split->types_.push_back(cur_id);
-      split->lengths_.push_back(cur_length);
-      split->num_types_ = std::max(split->num_types_, cur_id);
+      split->types.push_back(cur_id);
+      split->lengths.push_back(cur_length);
+      split->num_types = std::max(split->num_types, cur_id);
       cur_id = block_ids[i];
       cur_length = 0;
     }
     ++cur_length;
   }
-  split->types_.push_back(cur_id);
-  split->lengths_.push_back(cur_length);
-  split->num_types_ = std::max(split->num_types_, cur_id);
-  ++split->num_types_;
+  split->types.push_back(cur_id);
+  split->lengths.push_back(cur_length);
+  split->num_types = std::max(split->num_types, cur_id);
+  ++split->num_types;
 }
 
 template<typename HistogramType, typename DataType>
@@ -303,12 +309,12 @@ void SplitByteVector(const std::vector<DataType>& data,
                      const double block_switch_cost,
                      BlockSplit* split) {
   if (data.empty()) {
-    split->num_types_ = 0;
+    split->num_types = 1;
     return;
   } else if (data.size() < kMinLengthForBlockSplitting) {
-    split->num_types_ = 1;
-    split->types_.push_back(0);
-    split->lengths_.push_back(data.size());
+    split->num_types = 1;
+    split->types.push_back(0);
+    split->lengths.push_back(data.size());
     return;
   }
   std::vector<HistogramType> histograms;
@@ -350,7 +356,6 @@ void SplitBlock(const std::vector<Command>& cmds,
                           &insert_and_copy_codes,
                           &distance_prefixes);
 
-
   SplitByteVector<HistogramLiteral>(
       literals,
       kSymbolsPerLiteralHistogram, kMaxLiteralHistograms,
@@ -378,7 +383,7 @@ void SplitBlockByTotalLength(const std::vector<Command>& all_commands,
   std::vector<Command> cur_block;
   for (int i = 0; i < all_commands.size(); ++i) {
     const Command& cmd = all_commands[i];
-    int cmd_length = cmd.insert_length_ + cmd.copy_length_;
+    int cmd_length = cmd.insert_len_ + cmd.copy_len_;
     if (total_length > length_limit) {
       blocks->push_back(cur_block);
       cur_block.clear();

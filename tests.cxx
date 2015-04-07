@@ -15,11 +15,11 @@ int main( int argc, char **argv )
 
         pak.resize(2);
 
-        pak[0]["filename"] = "test.txt";
-        pak[0]["content"] = "hello world";
+        pak[0]["name"] = "test.txt";
+        pak[0]["data"] = "hello world";
 
-        pak[1]["filename"] = "test2.txt";
-        pak[1]["content"] = 1337;
+        pak[1]["name"] = "test2.txt";
+        pak[1]["data"] = 1337;
 
         std::cout << "zipping files..." << std::endl;
 
@@ -40,21 +40,20 @@ int main( int argc, char **argv )
 
         assert( pak.size() == 2 );
 
-        assert( pak[0]["filename"] == "test.txt" );
-        assert( pak[0]["content"] == "hello world" );
+        assert( pak[0]["name"] == "test.txt" );
+        assert( pak[0]["data"] == "hello world" );
 
-        assert( pak[1]["filename"] == "test2.txt" );
-        assert( pak[1]["content"] == "1337" );
+        assert( pak[1]["name"] == "test2.txt" );
+        assert( pak[1]["data"] == "1337" );
     }
 
     if( const bool compression_tests = true )
     {
         using namespace bundle;
 
-        // 50 mb dataset
+        // 55 mb dataset
         std::string original( "There's a lady who's sure all that glitters is gold" );
-        for (int i = 0; i < 20; ++i) original += original;
-        original += "!";
+        for (int i = 0; i < 20; ++i) original += original + std::string( i + 1, 32 + i );
 
         if( argc > 1 ) {
             std::ifstream ifs( argv[1], std::ios::binary );
@@ -80,9 +79,9 @@ int main( int argc, char **argv )
         for( auto &result : data ) {
             if( result.pass ) {
                 pak.push_back( bundle::file() );
-                pak.back()["filename"] = std::string() + name_of(result.q);
-                pak.back()["ext"] = std::string() + ext_of(result.q);
-                pak.back()["content"] = result.packed;
+                pak.back()["name"] = std::string() + name_of(result.q);
+                pak.back()["type"] = std::string() + ext_of(result.q);
+                pak.back()["data"] = result.packed;
             }
         }
 

@@ -32,8 +32,8 @@
    - Source repository : https://github.com/Cyan4973/FiniteStateEntropy
    - Public forum : https://groups.google.com/forum/#!forum/lz4c
 ****************************************************************** */
-#ifndef FSE_HEADER
-#define FSE_HEADER
+#ifndef FSE_H_INCLUDE
+#define FSE_H_INCLUDE
 
 #if defined (__cplusplus)
 extern "C" {

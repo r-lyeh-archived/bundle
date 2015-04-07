@@ -24,6 +24,31 @@
 
 namespace brotli {
 
+static inline double BitsEntropy(const int *population, int size) {
+  int sum = 0;
+  double retval = 0;
+  const int *population_end = population + size;
+  int p;
+  if (size & 1) {
+    goto odd_number_of_elements_left;
+  }
+  while (population < population_end) {
+    p = *population++;
+    sum += p;
+    retval -= p * FastLog2(p);
+ odd_number_of_elements_left:
+    p = *population++;
+    sum += p;
+    retval -= p * FastLog2(p);
+  }
+  if (sum) retval -= sum * FastLog2(sum);
+  if (retval < sum) {
+    // At least one bit per literal is needed.
+    retval = sum;
+  }
+  return retval;
+}
+
 static const int kHuffmanExtraBits[kCodeLengthCodes] = {
   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 3,
 };
@@ -91,7 +116,7 @@ static inline int HuffmanBitCost(const uint8_t* depth, int length) {
 
   // create huffman tree of huffman tree
   uint8_t cost[kCodeLengthCodes] = { 0 };
-  CreateHuffmanTree(histogram, kCodeLengthCodes, 7, cost);
+  CreateHuffmanTree(histogram, kCodeLengthCodes, 7, 9, cost);
   // account for rle extra bits
   cost[16] += 2;
   cost[17] += 3;
@@ -123,7 +148,7 @@ double PopulationCost(const Histogram<kSize>& histogram) {
     return 20 + histogram.total_count_;
   }
   uint8_t depth[kSize] = { 0 };
-  CreateHuffmanTree(&histogram.data_[0], kSize, 15, depth);
+  CreateHuffmanTree(&histogram.data_[0], kSize, 15, 9, depth);
   int bits = 0;
   for (int i = 0; i < kSize; ++i) {
     bits += histogram.data_[i] * depth[i];

@@ -47,6 +47,16 @@ inline int Log2Floor(uint32_t n) {
 #endif
 }
 
+static inline int Log2FloorNonZero(uint32_t n) {
+#ifdef __GNUC__
+  return 31 ^ __builtin_clz(n);
+#else
+  unsigned int result = 0;
+  while (n >>= 1) result++;
+  return result;
+#endif
+}
+
 // Return ceiling(log2(n)) for positive integer n.  Returns -1 iff n == 0.
 inline int Log2Ceiling(uint32_t n) {
   int floor = Log2Floor(n);
@@ -154,7 +164,14 @@ static inline double FastLog2(int v) {
   if (v < (int)(sizeof(kLog2Table) / sizeof(kLog2Table[0]))) {
     return kLog2Table[v];
   }
-  return log2((double)v);
+#if defined(_MSC_VER) && _MSC_VER <= 1600
+  // Visual Studio 2010 does not have the log2() function defined, so we use
+  // log() and a multiplication instead.
+  static const double kLog2Inv = 1.4426950408889634f;
+  return log(static_cast<double>(v)) * kLog2Inv;
+#else
+  return log2(static_cast<double>(v));
+#endif
 }
 
 }  // namespace brotli

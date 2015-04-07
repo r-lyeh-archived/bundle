@@ -1,3 +1,13 @@
+/*
+ * Simple compression interface.
+ * Copyright (c) 2013, 2014, 2015, Mario 'rlyeh' Rodriguez
+ *
+ * Distributed under the Boost Software License, Version 1.0.
+ * (See license copy at http://www.boost.org/LICENSE_1_0.txt)
+
+ * - rlyeh ~~ listening to Boris / Missing Pieces
+ */
+ 
 #ifndef BUNDLE_HPP
 #define BUNDLE_HPP
 
@@ -28,12 +38,12 @@
 
 namespace bundle
 {
-    // libraries and/or compression modes
-    enum { RAW, SHOCO, LZ4, MINIZ, LZIP, LZMASDK, ZPAQ, LZ4HC, BROTLI, ZSTD }; /* archival: BZIP2, LZFX, LZHAM, LZP1, FSE, BLOSC, YAPPY */
+    // libraries and/or encoders
+    enum { RAW, SHOCO, LZ4, MINIZ, LZIP, LZMA20, ZPAQ, LZ4HC, BROTLI, ZSTD, LZMA25 }; /* archival: BZIP2, LZFX, LZHAM, LZP1, FSE, BLOSC, YAPPY */
     // some algorithm aliases
-    enum { UNDEFINED = RAW, ASCII = SHOCO, BINARY = MINIZ, LZ77 = LZ4HC, DEFLATE = MINIZ, LZMA = LZMASDK, CM = ZPAQ }; /* archival: BWT = BZIP2 */
+    enum { UNDEFINED = RAW, ASCII = SHOCO, BINARY = MINIZ, LZ77 = LZ4HC, DEFLATE = MINIZ, LZMA = LZMA20, CM = ZPAQ }; /* archival: BWT = BZIP2 */
     // speed/ratio aliases
-    enum { NONE = RAW, UNCOMPRESSED = RAW, VERY_FAST = LZ4, FAST = LZ4HC, DEFAULT = MINIZ, EXTRA = LZMASDK, UBER = ZPAQ, AUTO = ~0u };
+    enum { NONE = RAW, UNCOMPRESSED = RAW, VERY_FAST = LZ4, FAST = LZ4HC, DEFAULT = MINIZ, OVER = LZMA20, EXTRA = LZMA25, UBER = ZPAQ, AUTO = ~0u };
 
     // dont compress if compression ratio is below 5%
     enum { NO_COMPRESSION_TRESHOLD = 5 };
@@ -159,7 +169,8 @@ namespace bundle
             all.push_back( SHOCO );
             all.push_back( MINIZ );
             all.push_back( LZIP );
-            all.push_back( LZMASDK );
+            all.push_back( LZMA20 );
+            all.push_back( LZMA25 );
             all.push_back( ZPAQ );
             all.push_back( LZ4HC );
             all.push_back( BROTLI );
@@ -398,8 +409,8 @@ namespace bundle
                 ret += "\t{\n";
                 for( bundle::file::const_iterator it = file.begin(), end = file.end(); it != end; ++it ) {
                     const std::pair< std::string, bundle::string > &property = *it;
-                    if( property.first == "content" )
-                        ret += "\t\t\"size\":\"" + string( property.second.size() ) + "\",\n";
+                    if( property.first == "data" )
+                        ret += "\t\t\"data\":\"... (" + string( property.second.size() ) + " bytes)\",\n";
                     else
                         ret += "\t\t\"" + property.first + "\":\"" + property.second + "\",\n";
                 }

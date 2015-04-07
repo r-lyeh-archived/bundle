@@ -7,11 +7,13 @@
 // brotli
 #include "deps/brotli/enc/backward_references.cc"
 #include "deps/brotli/enc/block_splitter.cc"
+#include "deps/brotli/enc/brotli_bit_stream.cc"
 #include "deps/brotli/enc/encode.cc"
+//#include "deps/brotli/enc/encode_parallel.cc"
 #include "deps/brotli/enc/entropy_encode.cc"
 #include "deps/brotli/enc/histogram.cc"
 #include "deps/brotli/enc/literal_cost.cc"
-#include "deps/brotli/enc/prefix.cc"
+#include "deps/brotli/enc/metablock.cc"
 #define kBrotliDictionary                 kBrotliDictionary2
 #define kBrotliDictionaryOffsetsByLength  kBrotliDictionaryOffsetsByLength2
 #define kBrotliDictionarySizeBitsByLength kBrotliDictionarySizeBitsByLength2
@@ -21,6 +23,7 @@
 #include "deps/brotli/dec/decode.c"
 #include "deps/brotli/dec/huffman.c"
 #include "deps/brotli/dec/safe_malloc.c"
+#include "deps/brotli/dec/state.c"
 #include "deps/brotli/dec/streams.c"
 
 

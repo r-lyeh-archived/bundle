@@ -122,6 +122,8 @@
 #ifndef BROTLI_ENC_DICTIONARY_H_
 #define BROTLI_ENC_DICTIONARY_H_
 
+#include <stdint.h>
+
 static const uint8_t kBrotliDictionary[] = {
  0x74, 0x69, 0x6d, 0x65, 0x64, 0x6f, 0x77, 0x6e, 0x6c, 0x69, 0x66, 0x65, 0x6c,
  0x65, 0x66, 0x74, 0x62, 0x61, 0x63, 0x6b, 0x63, 0x6f, 0x64, 0x65, 0x64, 0x61,
@@ -9858,6 +9860,16 @@ inline int Log2Floor(uint32_t n) {
 #endif
 }
 
+static inline int Log2FloorNonZero(uint32_t n) {
+#ifdef __GNUC__
+  return 31 ^ __builtin_clz(n);
+#else
+  unsigned int result = 0;
+  while (n >>= 1) result++;
+  return result;
+#endif
+}
+
 // Return ceiling(log2(n)) for positive integer n.  Returns -1 iff n == 0.
 inline int Log2Ceiling(uint32_t n) {
   int floor = Log2Floor(n);
@@ -9965,7 +9977,14 @@ static inline double FastLog2(int v) {
   if (v < (int)(sizeof(kLog2Table) / sizeof(kLog2Table[0]))) {
 	return kLog2Table[v];
   }
-  return log2((double)v);
+#if defined(_MSC_VER) && _MSC_VER <= 1600
+  // Visual Studio 2010 does not have the log2() function defined, so we use
+  // log() and a multiplication instead.
+  static const double kLog2Inv = 1.4426950408889634f;
+  return log(static_cast<double>(v)) * kLog2Inv;
+#else
+  return log2(static_cast<double>(v));
+#endif
 }
 
 }  // namespace brotli
@@ -9994,6 +10013,8 @@ static inline double FastLog2(int v) {
 #define BROTLI_ENC_FIND_MATCH_LENGTH_H_
 
 #include <stdint.h>
+
+#include <stddef.h>
 
 
 //#line 1 "port.h"
@@ -10048,6 +10069,11 @@ static inline double FastLog2(int v) {
 #define IS_BIG_ENDIAN
 #endif
 #endif  // __BYTE_ORDER
+
+// Enable little-endian optimization for x64 architecture on Windows.
+#if (defined(_WIN32) || defined(_WIN64)) && defined(_M_X64)
+#define IS_LITTLE_ENDIAN
+#endif
 
 #if defined(COMPILER_GCC3)
 #define PREDICT_FALSE(x) (__builtin_expect(x, 0))
@@ -10138,8 +10164,8 @@ inline void BROTLI_UNALIGNED_STORE64(void *p, uint64_t v) {
 
 namespace brotli {
 
-// Separate implementation for x86_64, for speed.
-#if defined(__GNUC__) && defined(ARCH_K8)
+// Separate implementation for little-endian 64-bit targets, for speed.
+#if defined(__GNUC__) && defined(_LP64) && defined(IS_LITTLE_ENDIAN)
 
 static inline int FindMatchLengthWithLimit(const uint8_t* s1,
 										   const uint8_t* s2,
@@ -10200,6 +10226,94 @@ static inline int FindMatchLengthWithLimit(const uint8_t* s1,
 #endif  // BROTLI_ENC_FIND_MATCH_LENGTH_H_
 
 
+//#line 1 "prefix.h"
+// Copyright 2013 Google Inc. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// Functions for encoding of integers into prefix codes the amount of extra
+// bits, and the actual values of the extra bits.
+
+#ifndef BROTLI_ENC_PREFIX_H_
+#define BROTLI_ENC_PREFIX_H_
+
+#include <stdint.h>
+
+namespace brotli {
+
+static const int kNumInsertLenPrefixes = 24;
+static const int kNumCopyLenPrefixes = 24;
+static const int kNumCommandPrefixes = 704;
+static const int kNumBlockLenPrefixes = 26;
+static const int kNumDistanceShortCodes = 16;
+static const int kNumDistancePrefixes = 520;
+
+// Represents the range of values belonging to a prefix code:
+// [offset, offset + 2^nbits)
+struct PrefixCodeRange {
+  int offset;
+  int nbits;
+};
+
+static const PrefixCodeRange kBlockLengthPrefixCode[kNumBlockLenPrefixes] = {
+  {   1,  2}, {    5,  2}, {  9,   2}, {  13,  2},
+  {  17,  3}, {   25,  3}, {  33,  3}, {  41,  3},
+  {  49,  4}, {   65,  4}, {  81,  4}, {  97,  4},
+  { 113,  5}, {  145,  5}, { 177,  5}, { 209,  5},
+  { 241,  6}, {  305,  6}, { 369,  7}, { 497,  8},
+  { 753,  9}, { 1265, 10}, {2289, 11}, {4337, 12},
+  {8433, 13}, {16625, 24}
+};
+
+inline void GetBlockLengthPrefixCode(int len,
+									 int* code, int* n_extra, int* extra) {
+  *code = 0;
+  while (*code < 25 && len >= kBlockLengthPrefixCode[*code + 1].offset) {
+	++(*code);
+  }
+  *n_extra = kBlockLengthPrefixCode[*code].nbits;
+  *extra = len - kBlockLengthPrefixCode[*code].offset;
+}
+
+inline void PrefixEncodeCopyDistance(int distance_code,
+									 int num_direct_codes,
+									 int postfix_bits,
+									 uint16_t* code,
+									 uint32_t* extra_bits) {
+  distance_code -= 1;
+  if (distance_code < kNumDistanceShortCodes + num_direct_codes) {
+	*code = distance_code;
+	*extra_bits = 0;
+	return;
+  }
+  distance_code -= kNumDistanceShortCodes + num_direct_codes;
+  distance_code += (1 << (postfix_bits + 2));
+  int bucket = Log2Floor(distance_code) - 1;
+  int postfix_mask = (1 << postfix_bits) - 1;
+  int postfix = distance_code & postfix_mask;
+  int prefix = (distance_code >> bucket) & 1;
+  int offset = (2 + prefix) << bucket;
+  int nbits = bucket - postfix_bits;
+  *code = kNumDistanceShortCodes + num_direct_codes +
+	  ((2 * (nbits - 1) + prefix) << postfix_bits) + postfix;
+  *extra_bits = (nbits << 24) | ((distance_code - offset) >> postfix_bits);
+}
+
+}  // namespace brotli
+
+#endif  // BROTLI_ENC_PREFIX_H_
+
+
 //#line 1 "static_dict.h"
 // Copyright 2013 Google Inc. All Rights Reserved.
 //
@@ -10229,6 +10343,22 @@ namespace brotli {
 class StaticDictionary {
  public:
   StaticDictionary() {}
+  void Fill(bool enable_transforms) {
+	const int num_transforms = enable_transforms ? kNumTransforms : 1;
+	for (int t = num_transforms - 1; t >= 0; --t) {
+	  for (int i = kMaxDictionaryWordLength;
+		   i >= kMinDictionaryWordLength; --i) {
+		const int num_words = 1 << kBrotliDictionarySizeBitsByLength[i];
+		for (int j = num_words - 1; j >= 0; --j) {
+		  int word_id = t * num_words + j;
+		  std::string word = GetTransformedDictionaryWord(i, word_id);
+		  if (word.size() >= 4) {
+			Insert(word, i, word_id);
+		  }
+		}
+	  }
+	}
+  }
   void Insert(const std::string &str, int len, int dist) {
 	int ix = (dist << 6) + len;
 	std::unordered_map<std::string, int>::const_iterator it = map_.find(str);
@@ -10272,6 +10402,13 @@ class StaticDictionary {
 
 namespace brotli {
 
+static const int kDistanceCacheIndex[] = {
+  0, 1, 2, 3, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1,
+};
+static const int kDistanceCacheOffset[] = {
+  0, 0, 0, 0, -1, 1, -2, 2, -3, 3, -1, 1, -2, 2, -3, 3
+};
+
 // kHashMul32 multiplier has these properties:
 // * The multiplier must be odd. Otherwise we may lose the highest bit.
 // * No long streaks of 1s or 0s.
@@ -10312,41 +10449,178 @@ inline uint32_t Hash(const uint8_t *data) {
 // when it is not much longer and the bit cost for encoding it is more
 // than the saved literals.
 inline double BackwardReferenceScore(double average_cost,
-									 double start_cost4,
-									 double start_cost3,
-									 double start_cost2,
 									 int copy_length,
 									 int backward_reference_offset) {
-  double retval = 0;
-  switch (copy_length) {
-	case 2: retval = start_cost2; break;
-	case 3: retval = start_cost3; break;
-	default: retval = start_cost4 + (copy_length - 4) * average_cost; break;
-  }
-  retval -= 1.20 * Log2Floor(backward_reference_offset);
-  return retval;
+  return (copy_length * average_cost -
+		  1.20 * Log2Floor(backward_reference_offset));
 }
 
 inline double BackwardReferenceScoreUsingLastDistance(double average_cost,
-													  double start_cost4,
-													  double start_cost3,
-													  double start_cost2,
 													  int copy_length,
 													  int distance_short_code) {
-  double retval = 0;
-  switch (copy_length) {
-	case 2: retval = start_cost2; break;
-	case 3: retval = start_cost3; break;
-	default: retval = start_cost4 + (copy_length - 4) * average_cost; break;
-  }
   static const double kDistanceShortCodeBitCost[16] = {
 	-0.6, 0.95, 1.17, 1.27,
 	0.93, 0.93, 0.96, 0.96, 0.99, 0.99,
 	1.05, 1.05, 1.15, 1.15, 1.25, 1.25
   };
-  retval -= kDistanceShortCodeBitCost[distance_short_code];
-  return retval;
+  return (average_cost * copy_length
+		  - kDistanceShortCodeBitCost[distance_short_code]);
 }
+
+// A (forgetful) hash table to the data seen by the compressor, to
+// help create backward references to previous data.
+//
+// This is a hash map of fixed size (kBucketSize). Starting from the
+// given index, kBucketSweep buckets are used to store values of a key.
+template <int kBucketBits, int kBucketSweep>
+class HashLongestMatchQuickly {
+ public:
+  HashLongestMatchQuickly() {
+	Reset();
+  }
+  void Reset() {
+	// It is not strictly necessary to fill this buffer here, but
+	// not filling will make the results of the compression stochastic
+	// (but correct). This is because random data would cause the
+	// system to find accidentally good backward references here and there.
+	std::fill(&buckets_[0],
+			  &buckets_[sizeof(buckets_) / sizeof(buckets_[0])],
+			  0);
+  }
+  // Look at 4 bytes at data.
+  // Compute a hash from these, and store the value somewhere within
+  // [ix .. ix+3].
+  inline void Store(const uint8_t *data, const int ix) {
+	const uint32_t key = Hash<kBucketBits, 4>(data);
+	// Wiggle the value with the bucket sweep range.
+	const uint32_t off = (static_cast<uint32_t>(ix) >> 3) % kBucketSweep;
+	buckets_[key + off] = ix;
+  }
+
+  // Store hashes for a range of data.
+  void StoreHashes(const uint8_t *data, size_t len, int startix, int mask) {
+	for (int p = 0; p < len; ++p) {
+	  Store(&data[p & mask], startix + p);
+	}
+  }
+
+  bool HasStaticDictionary() const { return false; }
+
+  // Find a longest backward match of &ring_buffer[cur_ix & ring_buffer_mask]
+  // up to the length of max_length.
+  //
+  // Does not look for matches longer than max_length.
+  // Does not look for matches further away than max_backward.
+  // Writes the best found match length into best_len_out.
+  // Writes the index (&data[index]) of the start of the best match into
+  // best_distance_out.
+  inline bool FindLongestMatch(const uint8_t * __restrict ring_buffer,
+							   const size_t ring_buffer_mask,
+							   const float* __restrict literal_cost,
+							   const size_t literal_cost_mask,
+							   const double average_cost,
+							   const int* __restrict distance_cache,
+							   const uint32_t cur_ix,
+							   const uint32_t max_length,
+							   const uint32_t max_backward,
+							   int * __restrict best_len_out,
+							   int * __restrict best_len_code_out,
+							   int * __restrict best_distance_out,
+							   double* __restrict best_score_out) {
+	const int best_len_in = *best_len_out;
+	const int cur_ix_masked = cur_ix & ring_buffer_mask;
+	int compare_char = ring_buffer[cur_ix_masked + best_len_in];
+	double best_score = *best_score_out;
+	int best_len = best_len_in;
+	int backward = distance_cache[0];
+	size_t prev_ix = cur_ix - backward;
+	bool match_found = false;
+	if (prev_ix < cur_ix) {
+	  prev_ix &= ring_buffer_mask;
+	  if (compare_char == ring_buffer[prev_ix + best_len]) {
+		int len = FindMatchLengthWithLimit(&ring_buffer[prev_ix],
+										   &ring_buffer[cur_ix_masked],
+										   max_length);
+		if (len >= 4) {
+		  best_score = BackwardReferenceScoreUsingLastDistance(average_cost,
+															   len, 0);
+		  best_len = len;
+		  *best_len_out = len;
+		  *best_len_code_out = len;
+		  *best_distance_out = backward;
+		  *best_score_out = best_score;
+		  compare_char = ring_buffer[cur_ix_masked + best_len];
+		  if (kBucketSweep == 1) {
+			return true;
+		  } else {
+			match_found = true;
+		  }
+		}
+	  }
+	}
+	const uint32_t key = Hash<kBucketBits, 4>(&ring_buffer[cur_ix_masked]);
+	if (kBucketSweep == 1) {
+	  // Only one to look for, don't bother to prepare for a loop.
+	  prev_ix = buckets_[key];
+	  backward = cur_ix - prev_ix;
+	  prev_ix &= ring_buffer_mask;
+	  if (compare_char != ring_buffer[prev_ix + best_len_in]) {
+		return false;
+	  }
+	  if (PREDICT_FALSE(backward == 0 || backward > max_backward)) {
+		return false;
+	  }
+	  const int len = FindMatchLengthWithLimit(&ring_buffer[prev_ix],
+											   &ring_buffer[cur_ix_masked],
+											   max_length);
+	  if (len >= 4) {
+		*best_len_out = len;
+		*best_len_code_out = len;
+		*best_distance_out = backward;
+		*best_score_out = BackwardReferenceScore(average_cost, len, backward);
+		return true;
+	  } else {
+		return false;
+	  }
+	} else {
+	  uint32_t *bucket = buckets_ + key;
+	  prev_ix = *bucket++;
+	  for (int i = 0; i < kBucketSweep; ++i, prev_ix = *bucket++) {
+		const int backward = cur_ix - prev_ix;
+		prev_ix &= ring_buffer_mask;
+		if (compare_char != ring_buffer[prev_ix + best_len]) {
+		  continue;
+		}
+		if (PREDICT_FALSE(backward == 0 || backward > max_backward)) {
+		  continue;
+		}
+		const int len =
+			FindMatchLengthWithLimit(&ring_buffer[prev_ix],
+									 &ring_buffer[cur_ix_masked],
+									 max_length);
+		if (len >= 4) {
+		  const double score = BackwardReferenceScore(average_cost,
+													  len, backward);
+		  if (best_score < score) {
+			best_score = score;
+			best_len = len;
+			*best_len_out = best_len;
+			*best_len_code_out = best_len;
+			*best_distance_out = backward;
+			*best_score_out = score;
+			compare_char = ring_buffer[cur_ix_masked + best_len];
+			match_found = true;
+		  }
+		}
+	  }
+	  return match_found;
+	}
+  }
+
+ private:
+  static const uint32_t kBucketSize = 1 << kBucketBits;
+  uint32_t buckets_[kBucketSize + kBucketSweep];
+};
 
 // A (forgetful) hash table to the data seen by the compressor, to
 // help create backward references to previous data.
@@ -10354,17 +10628,15 @@ inline double BackwardReferenceScoreUsingLastDistance(double average_cost,
 // This is a hash map of fixed size (kBucketSize) to a ring buffer of
 // fixed size (kBlockSize). The ring buffer contains the last kBlockSize
 // index positions of the given hash key in the compressed data.
-template <int kBucketBits, int kBlockBits, int kMinLength>
+template <int kBucketBits,
+		  int kBlockBits,
+		  int kMinLength,
+		  int kNumLastDistancesToCheck,
+		  bool kUseCostModel,
+		  bool kUseDictionary>
 class HashLongestMatch {
  public:
-  HashLongestMatch()
-	  : last_distance1_(4),
-		last_distance2_(11),
-		last_distance3_(15),
-		last_distance4_(16),
-		insert_length_(0),
-		average_cost_(5.4),
-		static_dict_(NULL) {
+  HashLongestMatch() : static_dict_(NULL) {
 	Reset();
   }
   void Reset() {
@@ -10403,72 +10675,58 @@ class HashLongestMatch {
   // into best_distance_out.
   // Write the score of the best match into best_score_out.
   bool FindLongestMatch(const uint8_t * __restrict data,
-						const float * __restrict literal_cost,
 						const size_t ring_buffer_mask,
+						const float * __restrict literal_cost,
+						const size_t literal_cost_mask,
+						const double average_cost,
+						const int* __restrict distance_cache,
 						const uint32_t cur_ix,
 						uint32_t max_length,
 						const uint32_t max_backward,
-						size_t * __restrict best_len_out,
-						size_t * __restrict best_len_code_out,
-						size_t * __restrict best_distance_out,
-						double * __restrict best_score_out,
-						bool * __restrict in_dictionary) {
-	*in_dictionary = true;
+						int * __restrict best_len_out,
+						int * __restrict best_len_code_out,
+						int * __restrict best_distance_out,
+						double * __restrict best_score_out) {
 	*best_len_code_out = 0;
 	const size_t cur_ix_masked = cur_ix & ring_buffer_mask;
-	const double start_cost4 = literal_cost == NULL ? 20 :
-		literal_cost[cur_ix_masked] +
-		literal_cost[(cur_ix + 1) & ring_buffer_mask] +
-		literal_cost[(cur_ix + 2) & ring_buffer_mask] +
-		literal_cost[(cur_ix + 3) & ring_buffer_mask];
-	const double start_cost3 = literal_cost == NULL ? 15 :
-		literal_cost[cur_ix_masked] +
-		literal_cost[(cur_ix + 1) & ring_buffer_mask] +
-		literal_cost[(cur_ix + 2) & ring_buffer_mask] + 0.3;
-	double start_cost2 = literal_cost == NULL ? 10 :
-		literal_cost[cur_ix_masked] +
-		literal_cost[(cur_ix + 1) & ring_buffer_mask] + 1.2;
+	double start_cost_diff4 = 0.0;
+	double start_cost_diff3 = 0.0;
+	double start_cost_diff2 = 0.0;
+	if (kUseCostModel) {
+	  start_cost_diff4 = literal_cost == NULL ? 0 :
+		  literal_cost[cur_ix & literal_cost_mask] +
+		  literal_cost[(cur_ix + 1) & literal_cost_mask] +
+		  literal_cost[(cur_ix + 2) & literal_cost_mask] +
+		  literal_cost[(cur_ix + 3) & literal_cost_mask] -
+		  4 * average_cost;
+	  start_cost_diff3 = literal_cost == NULL ? 0 :
+		  literal_cost[cur_ix & literal_cost_mask] +
+		  literal_cost[(cur_ix + 1) & literal_cost_mask] +
+		  literal_cost[(cur_ix + 2) & literal_cost_mask] -
+		  3 * average_cost + 0.3;
+	  start_cost_diff2 = literal_cost == NULL ? 0 :
+		  literal_cost[cur_ix & literal_cost_mask] +
+		  literal_cost[(cur_ix + 1) & literal_cost_mask] -
+		  2 * average_cost + 1.2;
+	}
 	bool match_found = false;
 	// Don't accept a short copy from far away.
-	double best_score = 8.115;
-	if (insert_length_ < 4) {
-	  double cost_diff[4] = { 0.10, 0.04, 0.02, 0.01 };
-	  best_score += cost_diff[insert_length_];
-	}
-	size_t best_len = *best_len_out;
+	double best_score = *best_score_out;
+	int best_len = *best_len_out;
 	*best_len_out = 0;
-	size_t best_ix = 1;
 	// Try last distance first.
-	for (int i = 0; i < 16; ++i) {
-	  size_t prev_ix = cur_ix;
-	  switch(i) {
-		case 0: prev_ix -= last_distance1_; break;
-		case 1: prev_ix -= last_distance2_; break;
-		case 2: prev_ix -= last_distance3_; break;
-		case 3: prev_ix -= last_distance4_; break;
-
-		case 4: prev_ix -= last_distance1_ - 1; break;
-		case 5: prev_ix -= last_distance1_ + 1; break;
-		case 6: prev_ix -= last_distance1_ - 2; break;
-		case 7: prev_ix -= last_distance1_ + 2; break;
-		case 8: prev_ix -= last_distance1_ - 3; break;
-		case 9: prev_ix -= last_distance1_ + 3; break;
-
-		case 10: prev_ix -= last_distance2_ - 1; break;
-		case 11: prev_ix -= last_distance2_ + 1; break;
-		case 12: prev_ix -= last_distance2_ - 2; break;
-		case 13: prev_ix -= last_distance2_ + 2; break;
-		case 14: prev_ix -= last_distance2_ - 3; break;
-		case 15: prev_ix -= last_distance2_ + 3; break;
-	  }
+	for (int i = 0; i < kNumLastDistancesToCheck; ++i) {
+	  const int idx = kDistanceCacheIndex[i];
+	  const int backward = distance_cache[idx] + kDistanceCacheOffset[i];
+	  size_t prev_ix = cur_ix - backward;
 	  if (prev_ix >= cur_ix) {
 		continue;
 	  }
-	  const size_t backward = cur_ix - prev_ix;
 	  if (PREDICT_FALSE(backward > max_backward)) {
 		continue;
 	  }
 	  prev_ix &= ring_buffer_mask;
+
 	  if (cur_ix_masked + best_len > ring_buffer_mask ||
 		  prev_ix + best_len > ring_buffer_mask ||
 		  data[cur_ix_masked + best_len] != data[prev_ix + best_len]) {
@@ -10482,29 +10740,30 @@ class HashLongestMatch {
 		// Comparing for >= 2 does not change the semantics, but just saves for
 		// a few unnecessary binary logarithms in backward reference score,
 		// since we are not interested in such short matches.
-		const double score = BackwardReferenceScoreUsingLastDistance(
-			average_cost_,
-			start_cost4,
-			start_cost3,
-			start_cost2,
-			len, i);
+		double score = BackwardReferenceScoreUsingLastDistance(
+			average_cost, len, i);
+		if (kUseCostModel) {
+		  switch (len) {
+			case 2: score += start_cost_diff2; break;
+			case 3: score += start_cost_diff3; break;
+			default: score += start_cost_diff4;
+		  }
+		}
 		if (best_score < score) {
 		  best_score = score;
 		  best_len = len;
-		  best_ix = backward;
 		  *best_len_out = best_len;
 		  *best_len_code_out = best_len;
-		  *best_distance_out = best_ix;
+		  *best_distance_out = backward;
 		  *best_score_out = best_score;
 		  match_found = true;
-		  *in_dictionary = backward > max_backward;
 		}
 	  }
 	}
 	if (kMinLength == 2) {
 	  int stop = int(cur_ix) - 64;
 	  if (stop < 0) { stop = 0; }
-	  start_cost2 -= 1.0;
+	  start_cost_diff2 -= 1.0;
 	  for (int i = cur_ix - 1; i > stop; --i) {
 		size_t prev_ix = i;
 		const size_t backward = cur_ix - prev_ix;
@@ -10517,15 +10776,15 @@ class HashLongestMatch {
 		  continue;
 		}
 		int len = 2;
-		const double score = start_cost2 - 2.3 * Log2Floor(backward);
+		const double score =
+			average_cost * 2 - 2.3 * Log2Floor(backward) + start_cost_diff2;
 
 		if (best_score < score) {
 		  best_score = score;
 		  best_len = len;
-		  best_ix = backward;
 		  *best_len_out = best_len;
 		  *best_len_code_out = best_len;
-		  *best_distance_out = best_ix;
+		  *best_distance_out = backward;
 		  match_found = true;
 		}
 	  }
@@ -10553,26 +10812,24 @@ class HashLongestMatch {
 		  // Comparing for >= 3 does not change the semantics, but just saves
 		  // for a few unnecessary binary logarithms in backward reference
 		  // score, since we are not interested in such short matches.
-		  const double score = BackwardReferenceScore(average_cost_,
-													  start_cost4,
-													  start_cost3,
-													  start_cost2,
-													  len, backward);
+		  double score = BackwardReferenceScore(average_cost,
+												len, backward);
+		  if (kUseCostModel) {
+			score += (len >= 4) ? start_cost_diff4 : start_cost_diff3;
+		  }
 		  if (best_score < score) {
 			best_score = score;
 			best_len = len;
-			best_ix = backward;
 			*best_len_out = best_len;
 			*best_len_code_out = best_len;
-			*best_distance_out = best_ix;
+			*best_distance_out = backward;
 			*best_score_out = best_score;
 			match_found = true;
-			*in_dictionary = false;
 		  }
 		}
 	  }
 	}
-	if (static_dict_ != NULL) {
+	if (kUseDictionary && static_dict_ != NULL) {
 	  // We decide based on first 4 bytes how many bytes to test for.
 	  int prefix = BROTLI_UNALIGNED_LOAD32(&data[cur_ix_masked]);
 	  int maxlen = static_dict_->GetLength(prefix);
@@ -10583,42 +10840,23 @@ class HashLongestMatch {
 		int word_id;
 		if (static_dict_->Get(snippet, &copy_len_code, &word_id)) {
 		  const size_t backward = max_backward + word_id + 1;
-		  const double score = BackwardReferenceScore(average_cost_,
-													  start_cost4,
-													  start_cost3,
-													  start_cost2,
-													  len, backward);
+		  const double score = (BackwardReferenceScore(average_cost,
+													   len, backward) +
+								start_cost_diff4);
 		  if (best_score < score) {
 			best_score = score;
 			best_len = len;
-			best_ix = backward;
 			*best_len_out = best_len;
 			*best_len_code_out = copy_len_code;
-			*best_distance_out = best_ix;
+			*best_distance_out = backward;
 			*best_score_out = best_score;
 			match_found = true;
-			*in_dictionary = true;
 		  }
 		}
 	  }
 	}
 	return match_found;
   }
-
-  void set_last_distance(int v) {
-	if (last_distance1_ != v) {
-	  last_distance4_ = last_distance3_;
-	  last_distance3_ = last_distance2_;
-	  last_distance2_ = last_distance1_;
-	  last_distance1_ = v;
-	}
-  }
-
-  int last_distance() const { return last_distance1_; }
-
-  void set_insert_length(int v) { insert_length_ = v; }
-
-  void set_average_cost(double v) { average_cost_ = v; }
 
  private:
   // Number of hash buckets.
@@ -10637,46 +10875,48 @@ class HashLongestMatch {
   // Buckets containing kBlockSize of backward references.
   int buckets_[kBucketSize][kBlockSize];
 
-  int last_distance1_;
-  int last_distance2_;
-  int last_distance3_;
-  int last_distance4_;
-
-  // Cost adjustment for how many literals we are planning to insert
-  // anyway.
-  int insert_length_;
-
-  double average_cost_;
-
   const StaticDictionary *static_dict_;
 };
 
 struct Hashers {
-  enum Type {
-	HASH_15_8_4 = 0,
-	HASH_15_8_2 = 1,
-  };
+  typedef HashLongestMatchQuickly<16, 1> H1;
+  typedef HashLongestMatchQuickly<17, 4> H2;
+  typedef HashLongestMatch<14, 4, 4, 4, false, false> H3;
+  typedef HashLongestMatch<14, 5, 4, 4, false, false> H4;
+  typedef HashLongestMatch<15, 6, 4, 10, false, false> H5;
+  typedef HashLongestMatch<15, 7, 4, 10, false, false> H6;
+  typedef HashLongestMatch<15, 8, 4, 16, true, false> H7;
+  typedef HashLongestMatch<15, 8, 4, 16, true, true> H8;
+  typedef HashLongestMatch<15, 8, 2, 16, true, false> H9;
 
-  void Init(Type type) {
+  void Init(int type) {
 	switch (type) {
-	  case HASH_15_8_4:
-		hash_15_8_4.reset(new HashLongestMatch<15, 8, 4>());
-		break;
-	  case HASH_15_8_2:
-		hash_15_8_2.reset(new HashLongestMatch<15, 8, 2>());
-		break;
-	  default:
-		break;
+	  case 1: hash_h1.reset(new H1); break;
+	  case 2: hash_h2.reset(new H2); break;
+	  case 3: hash_h3.reset(new H3); break;
+	  case 4: hash_h4.reset(new H4); break;
+	  case 5: hash_h5.reset(new H5); break;
+	  case 6: hash_h6.reset(new H6); break;
+	  case 7: hash_h7.reset(new H7); break;
+	  case 8: hash_h8.reset(new H8); break;
+	  case 9: hash_h9.reset(new H9); break;
+	  default: break;
 	}
   }
 
   void SetStaticDictionary(const StaticDictionary *dict) {
-	if (hash_15_8_4.get() != NULL) hash_15_8_4->SetStaticDictionary(dict);
-	if (hash_15_8_2.get() != NULL) hash_15_8_2->SetStaticDictionary(dict);
+	if (hash_h8.get() != NULL) hash_h8->SetStaticDictionary(dict);
   }
 
-  std::unique_ptr<HashLongestMatch<15, 8, 4> > hash_15_8_4;
-  std::unique_ptr<HashLongestMatch<15, 8, 2> > hash_15_8_2;
+  std::unique_ptr<H1> hash_h1;
+  std::unique_ptr<H2> hash_h2;
+  std::unique_ptr<H3> hash_h3;
+  std::unique_ptr<H4> hash_h4;
+  std::unique_ptr<H5> hash_h5;
+  std::unique_ptr<H6> hash_h6;
+  std::unique_ptr<H7> hash_h7;
+  std::unique_ptr<H8> hash_h8;
+  std::unique_ptr<H9> hash_h9;
 };
 
 }  // namespace brotli
@@ -10708,28 +10948,127 @@ struct Hashers {
 
 namespace brotli {
 
-// Command holds a sequence of literals and a backward reference copy.
-class Command {
- public:
-  // distance_code_ is initialized to 17 because it refers to the distance
-  // code of a backward distance of 1, this way the last insert-only command
-  // won't use the last-distance short code, and accordingly distance_prefix_ is
-  // set to 16
-  Command() : insert_length_(0), copy_length_(0), copy_length_code_(0),
-			  copy_distance_(0), distance_code_(17),
-			  distance_prefix_(16), command_prefix_(0),
-			  distance_extra_bits_(0), distance_extra_bits_value_(0) {}
+static inline void GetDistCode(int distance_code,
+							   uint16_t* code, uint32_t* extra) {
+  distance_code -= 1;
+  if (distance_code < 16) {
+	*code = distance_code;
+	*extra = 0;
+  } else {
+	distance_code -= 12;
+	int numextra = Log2FloorNonZero(distance_code) - 1;
+	int prefix = distance_code >> numextra;
+	*code = 12 + 2 * numextra + prefix;
+	*extra = (numextra << 24) | (distance_code - (prefix << numextra));
+  }
+}
 
-  uint32_t insert_length_;
-  uint32_t copy_length_;
-  uint32_t copy_length_code_;
-  uint32_t copy_distance_;
-  // Values <= 16 are short codes, values > 16 are distances shifted by 16.
-  uint32_t distance_code_;
-  uint16_t distance_prefix_;
-  uint16_t command_prefix_;
-  int distance_extra_bits_;
-  uint32_t distance_extra_bits_value_;
+static int insbase[] =   { 0, 1, 2, 3, 4, 5, 6, 8, 10, 14, 18, 26, 34, 50, 66,
+	98, 130, 194, 322, 578, 1090, 2114, 6210, 22594 };
+static int insextra[] =  { 0, 0, 0, 0, 0, 0, 1, 1,  2,  2,  3,  3,  4,  4,  5,
+	5,   6,   7,   8,   9,   10,   12,   14,    24 };
+static int copybase[] =  { 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 18, 22, 30, 38,
+	54,  70, 102, 134, 198, 326,   582, 1094,  2118 };
+static int copyextra[] = { 0, 0, 0, 0, 0, 0, 0, 0,  1,  1,  2,  2,  3,  3,  4,
+	4,   5,   5,   6,   7,   8,     9,   10,    24 };
+
+static inline int GetInsertLengthCode(int insertlen) {
+  if (insertlen < 6) {
+	return insertlen;
+  } else if (insertlen < 130) {
+	insertlen -= 2;
+	int nbits = Log2FloorNonZero(insertlen) - 1;
+	return (nbits << 1) + (insertlen >> nbits) + 2;
+  } else if (insertlen < 2114) {
+	return Log2FloorNonZero(insertlen - 66) + 10;
+  } else if (insertlen < 6210) {
+	return 21;
+  } else if (insertlen < 22594) {
+	return 22;
+  } else {
+	return 23;
+  }
+}
+
+static inline int GetCopyLengthCode(int copylen) {
+  if (copylen < 10) {
+	return copylen - 2;
+  } else if (copylen < 134) {
+	copylen -= 6;
+	int nbits = Log2FloorNonZero(copylen) - 1;
+	return (nbits << 1) + (copylen >> nbits) + 4;
+  } else if (copylen < 2118) {
+	return Log2FloorNonZero(copylen - 70) + 12;
+  } else {
+	return 23;
+  }
+}
+
+static inline int CombineLengthCodes(
+	int inscode, int copycode, int distancecode) {
+  int bits64 = (copycode & 0x7u) | ((inscode & 0x7u) << 3);
+  if (distancecode == 0 && inscode < 8 && copycode < 16) {
+	return (copycode < 8) ? bits64 : (bits64 | 64);
+  } else {
+	// "To convert an insert-and-copy length code to an insert length code and
+	// a copy length code, the following table can be used"
+	static const int cells[9] = { 2, 3, 6, 4, 5, 8, 7, 9, 10 };
+	return (cells[(copycode >> 3) + 3 * (inscode >> 3)] << 6) | bits64;
+  }
+}
+
+static inline void GetLengthCode(int insertlen, int copylen, int distancecode,
+								 uint16_t* code, uint64_t* extra) {
+  int inscode = GetInsertLengthCode(insertlen);
+  int copycode = GetCopyLengthCode(copylen);
+  uint64_t insnumextra = insextra[inscode];
+  uint64_t numextra = insnumextra + copyextra[copycode];
+  uint64_t insextraval = insertlen - insbase[inscode];
+  uint64_t copyextraval = copylen - copybase[copycode];
+  *code = CombineLengthCodes(inscode, copycode, distancecode);
+  *extra = (numextra << 48) | (copyextraval << insnumextra) | insextraval;
+}
+
+struct Command {
+  Command() {}
+
+  Command(int insertlen, int copylen, int copylen_code, int distance_code)
+	  : insert_len_(insertlen), copy_len_(copylen) {
+	GetDistCode(distance_code, &dist_prefix_, &dist_extra_);
+	GetLengthCode(insertlen, copylen_code, dist_prefix_,
+				  &cmd_prefix_, &cmd_extra_);
+  }
+
+  Command(int insertlen)
+	  : insert_len_(insertlen), copy_len_(0), dist_prefix_(16), dist_extra_(0) {
+	GetLengthCode(insertlen, 4, dist_prefix_, &cmd_prefix_, &cmd_extra_);
+  }
+
+  int DistanceCode() const {
+	if (dist_prefix_ < 16) {
+	  return dist_prefix_ + 1;
+	}
+	int nbits = dist_extra_ >> 24;
+	int extra = dist_extra_ & 0xffffff;
+	int prefix = dist_prefix_ - 12 - 2 * nbits;
+	return (prefix << nbits) + extra + 13;
+  }
+
+  int DistanceContext() const {
+	int r = cmd_prefix_ >> 6;
+	int c = cmd_prefix_ & 7;
+	if ((r == 0 || r == 2 || r == 4 || r == 7) && (c <= 2)) {
+	  return c;
+	}
+	return 3;
+  }
+
+  int insert_len_;
+  int copy_len_;
+  uint16_t cmd_prefix_;
+  uint16_t dist_prefix_;
+  uint64_t cmd_extra_;
+  uint32_t dist_extra_;
 };
 
 }  // namespace brotli
@@ -10741,12 +11080,18 @@ namespace brotli {
 void CreateBackwardReferences(size_t num_bytes,
 							  size_t position,
 							  const uint8_t* ringbuffer,
-							  const float* literal_cost,
 							  size_t ringbuffer_mask,
+							  const float* literal_cost,
+							  size_t literal_cost_mask,
 							  const size_t max_backward_limit,
+							  const double base_min_score,
+							  const int quality,
 							  Hashers* hashers,
-							  Hashers::Type hash_type,
-							  std::vector<Command>* commands);
+							  int hash_type,
+							  int* dist_cache,
+							  int* last_insert_len,
+							  Command* commands,
+							  int* num_commands);
 
 }  // namespace brotli
 
@@ -10757,173 +11102,230 @@ void CreateBackwardReferences(size_t num_bytes,
 
 namespace brotli {
 
-template<typename Hasher>
+template<typename Hasher, bool kUseCostModel, bool kUseDictionary>
 void CreateBackwardReferences(size_t num_bytes,
 							  size_t position,
 							  const uint8_t* ringbuffer,
-							  const float* literal_cost,
 							  size_t ringbuffer_mask,
+							  const float* literal_cost,
+							  size_t literal_cost_mask,
 							  const size_t max_backward_limit,
+							  const double base_min_score,
+							  const int quality,
 							  Hasher* hasher,
-							  std::vector<Command>* commands) {
-  // Length heuristic that seems to help probably by better selection
-  // of lazy matches of similar lengths.
-  int insert_length = 0;
+							  int* dist_cache,
+							  int* last_insert_len,
+							  Command* commands,
+							  int* num_commands) {
+  if (num_bytes >= 3 && position >= 3) {
+	// Prepare the hashes for three last bytes of the last write.
+	// These could not be calculated before, since they require knowledge
+	// of both the previous and the current block.
+	hasher->Store(&ringbuffer[(position - 3) & ringbuffer_mask],
+				  position - 3);
+	hasher->Store(&ringbuffer[(position - 2) & ringbuffer_mask],
+				  position - 2);
+	hasher->Store(&ringbuffer[(position - 1) & ringbuffer_mask],
+				  position - 1);
+  }
+  const Command * const orig_commands = commands;
+  int insert_length = *last_insert_len;
   size_t i = position & ringbuffer_mask;
   const int i_diff = position - i;
   const size_t i_end = i + num_bytes;
 
-  const int random_heuristics_window_size = 512;
+  // For speed up heuristics for random data.
+  const int random_heuristics_window_size = quality < 9 ? 64 : 512;
   int apply_random_heuristics = i + random_heuristics_window_size;
 
-  double average_cost = 0.0;
-  for (int k = position; k < position + num_bytes; ++k) {
-	average_cost += literal_cost[k & ringbuffer_mask];
+  double average_cost = 5.4;
+  if (kUseCostModel) {
+	average_cost = 0.0;
+	for (int k = position; k < position + num_bytes; ++k) {
+	  average_cost += literal_cost[k & literal_cost_mask];
+	}
+	average_cost /= num_bytes;
   }
-  average_cost /= num_bytes;
-  hasher->set_average_cost(average_cost);
 
   // M1 match is for considering for two repeated copies, if moving
   // one literal form the previous copy to the current one allows the
   // current copy to be more efficient (because the way static dictionary
   // codes words). M1 matching improves text compression density by ~0.15 %.
   bool match_found_M1 = false;
-  size_t best_len_M1 = 0;
-  size_t best_len_code_M1 = 0;
-  size_t best_dist_M1 = 0;
+  int best_len_M1 = 0;
+  int best_len_code_M1 = 0;
+  int best_dist_M1 = 0;
   double best_score_M1 = 0;
-  while (i + 2 < i_end) {
-	size_t best_len = 0;
-	size_t best_len_code = 0;
-	size_t best_dist = 0;
-	double best_score = 0;
+  while (i + 3 < i_end) {
+	int max_length = i_end - i;
 	size_t max_distance = std::min(i + i_diff, max_backward_limit);
-	bool in_dictionary;
-	hasher->set_insert_length(insert_length);
+	double min_score = base_min_score;
+	if (kUseCostModel && insert_length < 8) {
+	  double cost_diff[8] =
+		  { 0.1, 0.038, 0.019, 0.013, 0.001, 0.001, 0.001, 0.001 };
+	  min_score += cost_diff[insert_length];
+	}
+	int best_len = 0;
+	int best_len_code = 0;
+	int best_dist = 0;
+	double best_score = min_score;
 	bool match_found = hasher->FindLongestMatch(
-		ringbuffer, literal_cost, ringbuffer_mask,
-		i + i_diff, i_end - i, max_distance,
-		&best_len, &best_len_code, &best_dist, &best_score,
-		&in_dictionary);
-	bool best_in_dictionary = in_dictionary;
+		ringbuffer, ringbuffer_mask,
+		literal_cost, literal_cost_mask, average_cost,
+		dist_cache, i + i_diff, max_length, max_distance,
+		&best_len, &best_len_code, &best_dist, &best_score);
 	if (match_found) {
-	  if (match_found_M1 && best_score_M1 > best_score) {
+	  if (kUseDictionary && match_found_M1 && best_score_M1 > best_score) {
 		// Two copies after each other. Take the last literal from the
 		// last copy, and use it as the first of this one.
-		(commands->rbegin())->copy_length_ -= 1;
-		(commands->rbegin())->copy_length_code_ -= 1;
+		Command prev_cmd = commands[-1];
+		commands[-1] = Command(prev_cmd.insert_len_,
+							   prev_cmd.copy_len_ - 1,
+							   prev_cmd.copy_len_ - 1,
+							   prev_cmd.DistanceCode());
 		hasher->Store(ringbuffer + i, i + i_diff);
 		--i;
 		best_len = best_len_M1;
 		best_len_code = best_len_code_M1;
 		best_dist = best_dist_M1;
 		best_score = best_score_M1;
-		// in_dictionary doesn't need to be correct, but it is the only
-		// reason why M1 matching should be beneficial here. Setting it here
-		// will only disable further M1 matching against this copy.
-		best_in_dictionary = true;
-		in_dictionary = true;
 	  } else {
 		// Found a match. Let's look for something even better ahead.
 		int delayed_backward_references_in_row = 0;
-		while (i + 4 < i_end &&
-			   delayed_backward_references_in_row < 4) {
-		  size_t best_len_2 = 0;
-		  size_t best_len_code_2 = 0;
-		  size_t best_dist_2 = 0;
-		  double best_score_2 = 0;
+		for (;;) {
+		  --max_length;
+		  int best_len_2 = quality < 4 ? std::min(best_len - 1, max_length) : 0;
+		  int best_len_code_2 = 0;
+		  int best_dist_2 = 0;
+		  double best_score_2 = min_score;
 		  max_distance = std::min(i + i_diff + 1, max_backward_limit);
 		  hasher->Store(ringbuffer + i, i + i_diff);
 		  match_found = hasher->FindLongestMatch(
-			  ringbuffer, literal_cost, ringbuffer_mask,
-			  i + i_diff + 1, i_end - i - 1, max_distance,
-			  &best_len_2, &best_len_code_2, &best_dist_2, &best_score_2,
-			  &in_dictionary);
-		  double cost_diff_lazy = 0;
-		  if (best_len >= 4) {
-			cost_diff_lazy +=
-				literal_cost[(i + 4) & ringbuffer_mask] - average_cost;
-		  }
-		  {
-			const int tail_length = best_len_2 - best_len + 1;
-			for (int k = 0; k < tail_length; ++k) {
-			  cost_diff_lazy -=
-				  literal_cost[(i + best_len + k) & ringbuffer_mask] -
-				  average_cost;
+			  ringbuffer, ringbuffer_mask,
+			  literal_cost, literal_cost_mask, average_cost,
+			  dist_cache, i + i_diff + 1, max_length, max_distance,
+			  &best_len_2, &best_len_code_2, &best_dist_2, &best_score_2);
+		  double cost_diff_lazy = 7.0;
+		  if (kUseCostModel) {
+			cost_diff_lazy = 0.0;
+			if (best_len >= 4) {
+			  cost_diff_lazy +=
+				  literal_cost[(i + 4) & literal_cost_mask] - average_cost;
 			}
+			{
+			  const int tail_length = best_len_2 - best_len + 1;
+			  for (int k = 0; k < tail_length; ++k) {
+				cost_diff_lazy -=
+					literal_cost[(i + best_len + k) & literal_cost_mask] -
+					average_cost;
+			  }
+			}
+			// If we are not inserting any symbols, inserting one is more
+			// expensive than if we were inserting symbols anyways.
+			if (insert_length < 1) {
+			  cost_diff_lazy += 0.97;
+			}
+			// Add bias to slightly avoid lazy matching.
+			cost_diff_lazy += 2.0 + delayed_backward_references_in_row * 0.2;
+			cost_diff_lazy += 0.04 * literal_cost[i & literal_cost_mask];
 		  }
-		  // If we are not inserting any symbols, inserting one is more
-		  // expensive than if we were inserting symbols anyways.
-		  if (insert_length < 1) {
-			cost_diff_lazy += 0.97;
-		  }
-		  // Add bias to slightly avoid lazy matching.
-		  cost_diff_lazy += 2.0 + delayed_backward_references_in_row * 0.2;
-		  cost_diff_lazy += 0.04 * literal_cost[i & ringbuffer_mask];
-
 		  if (match_found && best_score_2 >= best_score + cost_diff_lazy) {
 			// Ok, let's just write one byte for now and start a match from the
 			// next byte.
+			++i;
 			++insert_length;
-			++delayed_backward_references_in_row;
 			best_len = best_len_2;
 			best_len_code = best_len_code_2;
 			best_dist = best_dist_2;
 			best_score = best_score_2;
-			best_in_dictionary = in_dictionary;
-			i++;
-		  } else {
-			break;
+			if (++delayed_backward_references_in_row < 4) {
+			  continue;
+			}
 		  }
+		  break;
 		}
 	  }
 	  apply_random_heuristics =
 		  i + 2 * best_len + random_heuristics_window_size;
-	  Command cmd;
-	  cmd.insert_length_ = insert_length;
-	  cmd.copy_length_ = best_len;
-	  cmd.copy_length_code_ = best_len_code;
-	  cmd.copy_distance_ = best_dist;
-	  commands->push_back(cmd);
-	  insert_length = 0;
-	  ++i;
-	  if (best_dist <= std::min(i + i_diff, max_backward_limit)) {
-		hasher->set_last_distance(best_dist);
+	  max_distance = std::min(i + i_diff, max_backward_limit);
+	  int distance_code = best_dist + 16;
+	  if (best_dist <= max_distance) {
+		if (best_dist == dist_cache[0]) {
+		  distance_code = 1;
+		} else if (best_dist == dist_cache[1]) {
+		  distance_code = 2;
+		} else if (best_dist == dist_cache[2]) {
+		  distance_code = 3;
+		} else if (best_dist == dist_cache[3]) {
+		  distance_code = 4;
+		} else if (quality > 1 && best_dist >= 6) {
+		  for (int k = 4; k < kNumDistanceShortCodes; ++k) {
+			int idx = kDistanceCacheIndex[k];
+			int candidate = dist_cache[idx] + kDistanceCacheOffset[k];
+			static const int kLimits[16] = { 0, 0, 0, 0,
+											 6, 6, 11, 11,
+											 11, 11, 11, 11,
+											 12, 12, 12, 12 };
+			if (best_dist == candidate && best_dist >= kLimits[k]) {
+			  distance_code = k + 1;
+			  break;
+			}
+		  }
+		}
+		if (distance_code > 1) {
+		  dist_cache[3] = dist_cache[2];
+		  dist_cache[2] = dist_cache[1];
+		  dist_cache[1] = dist_cache[0];
+		  dist_cache[0] = best_dist;
+		}
 	  }
-
-	  // Copy all copied literals to the hasher, except the last one.
-	  // We cannot store the last one yet, otherwise we couldn't find
-	  // the possible M1 match.
-	  for (int j = 1; j < best_len - 1; ++j) {
-		if (i + 2 < i_end) {
+	  Command cmd(insert_length, best_len, best_len_code, distance_code);
+	  *commands++ = cmd;
+	  insert_length = 0;
+	  if (kUseDictionary) {
+		++i;
+		// Copy all copied literals to the hasher, except the last one.
+		// We cannot store the last one yet, otherwise we couldn't find
+		// the possible M1 match.
+		for (int j = 1; j < best_len - 1; ++j) {
+		  if (i + 3 < i_end) {
+			hasher->Store(ringbuffer + i, i + i_diff);
+		  }
+		  ++i;
+		}
+		// Prepare M1 match.
+		if (hasher->HasStaticDictionary() &&
+			best_len >= 4 && i + 20 < i_end && best_dist <= max_distance) {
+		  max_distance = std::min(i + i_diff, max_backward_limit);
+		  best_score_M1 = min_score;
+		  match_found_M1 = hasher->FindLongestMatch(
+			  ringbuffer, ringbuffer_mask,
+			  literal_cost, literal_cost_mask, average_cost,
+			  dist_cache, i + i_diff, i_end - i, max_distance,
+			  &best_len_M1, &best_len_code_M1, &best_dist_M1, &best_score_M1);
+		} else {
+		  match_found_M1 = false;
+		}
+		if (kUseCostModel) {
+		  // This byte is just moved from the previous copy to the current,
+		  // that is no gain.
+		  best_score_M1 -= literal_cost[i & literal_cost_mask];
+		  // Adjust for losing the opportunity for lazy matching.
+		  best_score_M1 -= 3.75;
+		}
+		// Store the last one of the match.
+		if (i + 3 < i_end) {
 		  hasher->Store(ringbuffer + i, i + i_diff);
 		}
 		++i;
-	  }
-	  // Prepare M1 match.
-	  if (hasher->HasStaticDictionary() &&
-		  best_len >= 4 && i + 20 < i_end && !best_in_dictionary) {
-		max_distance = std::min(i + i_diff, max_backward_limit);
-		match_found_M1 = hasher->FindLongestMatch(
-			ringbuffer, literal_cost, ringbuffer_mask,
-			i + i_diff, i_end - i, max_distance,
-			&best_len_M1, &best_len_code_M1, &best_dist_M1, &best_score_M1,
-			&in_dictionary);
 	  } else {
-		match_found_M1 = false;
-		in_dictionary = false;
+		// Put the hash keys into the table, if there are enough
+		// bytes left.
+		for (int j = 1; j < best_len; ++j) {
+		  hasher->Store(&ringbuffer[i + j], i + i_diff + j);
+		}
+		i += best_len;
 	  }
-	  // This byte is just moved from the previous copy to the current,
-	  // that is no gain.
-	  best_score_M1 -= literal_cost[i & ringbuffer_mask];
-	  // Adjust for losing the opportunity for lazy matching.
-	  best_score_M1 -= 3.75;
-
-	  // Store the last one of the match.
-	  if (i + 2 < i_end) {
-		hasher->Store(ringbuffer + i, i + i_diff);
-	  }
-	  ++i;
 	} else {
 	  match_found_M1 = false;
 	  ++insert_length;
@@ -10948,7 +11350,7 @@ void CreateBackwardReferences(size_t num_bytes,
 			insert_length += 4;
 		  }
 		} else {
-		  int i_jump = std::min(i + 8, i_end - 2);
+		  int i_jump = std::min(i + 8, i_end - 3);
 		  for (; i < i_jump; i += 2) {
 			hasher->Store(ringbuffer + i, i + i_diff);
 			insert_length += 2;
@@ -10958,39 +11360,88 @@ void CreateBackwardReferences(size_t num_bytes,
 	}
   }
   insert_length += (i_end - i);
-
-  if (insert_length > 0) {
-	Command cmd;
-	cmd.insert_length_ = insert_length;
-	cmd.copy_length_ = 0;
-	cmd.copy_distance_ = 0;
-	commands->push_back(cmd);
-  }
+  *last_insert_len = insert_length;
+  *num_commands += (commands - orig_commands);
 }
 
 void CreateBackwardReferences(size_t num_bytes,
 							  size_t position,
 							  const uint8_t* ringbuffer,
-							  const float* literal_cost,
 							  size_t ringbuffer_mask,
+							  const float* literal_cost,
+							  size_t literal_cost_mask,
 							  const size_t max_backward_limit,
+							  const double base_min_score,
+							  const int quality,
 							  Hashers* hashers,
-							  Hashers::Type hash_type,
-							  std::vector<Command>* commands) {
+							  int hash_type,
+							  int* dist_cache,
+							  int* last_insert_len,
+							  Command* commands,
+							  int* num_commands) {
   switch (hash_type) {
-	case Hashers::HASH_15_8_4:
-	  CreateBackwardReferences(
-		  num_bytes, position, ringbuffer, literal_cost,
-		  ringbuffer_mask, max_backward_limit,
-		  hashers->hash_15_8_4.get(),
-		  commands);
+	case 1:
+	  CreateBackwardReferences<Hashers::H1, false, false>(
+		  num_bytes, position, ringbuffer, ringbuffer_mask,
+		  literal_cost, literal_cost_mask, max_backward_limit, base_min_score,
+		  quality, hashers->hash_h1.get(), dist_cache, last_insert_len,
+		  commands, num_commands);
 	  break;
-	case Hashers::HASH_15_8_2:
-	  CreateBackwardReferences(
-		  num_bytes, position, ringbuffer, literal_cost,
-		  ringbuffer_mask, max_backward_limit,
-		  hashers->hash_15_8_2.get(),
-		  commands);
+	case 2:
+	  CreateBackwardReferences<Hashers::H2, false, false>(
+		  num_bytes, position, ringbuffer, ringbuffer_mask,
+		  literal_cost, literal_cost_mask, max_backward_limit, base_min_score,
+		  quality, hashers->hash_h2.get(), dist_cache, last_insert_len,
+		  commands, num_commands);
+	  break;
+	case 3:
+	  CreateBackwardReferences<Hashers::H3, false, false>(
+		  num_bytes, position, ringbuffer, ringbuffer_mask,
+		  literal_cost, literal_cost_mask, max_backward_limit, base_min_score,
+		  quality, hashers->hash_h3.get(), dist_cache, last_insert_len,
+		  commands, num_commands);
+	  break;
+	case 4:
+	  CreateBackwardReferences<Hashers::H4, false, false>(
+		  num_bytes, position, ringbuffer, ringbuffer_mask,
+		  literal_cost, literal_cost_mask, max_backward_limit, base_min_score,
+		  quality, hashers->hash_h4.get(), dist_cache, last_insert_len,
+		  commands, num_commands);
+	  break;
+	case 5:
+	  CreateBackwardReferences<Hashers::H5, false, false>(
+		  num_bytes, position, ringbuffer, ringbuffer_mask,
+		  literal_cost, literal_cost_mask, max_backward_limit, base_min_score,
+		  quality, hashers->hash_h5.get(), dist_cache, last_insert_len,
+		  commands, num_commands);
+	  break;
+	case 6:
+	  CreateBackwardReferences<Hashers::H6, false, false>(
+		  num_bytes, position, ringbuffer, ringbuffer_mask,
+		  literal_cost, literal_cost_mask, max_backward_limit, base_min_score,
+		  quality, hashers->hash_h6.get(), dist_cache, last_insert_len,
+		  commands, num_commands);
+	  break;
+	case 7:
+	  CreateBackwardReferences<Hashers::H7, true, false>(
+		  num_bytes, position, ringbuffer, ringbuffer_mask,
+		  literal_cost, literal_cost_mask, max_backward_limit, base_min_score,
+		  quality, hashers->hash_h7.get(), dist_cache, last_insert_len,
+		  commands, num_commands);
+	  break;
+	case 8:
+	  CreateBackwardReferences<Hashers::H8, true, true>(
+		  num_bytes, position, ringbuffer, ringbuffer_mask,
+		  literal_cost, literal_cost_mask, max_backward_limit, base_min_score,
+		  quality, hashers->hash_h8.get(), dist_cache, last_insert_len,
+		  commands, num_commands);
+	  break;
+	case 9:
+	  CreateBackwardReferences<Hashers::H9, true, false>(
+		  num_bytes, position, ringbuffer, ringbuffer_mask,
+		  literal_cost, literal_cost_mask, max_backward_limit, base_min_score,
+		  quality, hashers->hash_h9.get(), dist_cache, last_insert_len,
+		  commands, num_commands);
 	  break;
 	default:
 	  break;
@@ -11045,68 +11496,9 @@ void CreateBackwardReferences(size_t num_bytes,
 #include <vector>
 #include <utility>
 
-namespace brotli {
 
-struct BlockSplit {
-  int num_types_;
-  std::vector<uint8_t> types_;
-  std::vector<int> type_codes_;
-  std::vector<int> lengths_;
-};
-
-struct BlockSplitIterator {
-  explicit BlockSplitIterator(const BlockSplit& split)
-	  : split_(split), idx_(0), type_(0), length_(0) {
-	if (!split.lengths_.empty()) {
-	  length_ = split.lengths_[0];
-	}
-  }
-
-  void Next() {
-	if (length_ == 0) {
-	  ++idx_;
-	  type_ = split_.types_[idx_];
-	  length_ = split_.lengths_[idx_];
-	}
-	--length_;
-  }
-
-  const BlockSplit& split_;
-  int idx_;
-  int type_;
-  int length_;
-};
-
-void CopyLiteralsToByteArray(const std::vector<Command>& cmds,
-							 const uint8_t* data,
-							 std::vector<uint8_t>* literals);
-
-void SplitBlock(const std::vector<Command>& cmds,
-				const uint8_t* data,
-				BlockSplit* literal_split,
-				BlockSplit* insert_and_copy_split,
-				BlockSplit* dist_split);
-
-void SplitBlockByTotalLength(const std::vector<Command>& all_commands,
-							 int input_size,
-							 int target_length,
-							 std::vector<std::vector<Command> >* blocks);
-
-}  // namespace brotli
-
-#endif  // BROTLI_ENC_BLOCK_SPLITTER_H_
-
-#include <math.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
-#include <algorithm>
-#include <map>
-
-
-//#line 1 "cluster.h"
-// Copyright 2013 Google Inc. All Rights Reserved.
+//#line 1 "metablock.h"
+// Copyright 2015 Google Inc. All Rights Reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11120,66 +11512,14 @@ void SplitBlockByTotalLength(const std::vector<Command>& all_commands,
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-// Functions for clustering similar histograms together.
+// Algorithms for distributing the literals and commands of a metablock between
+// block types and contexts.
 
-#ifndef BROTLI_ENC_CLUSTER_H_
-#define BROTLI_ENC_CLUSTER_H_
+#ifndef BROTLI_ENC_METABLOCK_H_
+#define BROTLI_ENC_METABLOCK_H_
 
-#include <math.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <complex>
-#include <map>
-#include <set>
-#include <utility>
 #include <vector>
 
-
-//#line 1 "bit_cost.h"
-// Copyright 2013 Google Inc. All Rights Reserved.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-//
-// Functions to estimate the bit cost of Huffman trees.
-
-#ifndef BROTLI_ENC_BIT_COST_H_
-#define BROTLI_ENC_BIT_COST_H_
-
-#include <stdint.h>
-
-
-//#line 1 "entropy_encode.h"
-// Copyright 2010 Google Inc. All Rights Reserved.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-//
-// Entropy encoding (Huffman) utilities.
-
-#ifndef BROTLI_ENC_ENTROPY_ENCODE_H_
-#define BROTLI_ENC_ENTROPY_ENCODE_H_
-
-#include <stdint.h>
-#include <string.h>
 
 //#line 1 "histogram.h"
 // Copyright 2013 Google Inc. All Rights Reserved.
@@ -11205,60 +11545,6 @@ void SplitBlockByTotalLength(const std::vector<Command>& all_commands,
 #include <string.h>
 #include <vector>
 #include <utility>
-
-
-//#line 1 "prefix.h"
-// Copyright 2013 Google Inc. All Rights Reserved.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-//
-// Functions for encoding of integers into prefix codes the amount of extra
-// bits, and the actual values of the extra bits.
-
-#ifndef BROTLI_ENC_PREFIX_H_
-#define BROTLI_ENC_PREFIX_H_
-
-#include <stdint.h>
-
-namespace brotli {
-
-static const int kNumInsertLenPrefixes = 24;
-static const int kNumCopyLenPrefixes = 24;
-static const int kNumCommandPrefixes = 704;
-static const int kNumBlockLenPrefixes = 26;
-static const int kNumDistanceShortCodes = 16;
-static const int kNumDistancePrefixes = 520;
-
-int CommandPrefix(int insert_length, int copy_length);
-int InsertLengthExtraBits(int prefix);
-int InsertLengthOffset(int prefix);
-int CopyLengthExtraBits(int prefix);
-int CopyLengthOffset(int prefix);
-
-void PrefixEncodeCopyDistance(int distance_code,
-							  int num_direct_codes,
-							  int shift_bits,
-							  uint16_t* prefix,
-							  int* nbits,
-							  uint32_t* extra_bits);
-
-int BlockLengthPrefix(int length);
-int BlockLengthExtraBits(int prefix);
-int BlockLengthOffset(int prefix);
-
-}  // namespace brotli
-
-#endif  // BROTLI_ENC_PREFIX_H_
 
 namespace brotli {
 
@@ -11348,6 +11634,178 @@ void BuildLiteralHistogramsForBlockType(
 
 #endif  // BROTLI_ENC_HISTOGRAM_H_
 
+namespace brotli {
+
+struct BlockSplit {
+  BlockSplit() : num_types(0) {}
+
+  int num_types;
+  std::vector<int> types;
+  std::vector<int> lengths;
+};
+
+struct MetaBlockSplit {
+  BlockSplit literal_split;
+  BlockSplit command_split;
+  BlockSplit distance_split;
+  std::vector<int> literal_context_map;
+  std::vector<int> distance_context_map;
+  std::vector<HistogramLiteral> literal_histograms;
+  std::vector<HistogramCommand> command_histograms;
+  std::vector<HistogramDistance> distance_histograms;
+};
+
+void BuildMetaBlock(const uint8_t* ringbuffer,
+					const size_t pos,
+					const size_t mask,
+					const std::vector<Command>& cmds,
+					int num_direct_distance_codes,
+					int distance_postfix_bits,
+					int literal_context_mode,
+					MetaBlockSplit* mb);
+
+void BuildMetaBlockGreedy(const uint8_t* ringbuffer,
+						  size_t pos,
+						  size_t mask,
+						  const Command *commands,
+						  size_t n_commands,
+						  int quality,
+						  MetaBlockSplit* mb);
+
+}  // namespace brotli
+
+#endif  // BROTLI_ENC_METABLOCK_H_
+
+namespace brotli {
+
+struct BlockSplitIterator {
+  explicit BlockSplitIterator(const BlockSplit& split)
+	  : split_(split), idx_(0), type_(0), length_(0) {
+	if (!split.lengths.empty()) {
+	  length_ = split.lengths[0];
+	}
+  }
+
+  void Next() {
+	if (length_ == 0) {
+	  ++idx_;
+	  type_ = split_.types[idx_];
+	  length_ = split_.lengths[idx_];
+	}
+	--length_;
+  }
+
+  const BlockSplit& split_;
+  int idx_;
+  int type_;
+  int length_;
+};
+
+void CopyLiteralsToByteArray(const std::vector<Command>& cmds,
+							 const uint8_t* data,
+							 std::vector<uint8_t>* literals);
+
+void SplitBlock(const std::vector<Command>& cmds,
+				const uint8_t* data,
+				BlockSplit* literal_split,
+				BlockSplit* insert_and_copy_split,
+				BlockSplit* dist_split);
+
+void SplitBlockByTotalLength(const std::vector<Command>& all_commands,
+							 int input_size,
+							 int target_length,
+							 std::vector<std::vector<Command> >* blocks);
+
+}  // namespace brotli
+
+#endif  // BROTLI_ENC_BLOCK_SPLITTER_H_
+
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include <algorithm>
+#include <map>
+
+
+//#line 1 "cluster.h"
+// Copyright 2013 Google Inc. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// Functions for clustering similar histograms together.
+
+#ifndef BROTLI_ENC_CLUSTER_H_
+#define BROTLI_ENC_CLUSTER_H_
+
+#include <math.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <algorithm>
+#include <complex>
+#include <map>
+#include <set>
+#include <utility>
+#include <vector>
+
+
+//#line 1 "bit_cost.h"
+// Copyright 2013 Google Inc. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// Functions to estimate the bit cost of Huffman trees.
+
+#ifndef BROTLI_ENC_BIT_COST_H_
+#define BROTLI_ENC_BIT_COST_H_
+
+#include <stdint.h>
+
+
+//#line 1 "entropy_encode.h"
+// Copyright 2010 Google Inc. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// Entropy encoding (Huffman) utilities.
+
+#ifndef BROTLI_ENC_ENTROPY_ENCODE_H_
+#define BROTLI_ENC_ENTROPY_ENCODE_H_
+
+#include <stdint.h>
+#include <string.h>
+#include <vector>
 
 namespace brotli {
 
@@ -11363,6 +11821,7 @@ namespace brotli {
 void CreateHuffmanTree(const int *data,
 					   const int length,
 					   const int tree_limit,
+					   const int quality,
 					   uint8_t *depth);
 
 // Change the population counts in a way that the consequent
@@ -11376,10 +11835,10 @@ int OptimizeHuffmanCountsForRle(int length, int* counts);
 // Write a huffman tree from bit depths into the bitstream representation
 // of a Huffman tree. The generated Huffman tree is to be compressed once
 // more using a Huffman tree
-void WriteHuffmanTree(const uint8_t* depth, const int length,
-					  uint8_t* tree,
-					  uint8_t* extra_bits_data,
-					  int* huffman_tree_size);
+void WriteHuffmanTree(const uint8_t* depth,
+					  uint32_t num,
+					  std::vector<uint8_t> *tree,
+					  std::vector<uint8_t> *extra_bits_data);
 
 // Get the actual bit values for a tree of bit depths.
 void ConvertBitDepthsToSymbols(const uint8_t *depth, int len, uint16_t *bits);
@@ -11395,34 +11854,6 @@ struct EntropyCode {
   // First four symbols with non-zero depth.
   int symbols_[4];
 };
-
-template<int kSize>
-void BuildEntropyCode(const Histogram<kSize>& histogram,
-					  const int tree_limit,
-					  const int alphabet_size,
-					  EntropyCode<kSize>* code) {
-  memset(code->depth_, 0, sizeof(code->depth_));
-  memset(code->bits_, 0, sizeof(code->bits_));
-  memset(code->symbols_, 0, sizeof(code->symbols_));
-  code->count_ = 0;
-  if (histogram.total_count_ == 0) return;
-  for (int i = 0; i < kSize; ++i) {
-	if (histogram.data_[i] > 0) {
-	  if (code->count_ < 4) code->symbols_[code->count_] = i;
-	  ++code->count_;
-	}
-  }
-  if (alphabet_size >= 50 && code->count_ >= 16) {
-	int counts[kSize];
-	memcpy(counts, &histogram.data_[0], sizeof(counts[0]) * kSize);
-	OptimizeHuffmanCountsForRle(alphabet_size, counts);
-	CreateHuffmanTree(counts, alphabet_size, tree_limit, &code->depth_[0]);
-  } else {
-	CreateHuffmanTree(&histogram.data_[0], alphabet_size, tree_limit,
-					  &code->depth_[0]);
-  }
-  ConvertBitDepthsToSymbols(&code->depth_[0], alphabet_size, &code->bits_[0]);
-}
 
 static const int kCodeLengthCodes = 18;
 
@@ -11442,6 +11873,31 @@ typedef EntropyCode<258> EntropyCodeBlockType;
 #endif  // BROTLI_ENC_ENTROPY_ENCODE_H_
 
 namespace brotli {
+
+static inline double BitsEntropy(const int *population, int size) {
+  int sum = 0;
+  double retval = 0;
+  const int *population_end = population + size;
+  int p;
+  if (size & 1) {
+	goto odd_number_of_elements_left;
+  }
+  while (population < population_end) {
+	p = *population++;
+	sum += p;
+	retval -= p * FastLog2(p);
+ odd_number_of_elements_left:
+	p = *population++;
+	sum += p;
+	retval -= p * FastLog2(p);
+  }
+  if (sum) retval -= sum * FastLog2(sum);
+  if (retval < sum) {
+	// At least one bit per literal is needed.
+	retval = sum;
+  }
+  return retval;
+}
 
 static const int kHuffmanExtraBits[kCodeLengthCodes] = {
   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 3,
@@ -11510,7 +11966,7 @@ static inline int HuffmanBitCost(const uint8_t* depth, int length) {
 
   // create huffman tree of huffman tree
   uint8_t cost[kCodeLengthCodes] = { 0 };
-  CreateHuffmanTree(histogram, kCodeLengthCodes, 7, cost);
+  CreateHuffmanTree(histogram, kCodeLengthCodes, 7, 9, cost);
   // account for rle extra bits
   cost[16] += 2;
   cost[17] += 3;
@@ -11542,7 +11998,7 @@ double PopulationCost(const Histogram<kSize>& histogram) {
 	return 20 + histogram.total_count_;
   }
   uint8_t depth[kSize] = { 0 };
-  CreateHuffmanTree(&histogram.data_[0], kSize, 15, depth);
+  CreateHuffmanTree(&histogram.data_[0], kSize, 15, 9, depth);
   int bits = 0;
   for (int i = 0; i < kSize; ++i) {
 	bits += histogram.data_[i] * depth[i];
@@ -11589,8 +12045,8 @@ inline double ClusterCostDiff(int size_a, int size_b) {
 
 // Computes the bit cost reduction by combining out[idx1] and out[idx2] and if
 // it is below a threshold, stores the pair (idx1, idx2) in the *pairs heap.
-template<int kSize>
-void CompareAndPushToHeap(const Histogram<kSize>* out,
+template<typename HistogramType>
+void CompareAndPushToHeap(const HistogramType* out,
 						  const int* cluster_size,
 						  int idx1, int idx2,
 						  std::vector<HistogramPair>* pairs) {
@@ -11620,7 +12076,7 @@ void CompareAndPushToHeap(const Histogram<kSize>* out,
   } else {
 	double threshold = pairs->empty() ? 1e99 :
 		std::max(0.0, (*pairs)[0].cost_diff);
-	Histogram<kSize> combo = out[idx1];
+	HistogramType combo = out[idx1];
 	combo.AddHistogram(out[idx2]);
 	double cost_combo = PopulationCost(combo);
 	if (cost_combo < threshold - p.cost_diff) {
@@ -11631,12 +12087,12 @@ void CompareAndPushToHeap(const Histogram<kSize>* out,
   if (store_pair) {
 	p.cost_diff += p.cost_combo;
 	pairs->push_back(p);
-	push_heap(pairs->begin(), pairs->end(), HistogramPairComparator());
+	std::push_heap(pairs->begin(), pairs->end(), HistogramPairComparator());
   }
 }
 
-template<int kSize>
-void HistogramCombine(Histogram<kSize>* out,
+template<typename HistogramType>
+void HistogramCombine(HistogramType* out,
 					  int* cluster_size,
 					  int* symbols,
 					  int symbols_size,
@@ -11694,7 +12150,7 @@ void HistogramCombine(Histogram<kSize>* out,
 	}
 	// Pop invalid pairs from the top of the heap.
 	while (!pairs.empty() && !pairs[0].valid) {
-	  pop_heap(pairs.begin(), pairs.end(), HistogramPairComparator());
+	  std::pop_heap(pairs.begin(), pairs.end(), HistogramPairComparator());
 	  pairs.pop_back();
 	}
 	// Push new pairs formed with the combined histogram to the heap.
@@ -11708,22 +12164,22 @@ void HistogramCombine(Histogram<kSize>* out,
 // Histogram refinement
 
 // What is the bit cost of moving histogram from cur_symbol to candidate.
-template<int kSize>
-double HistogramBitCostDistance(const Histogram<kSize>& histogram,
-								const Histogram<kSize>& candidate) {
+template<typename HistogramType>
+double HistogramBitCostDistance(const HistogramType& histogram,
+								const HistogramType& candidate) {
   if (histogram.total_count_ == 0) {
 	return 0.0;
   }
-  Histogram<kSize> tmp = histogram;
+  HistogramType tmp = histogram;
   tmp.AddHistogram(candidate);
   return PopulationCost(tmp) - candidate.bit_cost_;
 }
 
 // Find the best 'out' histogram for each of the 'in' histograms.
 // Note: we assume that out[]->bit_cost_ is already up-to-date.
-template<int kSize>
-void HistogramRemap(const Histogram<kSize>* in, int in_size,
-					Histogram<kSize>* out, int* symbols) {
+template<typename HistogramType>
+void HistogramRemap(const HistogramType* in, int in_size,
+					HistogramType* out, int* symbols) {
   std::set<int> all_symbols;
   for (int i = 0; i < in_size; ++i) {
 	all_symbols.insert(symbols[i]);
@@ -11754,10 +12210,10 @@ void HistogramRemap(const Histogram<kSize>* in, int in_size,
 
 // Reorder histograms in *out so that the new symbols in *symbols come in
 // increasing order.
-template<int kSize>
-void HistogramReindex(std::vector<Histogram<kSize> >* out,
+template<typename HistogramType>
+void HistogramReindex(std::vector<HistogramType>* out,
 					  std::vector<int>* symbols) {
-  std::vector<Histogram<kSize> > tmp(*out);
+  std::vector<HistogramType> tmp(*out);
   std::map<int, int> new_index;
   int next_index = 0;
   for (int i = 0; i < symbols->size(); ++i) {
@@ -11776,11 +12232,11 @@ void HistogramReindex(std::vector<Histogram<kSize> >* out,
 // Clusters similar histograms in 'in' together, the selected histograms are
 // placed in 'out', and for each index in 'in', *histogram_symbols will
 // indicate which of the 'out' histograms is the best approximation.
-template<int kSize>
-void ClusterHistograms(const std::vector<Histogram<kSize> >& in,
+template<typename HistogramType>
+void ClusterHistograms(const std::vector<HistogramType>& in,
 					   int num_contexts, int num_blocks,
 					   int max_histograms,
-					   std::vector<Histogram<kSize> >* out,
+					   std::vector<HistogramType>* out,
 					   std::vector<int>* histogram_symbols) {
   const int in_size = num_contexts * num_blocks;
   std::vector<int> cluster_size(in_size, 1);
@@ -11821,7 +12277,7 @@ namespace brotli {
 
 static const int kMaxLiteralHistograms = 100;
 static const int kMaxCommandHistograms = 50;
-static const double kLiteralBlockSwitchCost = 26;
+static const double kLiteralBlockSwitchCost = 28.1;
 static const double kCommandBlockSwitchCost = 13.5;
 static const double kDistanceBlockSwitchCost = 14.6;
 static const int kLiteralStrideLength = 70;
@@ -11839,7 +12295,7 @@ void CopyLiteralsToByteArray(const std::vector<Command>& cmds,
   // Count how many we have.
   size_t total_length = 0;
   for (int i = 0; i < cmds.size(); ++i) {
-	total_length += cmds[i].insert_length_;
+	total_length += cmds[i].insert_len_;
   }
   if (total_length == 0) {
 	return;
@@ -11852,9 +12308,9 @@ void CopyLiteralsToByteArray(const std::vector<Command>& cmds,
   size_t pos = 0;
   size_t from_pos = 0;
   for (int i = 0; i < cmds.size() && pos < total_length; ++i) {
-	memcpy(&(*literals)[pos], data + from_pos, cmds[i].insert_length_);
-	pos += cmds[i].insert_length_;
-	from_pos += cmds[i].insert_length_ + cmds[i].copy_length_;
+	memcpy(&(*literals)[pos], data + from_pos, cmds[i].insert_len_);
+	pos += cmds[i].insert_len_;
+	from_pos += cmds[i].insert_len_ + cmds[i].copy_len_;
   }
 }
 
@@ -11863,11 +12319,19 @@ void CopyCommandsToByteArray(const std::vector<Command>& cmds,
 							 std::vector<uint8_t>* distance_prefixes) {
   for (int i = 0; i < cmds.size(); ++i) {
 	const Command& cmd = cmds[i];
-	insert_and_copy_codes->push_back(cmd.command_prefix_);
-	if (cmd.copy_length_ > 0 && cmd.distance_prefix_ != 0xffff) {
-	  distance_prefixes->push_back(cmd.distance_prefix_);
+	insert_and_copy_codes->push_back(cmd.cmd_prefix_);
+	if (cmd.copy_len_ > 0 && cmd.cmd_prefix_ >= 128) {
+	  distance_prefixes->push_back(cmd.dist_prefix_);
 	}
   }
+}
+
+inline static unsigned int MyRand(unsigned int* seed) {
+  *seed *= 16807U;
+  if (*seed == 0) {
+	*seed = 1;
+  }
+  return *seed;
 }
 
 template<typename HistogramType, typename DataType>
@@ -11885,8 +12349,7 @@ void InitialEntropyCodes(const DataType* data, size_t length,
   for (int i = 0; i < total_histograms; ++i) {
 	int pos = length * i / total_histograms;
 	if (i != 0) {
-	  srand(seed);
-	  pos += rand() % block_length;
+	  pos += MyRand(&seed) % block_length;
 	}
 	if (pos + stride >= length) {
 	  pos = length - stride - 1;
@@ -11908,8 +12371,7 @@ void RandomSample(unsigned int* seed,
 	pos = 0;
 	stride = length;
   } else {
-	srand(*seed);
-	pos = rand() % (length - stride + 1);
+	pos = MyRand(seed) % (length - stride + 1);
   }
   sample->Add(data + pos, stride);
 }
@@ -12066,21 +12528,21 @@ void ClusterBlocks(const DataType* data, const size_t length,
 void BuildBlockSplit(const std::vector<uint8_t>& block_ids, BlockSplit* split) {
   int cur_id = block_ids[0];
   int cur_length = 1;
-  split->num_types_ = -1;
+  split->num_types = -1;
   for (int i = 1; i < block_ids.size(); ++i) {
 	if (block_ids[i] != cur_id) {
-	  split->types_.push_back(cur_id);
-	  split->lengths_.push_back(cur_length);
-	  split->num_types_ = std::max(split->num_types_, cur_id);
+	  split->types.push_back(cur_id);
+	  split->lengths.push_back(cur_length);
+	  split->num_types = std::max(split->num_types, cur_id);
 	  cur_id = block_ids[i];
 	  cur_length = 0;
 	}
 	++cur_length;
   }
-  split->types_.push_back(cur_id);
-  split->lengths_.push_back(cur_length);
-  split->num_types_ = std::max(split->num_types_, cur_id);
-  ++split->num_types_;
+  split->types.push_back(cur_id);
+  split->lengths.push_back(cur_length);
+  split->num_types = std::max(split->num_types, cur_id);
+  ++split->num_types;
 }
 
 template<typename HistogramType, typename DataType>
@@ -12091,12 +12553,12 @@ void SplitByteVector(const std::vector<DataType>& data,
 					 const double block_switch_cost,
 					 BlockSplit* split) {
   if (data.empty()) {
-	split->num_types_ = 0;
+	split->num_types = 1;
 	return;
   } else if (data.size() < kMinLengthForBlockSplitting) {
-	split->num_types_ = 1;
-	split->types_.push_back(0);
-	split->lengths_.push_back(data.size());
+	split->num_types = 1;
+	split->types.push_back(0);
+	split->lengths.push_back(data.size());
 	return;
   }
   std::vector<HistogramType> histograms;
@@ -12165,7 +12627,7 @@ void SplitBlockByTotalLength(const std::vector<Command>& all_commands,
   std::vector<Command> cur_block;
   for (int i = 0; i < all_commands.size(); ++i) {
 	const Command& cmd = all_commands[i];
-	int cmd_length = cmd.insert_length_ + cmd.copy_length_;
+	int cmd_length = cmd.insert_len_ + cmd.copy_len_;
 	if (total_length > length_limit) {
 	  blocks->push_back(cur_block);
 	  cur_block.clear();
@@ -12180,8 +12642,8 @@ void SplitBlockByTotalLength(const std::vector<Command>& all_commands,
 }  // namespace brotli
 
 
-//#line 1 "encode.cc"
-// Copyright 2013 Google Inc. All Rights Reserved.
+//#line 1 "brotli_bit_stream.cc"
+// Copyright 2014 Google Inc. All Rights Reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12195,11 +12657,13 @@ void SplitBlockByTotalLength(const std::vector<Command>& all_commands,
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-// Implementation of Brotli compressor.
+// Brotli bit stream functions to support the low level format. There are no
+// compression algorithms here, just the right ordering of bits to match the
+// specs.
 
 
-//#line 1 "encode.h"
-// Copyright 2013 Google Inc. All Rights Reserved.
+//#line 1 "brotli_bit_stream.h"
+// Copyright 2014 Google Inc. All Rights Reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12213,175 +12677,129 @@ void SplitBlockByTotalLength(const std::vector<Command>& all_commands,
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-// API for Brotli compression
+// Functions to convert brotli-related data structures into the
+// brotli bit stream. The functions here operate under
+// assumption that there is enough space in the storage, i.e., there are
+// no out-of-range checks anywhere.
+//
+// These functions do bit addressing into a byte array. The byte array
+// is called "storage" and the index to the bit is called storage_ix
+// in function arguments.
 
-#ifndef BROTLI_ENC_ENCODE_H_
-#define BROTLI_ENC_ENCODE_H_
+#ifndef BROTLI_ENC_BROTLI_BIT_STREAM_H_
+#define BROTLI_ENC_BROTLI_BIT_STREAM_H_
 
 #include <stddef.h>
 #include <stdint.h>
-#include <string>
 #include <vector>
-
-
-//#line 1 "ringbuffer.h"
-// Copyright 2013 Google Inc. All Rights Reserved.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-//
-// Sliding window over the input data.
-
-#ifndef BROTLI_ENC_RINGBUFFER_H_
-#define BROTLI_ENC_RINGBUFFER_H_
-
-// A RingBuffer(window_bits, tail_bits) contains `1 << window_bits' bytes of
-// data in a circular manner: writing a byte writes it to
-// `position() % (1 << window_bits)'. For convenience, the RingBuffer array
-// contains another copy of the first `1 << tail_bits' bytes:
-// buffer_[i] == buffer_[i + (1 << window_bits)] if i < (1 << tail_bits).
-class RingBuffer {
- public:
-  RingBuffer(int window_bits, int tail_bits)
-	  : window_bits_(window_bits), tail_bits_(tail_bits), pos_(0) {
-	static const int kSlackForThreeByteHashingEverywhere = 2;
-	const int buflen = (1 << window_bits_) + (1 << tail_bits_);
-	buffer_ = new uint8_t[buflen + kSlackForThreeByteHashingEverywhere];
-	for (int i = 0; i < kSlackForThreeByteHashingEverywhere; ++i) {
-	  buffer_[buflen + i] = 0;
-	}
-  }
-  ~RingBuffer() {
-	delete [] buffer_;
-  }
-
-  // Push bytes into the ring buffer.
-  void Write(const uint8_t *bytes, size_t n) {
-	const size_t masked_pos = pos_ & ((1 << window_bits_) - 1);
-	// The length of the writes is limited so that we do not need to worry
-	// about a write
-	WriteTail(bytes, n);
-	if (masked_pos + n <= (1 << window_bits_)) {
-	  // A single write fits.
-	  memcpy(&buffer_[masked_pos], bytes, n);
-	} else {
-	  // Split into two writes.
-	  // Copy into the end of the buffer, including the tail buffer.
-	  memcpy(&buffer_[masked_pos], bytes,
-			 std::min(n,
-					  ((1 << window_bits_) + (1 << tail_bits_)) - masked_pos));
-	  // Copy into the begining of the buffer
-	  memcpy(&buffer_[0], bytes + ((1 << window_bits_) - masked_pos),
-			 n - ((1 << window_bits_) - masked_pos));
-	}
-	pos_ += n;
-  }
-
-  // Logical cursor position in the ring buffer.
-  size_t position() const { return pos_; }
-
-  uint8_t *start() { return &buffer_[0]; }
-  const uint8_t *start() const { return &buffer_[0]; }
-
- private:
-  void WriteTail(const uint8_t *bytes, size_t n) {
-	const size_t masked_pos = pos_ & ((1 << window_bits_) - 1);
-	if (masked_pos < (1 << tail_bits_)) {
-	  // Just fill the tail buffer with the beginning data.
-	  const size_t p = (1 << window_bits_) + masked_pos;
-	  memcpy(&buffer_[p], bytes, std::min(n, (1 << tail_bits_) - masked_pos));
-	}
-  }
-
-  // Size of the ringbuffer is (1 << window_bits) + (1 << tail_bits).
-  const int window_bits_;
-  const int tail_bits_;
-
-  // Position to write in the ring buffer.
-  size_t pos_;
-  // The actual ring buffer containing the data and the copy of the beginning
-  // as a tail.
-  uint8_t *buffer_;
-};
-
-#endif  // BROTLI_ENC_RINGBUFFER_H_
 
 namespace brotli {
 
-struct BrotliParams {
-  enum Mode {
-	MODE_TEXT = 0,
-	MODE_FONT = 1,
-  };
-  Mode mode;
+// All Store functions here will use a storage_ix, which is always the bit
+// position for the current storage.
 
-  BrotliParams() : mode(MODE_TEXT) {}
+// Stores a number between 0 and 255.
+void StoreVarLenUint8(int n, int* storage_ix, uint8_t* storage);
+
+// Stores the compressed meta-block header.
+bool StoreCompressedMetaBlockHeader(bool final_block,
+									size_t length,
+									int* storage_ix,
+									uint8_t* storage);
+
+// Stores the uncompressed meta-block header.
+bool StoreUncompressedMetaBlockHeader(size_t length,
+									  int* storage_ix,
+									  uint8_t* storage);
+
+// Stores a context map where the histogram type is always the block type.
+void StoreTrivialContextMap(int num_types,
+							int context_bits,
+							int* storage_ix,
+							uint8_t* storage);
+
+void StoreHuffmanTreeOfHuffmanTreeToBitMask(
+	const int num_codes,
+	const uint8_t *code_length_bitdepth,
+	int *storage_ix,
+	uint8_t *storage);
+
+// Builds a Huffman tree from histogram[0:length] into depth[0:length] and
+// bits[0:length] and stores the encoded tree to the bit stream.
+void BuildAndStoreHuffmanTree(const int *histogram,
+							  const int length,
+							  const int quality,
+							  uint8_t* depth,
+							  uint16_t* bits,
+							  int* storage_ix,
+							  uint8_t* storage);
+
+// Encodes the given context map to the bit stream. The number of different
+// histogram ids is given by num_clusters.
+void EncodeContextMap(const std::vector<int>& context_map,
+					  int num_clusters,
+					  int* storage_ix, uint8_t* storage);
+
+// Data structure that stores everything that is needed to encode each block
+// switch command.
+struct BlockSplitCode {
+  std::vector<int> type_code;
+  std::vector<int> length_prefix;
+  std::vector<int> length_nextra;
+  std::vector<int> length_extra;
+  std::vector<uint8_t> type_depths;
+  std::vector<uint16_t> type_bits;
+  std::vector<uint8_t> length_depths;
+  std::vector<uint16_t> length_bits;
 };
 
-class BrotliCompressor {
- public:
-  explicit BrotliCompressor(BrotliParams params);
-  ~BrotliCompressor();
+// Builds a BlockSplitCode data structure from the block split given by the
+// vector of block types and block lengths and stores it to the bit stream.
+void BuildAndStoreBlockSplitCode(const std::vector<int>& types,
+								 const std::vector<int>& lengths,
+								 const int num_types,
+								 const int quality,
+								 BlockSplitCode* code,
+								 int* storage_ix,
+								 uint8_t* storage);
 
-  // Writes the stream header into the internal output buffer.
-  void WriteStreamHeader();
+// Stores the block switch command with index block_ix to the bit stream.
+void StoreBlockSwitch(const BlockSplitCode& code,
+					  const int block_ix,
+					  int* storage_ix,
+					  uint8_t* storage);
 
-  // Encodes the data in input_buffer as a meta-block and writes it to
-  // encoded_buffer and sets *encoded_size to the number of bytes that was
-  // written.
-  void WriteMetaBlock(const size_t input_size,
-					  const uint8_t* input_buffer,
-					  const bool is_last,
-					  size_t* encoded_size,
-					  uint8_t* encoded_buffer);
+bool StoreMetaBlock(const uint8_t* input,
+					size_t start_pos,
+					size_t length,
+					size_t mask,
+					bool final_block,
+					int quality,
+					int num_direct_distance_codes,
+					int distance_postfix_bits,
+					int literal_context_mode,
+					const brotli::Command *commands,
+					size_t n_commands,
+					const MetaBlockSplit& mb,
+					int *storage_ix,
+					uint8_t *storage);
 
-  // Writes a zero-length meta-block with end-of-input bit set to the
-  // internal output buffer and copies the output buffer to encoded_buffer and
-  // sets *encoded_size to the number of bytes written.
-  void FinishStream(size_t* encoded_size, uint8_t* encoded_buffer);
-
- private:
-  // Initializes the hasher with the hashes of dictionary words.
-  void StoreDictionaryWordHashes();
-
-  BrotliParams params_;
-  int window_bits_;
-  std::unique_ptr<Hashers> hashers_;
-  Hashers::Type hash_type_;
-  int dist_ringbuffer_[4];
-  size_t dist_ringbuffer_idx_;
-  size_t input_pos_;
-  RingBuffer ringbuffer_;
-  std::vector<float> literal_cost_;
-  int storage_ix_;
-  uint8_t* storage_;
-  static StaticDictionary *static_dictionary_;
-};
-
-// Compresses the data in input_buffer into encoded_buffer, and sets
-// *encoded_size to the compressed length.
-// Returns 0 if there was an error and 1 otherwise.
-int BrotliCompressBuffer(BrotliParams params,
-						 size_t input_size,
-						 const uint8_t* input_buffer,
-						 size_t* encoded_size,
-						 uint8_t* encoded_buffer);
+// This is for storing uncompressed blocks (simple raw storage of
+// bytes-as-bytes).
+bool StoreUncompressedMetaBlock(bool final_block,
+								const uint8_t* input,
+								size_t position, size_t mask,
+								size_t len,
+								int* storage_ix,
+								uint8_t* storage);
 
 }  // namespace brotli
 
-#endif  // BROTLI_ENC_ENCODE_H_
+#endif  // BROTLI_ENC_BROTLI_BIT_STREAM_H_
 
 #include <algorithm>
 #include <limits>
+#include <vector>
 
 
 //#line 1 "context.h"
@@ -12572,47 +12990,6 @@ static inline uint8_t Context(uint8_t p1, uint8_t p2, int mode) {
 #endif  // BROTLI_ENC_CONTEXT_H_
 
 
-//#line 1 "literal_cost.h"
-// Copyright 2013 Google Inc. All Rights Reserved.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-//
-// Literal cost model to allow backward reference replacement to be efficient.
-
-#ifndef BROTLI_ENC_LITERAL_COST_H_
-#define BROTLI_ENC_LITERAL_COST_H_
-
-#include <stddef.h>
-#include <stdint.h>
-
-namespace brotli {
-
-// Estimates how many bits the literals in the interval [pos, pos + len) in the
-// ringbuffer (data, mask) will take entropy coded and writes these estimates
-// to the ringbuffer (cost, mask).
-void EstimateBitCostsForLiterals(size_t pos, size_t len, size_t mask,
-								 size_t cost_mask, const uint8_t *data,
-								 float *cost);
-
-void EstimateBitCostsForLiteralsUTF8(size_t pos, size_t len, size_t mask,
-									 size_t cost_mask, const uint8_t *data,
-									 float *cost);
-
-}  // namespace brotli
-
-#endif  // BROTLI_ENC_LITERAL_COST_H_
-
-
 //#line 1 "write_bits.h"
 // Copyright 2010 Google Inc. All Rights Reserved.
 //
@@ -12636,139 +13013,6 @@ void EstimateBitCostsForLiteralsUTF8(size_t pos, size_t len, size_t mask,
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
-
-
-//#line 1 "endian.h"
-// "License": Public Domain
-// I, Mathias Panzenbk, place this file hereby into the public domain. Use it at your own risk for whatever you like.
-
-#ifndef PORTABLE_ENDIAN_H__
-#define PORTABLE_ENDIAN_H__
-
-#if (defined(_WIN16) || defined(_WIN32) || defined(_WIN64)) && !defined(__WINDOWS__)
-
-#	define __WINDOWS__
-
-#endif
-
-#if defined(__linux__) || defined(__CYGWIN__)
-
-#	include <endian.h>
-
-#elif defined(__APPLE__)
-
-#	include <libkern/OSByteOrder.h>
-
-#	define htobe16(x) OSSwapHostToBigInt16(x)
-#	define htole16(x) OSSwapHostToLittleInt16(x)
-#	define be16toh(x) OSSwapBigToHostInt16(x)
-#	define le16toh(x) OSSwapLittleToHostInt16(x)
-
-#	define htobe32(x) OSSwapHostToBigInt32(x)
-#	define htole32(x) OSSwapHostToLittleInt32(x)
-#	define be32toh(x) OSSwapBigToHostInt32(x)
-#	define le32toh(x) OSSwapLittleToHostInt32(x)
-
-#	define htobe64(x) OSSwapHostToBigInt64(x)
-#	define htole64(x) OSSwapHostToLittleInt64(x)
-#	define be64toh(x) OSSwapBigToHostInt64(x)
-#	define le64toh(x) OSSwapLittleToHostInt64(x)
-
-#	define __BYTE_ORDER    BYTE_ORDER
-#	define __BIG_ENDIAN    BIG_ENDIAN
-#	define __LITTLE_ENDIAN LITTLE_ENDIAN
-#	define __PDP_ENDIAN    PDP_ENDIAN
-
-#elif defined(__OpenBSD__)
-
-#	include <sys/endian.h>
-
-#elif defined(__NetBSD__) || defined(__FreeBSD__) || defined(__DragonFly__)
-
-#	include <sys/endian.h>
-
-#	define be16toh(x) betoh16(x)
-#	define le16toh(x) letoh16(x)
-
-#	define be32toh(x) betoh32(x)
-#	define le32toh(x) letoh32(x)
-
-#	define be64toh(x) betoh64(x)
-#	define le64toh(x) letoh64(x)
-
-#elif defined(__WINDOWS__)
-
-#   if !defined(NOMINMAX)
-#		define NOMINMAX
-#	endif
-
-#	include <winsock2.h>
-
-#	if !defined(_MSC_VER)
-#		include <sys/param.h>
-#	endif
-
-#	if BYTE_ORDER == LITTLE_ENDIAN
-
-#		define htobe16(x) htons(x)
-#		define htole16(x) (x)
-#		define be16toh(x) ntohs(x)
-#		define le16toh(x) (x)
-
-#		define htobe32(x) htonl(x)
-#		define htole32(x) (x)
-#		define be32toh(x) ntohl(x)
-#		define le32toh(x) (x)
-
-#		define htobe64(x) htonll(x)
-#		define htole64(x) (x)
-#		define be64toh(x) ntohll(x)
-#		define le64toh(x) (x)
-
-#	elif BYTE_ORDER == BIG_ENDIAN
-
-		/* that would be xbox 360 */
-#		define htobe16(x) (x)
-#		define htole16(x) __builtin_bswap16(x)
-#		define be16toh(x) (x)
-#		define le16toh(x) __builtin_bswap16(x)
-
-#		define htobe32(x) (x)
-#		define htole32(x) __builtin_bswap32(x)
-#		define be32toh(x) (x)
-#		define le32toh(x) __builtin_bswap32(x)
-
-#		define htobe64(x) (x)
-#		define htole64(x) __builtin_bswap64(x)
-#		define be64toh(x) (x)
-#		define le64toh(x) __builtin_bswap64(x)
-
-#	else
-
-#		error byte order not supported
-
-#	endif
-
-#	define __BYTE_ORDER    BYTE_ORDER
-#	define __BIG_ENDIAN    BIG_ENDIAN
-#	define __LITTLE_ENDIAN LITTLE_ENDIAN
-#	define __PDP_ENDIAN    PDP_ENDIAN
-
-#else
-
-#	error platform not supported
-
-#endif
-
-#if (BYTE_ORDER == LITTLE_ENDIAN) && (!defined(IS_LITTLE_ENDIAN))
-#	define IS_LITTLE_ENDIAN
-#endif
-
-#if (BYTE_ORDER == BIG_ENDIAN) && (!defined(IS_BIG_ENDIAN))
-#	define IS_BIG_ENDIAN
-#endif
-
-#endif
 
 namespace brotli {
 
@@ -12796,6 +13040,7 @@ inline void WriteBits(int n_bits,
 #ifdef BIT_WRITER_DEBUG
   printf("WriteBits  %2d  0x%016llx  %10d\n", n_bits, bits, *pos);
 #endif
+  assert(bits < 1ULL << n_bits);
 #ifdef IS_LITTLE_ENDIAN
   // This branch of the code can write up to 56 bits at a time,
   // 7 bits are lost by being perhaps already in *p and at least
@@ -12838,160 +13083,117 @@ inline void WriteBitsPrepareStorage(int pos, uint8_t *array) {
 
 namespace brotli {
 
-static const int kWindowBits = 22;
-// To make decoding faster, we allow the decoder to write 16 bytes ahead in
-// its ringbuffer, therefore the encoder has to decrease max distance by this
-// amount.
-static const int kDecoderRingBufferWriteAheadSlack = 16;
-static const int kMaxBackwardDistance =
-	(1 << kWindowBits) - kDecoderRingBufferWriteAheadSlack;
-
-static const int kMetaBlockSizeBits = 21;
-static const int kRingBufferBits = 23;
-static const int kRingBufferMask = (1 << kRingBufferBits) - 1;
-
-template<int kSize>
-double Entropy(const std::vector<Histogram<kSize> >& histograms) {
-  double retval = 0;
-  for (int i = 0; i < histograms.size(); ++i) {
-	retval += histograms[i].EntropyBitCost();
-  }
-  return retval;
+// returns false if fail
+// nibblesbits represents the 2 bits to encode MNIBBLES (0-3)
+bool EncodeMlen(size_t length, int* bits, int* numbits, int* nibblesbits) {
+  length--;  // MLEN - 1 is encoded
+  int lg = length == 0 ? 1 : Log2Floor(length) + 1;
+  if (lg > 28) return false;
+  int mnibbles = (lg < 16 ? 16 : (lg + 3)) / 4;
+  *nibblesbits = mnibbles - 4;
+  *numbits = mnibbles * 4;
+  *bits = length;
+  return true;
 }
 
-template<int kSize>
-double TotalBitCost(const std::vector<Histogram<kSize> >& histograms) {
-  double retval = 0;
-  for (int i = 0; i < histograms.size(); ++i) {
-	retval += PopulationCost(histograms[i]);
-  }
-  return retval;
-}
-
-void EncodeVarLenUint8(int n, int* storage_ix, uint8_t* storage) {
+void StoreVarLenUint8(int n, int* storage_ix, uint8_t* storage) {
   if (n == 0) {
 	WriteBits(1, 0, storage_ix, storage);
   } else {
 	WriteBits(1, 1, storage_ix, storage);
 	int nbits = Log2Floor(n);
 	WriteBits(3, nbits, storage_ix, storage);
-	if (nbits > 0) {
-	  WriteBits(nbits, n - (1 << nbits), storage_ix, storage);
-	}
+	WriteBits(nbits, n - (1 << nbits), storage_ix, storage);
   }
 }
 
-int ParseAsUTF8(int* symbol, const uint8_t* input, int size) {
-  // ASCII
-  if ((input[0] & 0x80) == 0) {
-	*symbol = input[0];
-	if (*symbol > 0) {
-	  return 1;
+bool StoreCompressedMetaBlockHeader(bool final_block,
+									size_t length,
+									int* storage_ix,
+									uint8_t* storage) {
+  // Write ISLAST bit.
+  WriteBits(1, final_block, storage_ix, storage);
+  // Write ISEMPTY bit.
+  if (final_block) {
+	WriteBits(1, length == 0, storage_ix, storage);
+	if (length == 0) {
+	  return true;
 	}
   }
-  // 2-byte UTF8
-  if (size > 1 &&
-	  (input[0] & 0xe0) == 0xc0 &&
-	  (input[1] & 0xc0) == 0x80) {
-	*symbol = (((input[0] & 0x1f) << 6) |
-			   (input[1] & 0x3f));
-	if (*symbol > 0x7f) {
-	  return 2;
-	}
-  }
-  // 3-byte UFT8
-  if (size > 2 &&
-	  (input[0] & 0xf0) == 0xe0 &&
-	  (input[1] & 0xc0) == 0x80 &&
-	  (input[2] & 0xc0) == 0x80) {
-	*symbol = (((input[0] & 0x0f) << 12) |
-			   ((input[1] & 0x3f) << 6) |
-			   (input[2] & 0x3f));
-	if (*symbol > 0x7ff) {
-	  return 3;
-	}
-  }
-  // 4-byte UFT8
-  if (size > 3 &&
-	  (input[0] & 0xf8) == 0xf0 &&
-	  (input[1] & 0xc0) == 0x80 &&
-	  (input[2] & 0xc0) == 0x80 &&
-	  (input[3] & 0xc0) == 0x80) {
-	*symbol = (((input[0] & 0x07) << 18) |
-			   ((input[1] & 0x3f) << 12) |
-			   ((input[2] & 0x3f) << 6) |
-			   (input[3] & 0x3f));
-	if (*symbol > 0xffff && *symbol <= 0x10ffff) {
-	  return 4;
-	}
-  }
-  // Not UTF8, emit a special symbol above the UTF8-code space
-  *symbol = 0x110000 | input[0];
-  return 1;
-}
 
-// Returns true if at least min_fraction of the data is UTF8-encoded.
-bool IsMostlyUTF8(const uint8_t* data, size_t length, double min_fraction) {
-  size_t size_utf8 = 0;
-  size_t pos = 0;
-  while (pos < length) {
-	int symbol;
-	int bytes_read = ParseAsUTF8(&symbol, data + pos, length - pos);
-	pos += bytes_read;
-	if (symbol < 0x110000) size_utf8 += bytes_read;
+  if (length == 0) {
+	// Only the last meta-block can be empty.
+	return false;
   }
-  return size_utf8 > min_fraction * length;
-}
 
-void EncodeMetaBlockLength(size_t meta_block_size,
-						   bool is_last,
-						   bool is_uncompressed,
-						   int* storage_ix, uint8_t* storage) {
-  WriteBits(1, is_last, storage_ix, storage);
-  if (is_last) {
-	if (meta_block_size == 0) {
-	  WriteBits(1, 1, storage_ix, storage);
-	  return;
-	}
+  int lenbits;
+  int nlenbits;
+  int nibblesbits;
+  if (!EncodeMlen(length, &lenbits, &nlenbits, &nibblesbits)) {
+	return false;
+  }
+
+  WriteBits(2, nibblesbits, storage_ix, storage);
+  WriteBits(nlenbits, lenbits, storage_ix, storage);
+
+  if (!final_block) {
+	// Write ISUNCOMPRESSED bit.
 	WriteBits(1, 0, storage_ix, storage);
   }
-  --meta_block_size;
-  int num_bits = Log2Floor(meta_block_size) + 1;
-  if (num_bits < 16) {
-	num_bits = 16;
+  return true;
+}
+
+bool StoreUncompressedMetaBlockHeader(size_t length,
+									  int* storage_ix,
+									  uint8_t* storage) {
+  // Write ISLAST bit. Uncompressed block cannot be the last one, so set to 0.
+  WriteBits(1, 0, storage_ix, storage);
+  int lenbits;
+  int nlenbits;
+  int nibblesbits;
+  if (!EncodeMlen(length, &lenbits, &nlenbits, &nibblesbits)) {
+	return false;
   }
-  WriteBits(2, (num_bits - 13) >> 2, storage_ix, storage);
-  while (num_bits > 0) {
-	WriteBits(4, meta_block_size & 0xf, storage_ix, storage);
-	meta_block_size >>= 4;
-	num_bits -= 4;
-  }
-  if (!is_last) {
-	WriteBits(1, is_uncompressed, storage_ix, storage);
-  }
+  WriteBits(2, nibblesbits, storage_ix, storage);
+  WriteBits(nlenbits, lenbits, storage_ix, storage);
+  // Write ISUNCOMPRESSED bit.
+  WriteBits(1, 1, storage_ix, storage);
+  return true;
 }
 
 void StoreHuffmanTreeOfHuffmanTreeToBitMask(
-	const uint8_t* code_length_bitdepth,
-	int* storage_ix, uint8_t* storage) {
+	const int num_codes,
+	const uint8_t *code_length_bitdepth,
+	int *storage_ix,
+	uint8_t *storage) {
   static const uint8_t kStorageOrder[kCodeLengthCodes] = {
-	1, 2, 3, 4, 0, 5, 17, 6, 16, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+	1, 2, 3, 4, 0, 5, 17, 6, 16, 7, 8, 9, 10, 11, 12, 13, 14, 15
   };
+  // The bit lengths of the Huffman code over the code length alphabet
+  // are compressed with the following static Huffman code:
+  //   Symbol   Code
+  //   ------   ----
+  //   0          00
+  //   1        1110
+  //   2         110
+  //   3          01
+  //   4          10
+  //   5        1111
+  static const uint8_t kHuffmanBitLengthHuffmanCodeSymbols[6] = {
+	 0, 7, 3, 2, 1, 15
+  };
+  static const uint8_t kHuffmanBitLengthHuffmanCodeBitLengths[6] = {
+	2, 4, 3, 2, 2, 4
+  };
+
   // Throw away trailing zeros:
   int codes_to_store = kCodeLengthCodes;
-  for (; codes_to_store > 0; --codes_to_store) {
-	if (code_length_bitdepth[kStorageOrder[codes_to_store - 1]] != 0) {
-	  break;
+  if (num_codes > 1) {
+	for (; codes_to_store > 0; --codes_to_store) {
+	  if (code_length_bitdepth[kStorageOrder[codes_to_store - 1]] != 0) {
+		break;
+	  }
 	}
-  }
-  int num_codes = 0;
-  for (int i = 0; i < codes_to_store; ++i) {
-	if (code_length_bitdepth[kStorageOrder[i]] != 0) {
-	  ++num_codes;
-	}
-  }
-  if (num_codes == 1) {
-	codes_to_store = kCodeLengthCodes;
   }
   int skip_some = 0;  // skips none.
   if (code_length_bitdepth[kStorageOrder[0]] == 0 &&
@@ -13003,268 +13205,176 @@ void StoreHuffmanTreeOfHuffmanTreeToBitMask(
   }
   WriteBits(2, skip_some, storage_ix, storage);
   for (int i = skip_some; i < codes_to_store; ++i) {
-	uint8_t len[] = { 2, 4, 3, 2, 2, 4 };
-	uint8_t bits[] = { 0, 7, 3, 2, 1, 15 };
-	int v = code_length_bitdepth[kStorageOrder[i]];
-	WriteBits(len[v], bits[v], storage_ix, storage);
+	uint8_t l = code_length_bitdepth[kStorageOrder[i]];
+	WriteBits(kHuffmanBitLengthHuffmanCodeBitLengths[l],
+			  kHuffmanBitLengthHuffmanCodeSymbols[l], storage_ix, storage);
   }
 }
 
 void StoreHuffmanTreeToBitMask(
-	const uint8_t* huffman_tree,
-	const uint8_t* huffman_tree_extra_bits,
-	const int huffman_tree_size,
-	const EntropyCode<kCodeLengthCodes>& entropy,
-	int* storage_ix, uint8_t* storage) {
-  for (int i = 0; i < huffman_tree_size; ++i) {
-	const int ix = huffman_tree[i];
-	const int extra_bits = huffman_tree_extra_bits[i];
-	if (entropy.count_ > 1) {
-	  WriteBits(entropy.depth_[ix], entropy.bits_[ix], storage_ix, storage);
-	}
+	const std::vector<uint8_t> &huffman_tree,
+	const std::vector<uint8_t> &huffman_tree_extra_bits,
+	const uint8_t *code_length_bitdepth,
+	const std::vector<uint16_t> &code_length_bitdepth_symbols,
+	int * __restrict storage_ix,
+	uint8_t * __restrict storage) {
+  for (int i = 0; i < huffman_tree.size(); ++i) {
+	int ix = huffman_tree[i];
+	WriteBits(code_length_bitdepth[ix], code_length_bitdepth_symbols[ix],
+			  storage_ix, storage);
+	// Extra bits
 	switch (ix) {
 	  case 16:
-		WriteBits(2, extra_bits, storage_ix, storage);
+		WriteBits(2, huffman_tree_extra_bits[i], storage_ix, storage);
 		break;
 	  case 17:
-		WriteBits(3, extra_bits, storage_ix, storage);
+		WriteBits(3, huffman_tree_extra_bits[i], storage_ix, storage);
 		break;
 	}
   }
 }
 
-template<int kSize>
-void StoreHuffmanCodeSimple(
-	const EntropyCode<kSize>& code, int alphabet_size,
-	int max_bits, int* storage_ix, uint8_t* storage) {
-  const uint8_t *depth = &code.depth_[0];
-  int symbols[4];
-  // Quadratic sort.
-  int k, j;
-  for (k = 0; k < code.count_; ++k) {
-	symbols[k] = code.symbols_[k];
-  }
-  for (k = 0; k < code.count_; ++k) {
-	for (j = k + 1; j < code.count_; ++j) {
-	  if (depth[symbols[j]] < depth[symbols[k]]) {
-		int t = symbols[k];
-		symbols[k] = symbols[j];
-		symbols[j] = t;
+void StoreSimpleHuffmanTree(const uint8_t* depths,
+							int symbols[4],
+							int num_symbols,
+							int max_bits,
+							int *storage_ix, uint8_t *storage) {
+  // value of 1 indicates a simple Huffman code
+  WriteBits(2, 1, storage_ix, storage);
+  WriteBits(2, num_symbols - 1, storage_ix, storage);  // NSYM - 1
+
+  // Sort
+  for (int i = 0; i < num_symbols; i++) {
+	for (int j = i + 1; j < num_symbols; j++) {
+	  if (depths[symbols[j]] < depths[symbols[i]]) {
+		std::swap(symbols[j], symbols[i]);
 	  }
 	}
   }
-  // Small tree marker to encode 1-4 symbols.
-  WriteBits(2, 1, storage_ix, storage);
-  WriteBits(2, code.count_ - 1, storage_ix, storage);
-  for (int i = 0; i < code.count_; ++i) {
-	WriteBits(max_bits, symbols[i], storage_ix, storage);
-  }
-  if (code.count_ == 4) {
-	if (depth[symbols[0]] == 2 &&
-		depth[symbols[1]] == 2 &&
-		depth[symbols[2]] == 2 &&
-		depth[symbols[3]] == 2) {
-	  WriteBits(1, 0, storage_ix, storage);
-	} else {
-	  WriteBits(1, 1, storage_ix, storage);
-	}
+
+  if (num_symbols == 2) {
+	WriteBits(max_bits, symbols[0], storage_ix, storage);
+	WriteBits(max_bits, symbols[1], storage_ix, storage);
+  } else if (num_symbols == 3) {
+	WriteBits(max_bits, symbols[0], storage_ix, storage);
+	WriteBits(max_bits, symbols[1], storage_ix, storage);
+	WriteBits(max_bits, symbols[2], storage_ix, storage);
+  } else {
+	WriteBits(max_bits, symbols[0], storage_ix, storage);
+	WriteBits(max_bits, symbols[1], storage_ix, storage);
+	WriteBits(max_bits, symbols[2], storage_ix, storage);
+	WriteBits(max_bits, symbols[3], storage_ix, storage);
+	// tree-select
+	WriteBits(1, depths[symbols[0]] == 1 ? 1 : 0, storage_ix, storage);
   }
 }
 
-template<int kSize>
-void StoreHuffmanCodeComplex(
-	const EntropyCode<kSize>& code, int alphabet_size,
-	int* storage_ix, uint8_t* storage) {
-  const uint8_t *depth = &code.depth_[0];
-  uint8_t huffman_tree[kSize];
-  uint8_t huffman_tree_extra_bits[kSize];
-  int huffman_tree_size = 0;
-  WriteHuffmanTree(depth,
-				   alphabet_size,
-				   &huffman_tree[0],
-				   &huffman_tree_extra_bits[0],
-				   &huffman_tree_size);
-  Histogram<kCodeLengthCodes> huffman_tree_histogram;
-  memset(huffman_tree_histogram.data_, 0, sizeof(huffman_tree_histogram.data_));
-  for (int i = 0; i < huffman_tree_size; ++i) {
-	huffman_tree_histogram.Add(huffman_tree[i]);
+// num = alphabet size
+// depths = symbol depths
+void StoreHuffmanTree(const uint8_t* depths, size_t num,
+					  int quality,
+					  int *storage_ix, uint8_t *storage) {
+  // Write the Huffman tree into the brotli-representation.
+  std::vector<uint8_t> huffman_tree;
+  std::vector<uint8_t> huffman_tree_extra_bits;
+  // TODO: Consider allocating these from stack.
+  huffman_tree.reserve(256);
+  huffman_tree_extra_bits.reserve(256);
+  WriteHuffmanTree(depths, num, &huffman_tree, &huffman_tree_extra_bits);
+
+  // Calculate the statistics of the Huffman tree in brotli-representation.
+  int huffman_tree_histogram[kCodeLengthCodes] = { 0 };
+  for (int i = 0; i < huffman_tree.size(); ++i) {
+	++huffman_tree_histogram[huffman_tree[i]];
   }
-  EntropyCode<kCodeLengthCodes> huffman_tree_entropy;
-  BuildEntropyCode(huffman_tree_histogram, 5, kCodeLengthCodes,
-				   &huffman_tree_entropy);
-  StoreHuffmanTreeOfHuffmanTreeToBitMask(
-	  &huffman_tree_entropy.depth_[0], storage_ix, storage);
-  StoreHuffmanTreeToBitMask(&huffman_tree[0], &huffman_tree_extra_bits[0],
-							huffman_tree_size, huffman_tree_entropy,
+
+  int num_codes = 0;
+  int code = 0;
+  for (int i = 0; i < kCodeLengthCodes; ++i) {
+	if (huffman_tree_histogram[i]) {
+	  if (num_codes == 0) {
+		code = i;
+		num_codes = 1;
+	  } else if (num_codes == 1) {
+		num_codes = 2;
+		break;
+	  }
+	}
+  }
+
+  // Calculate another Huffman tree to use for compressing both the
+  // earlier Huffman tree with.
+  // TODO: Consider allocating these from stack.
+  uint8_t code_length_bitdepth[kCodeLengthCodes] = { 0 };
+  std::vector<uint16_t> code_length_bitdepth_symbols(kCodeLengthCodes);
+  CreateHuffmanTree(&huffman_tree_histogram[0], kCodeLengthCodes,
+					5, quality, &code_length_bitdepth[0]);
+  ConvertBitDepthsToSymbols(code_length_bitdepth, kCodeLengthCodes,
+							code_length_bitdepth_symbols.data());
+
+  // Now, we have all the data, let's start storing it
+  StoreHuffmanTreeOfHuffmanTreeToBitMask(num_codes, code_length_bitdepth,
+										 storage_ix, storage);
+
+  if (num_codes == 1) {
+	code_length_bitdepth[code] = 0;
+  }
+
+  // Store the real huffman tree now.
+  StoreHuffmanTreeToBitMask(huffman_tree,
+							huffman_tree_extra_bits,
+							&code_length_bitdepth[0],
+							code_length_bitdepth_symbols,
 							storage_ix, storage);
 }
 
-template<int kSize>
-void BuildAndStoreEntropyCode(const Histogram<kSize>& histogram,
-							  const int tree_limit,
-							  const int alphabet_size,
-							  EntropyCode<kSize>* code,
-							  int* storage_ix, uint8_t* storage) {
-  memset(code->depth_, 0, sizeof(code->depth_));
-  memset(code->bits_, 0, sizeof(code->bits_));
-  memset(code->symbols_, 0, sizeof(code->symbols_));
-  code->count_ = 0;
+void BuildAndStoreHuffmanTree(const int *histogram,
+							  const int length,
+							  const int quality,
+							  uint8_t* depth,
+							  uint16_t* bits,
+							  int* storage_ix,
+							  uint8_t* storage) {
+  int count = 0;
+  int s4[4] = { 0 };
+  for (size_t i = 0; i < length; i++) {
+	if (histogram[i]) {
+	  if (count < 4) {
+		s4[count] = i;
+	  } else if (quality < 3 && count > 4) {
+		break;
+	  }
+	  count++;
+	}
+  }
 
-  int max_bits_counter = alphabet_size - 1;
+  int max_bits_counter = length - 1;
   int max_bits = 0;
   while (max_bits_counter) {
 	max_bits_counter >>= 1;
 	++max_bits;
   }
 
-  for (size_t i = 0; i < alphabet_size; i++) {
-	if (histogram.data_[i] > 0) {
-	  if (code->count_ < 4) code->symbols_[code->count_] = i;
-	  ++code->count_;
-	}
-  }
-
-  if (code->count_ <= 1) {
-	WriteBits(2, 1, storage_ix, storage);
-	WriteBits(2, 0, storage_ix, storage);
-	WriteBits(max_bits, code->symbols_[0], storage_ix, storage);
+  if (count <= 1) {
+	WriteBits(4, 1, storage_ix, storage);
+	WriteBits(max_bits, s4[0], storage_ix, storage);
 	return;
   }
 
-  if (alphabet_size >= 50 && code->count_ >= 16) {
-	std::vector<int> counts(alphabet_size);
-	memcpy(&counts[0], histogram.data_, sizeof(counts[0]) * alphabet_size);
-	OptimizeHuffmanCountsForRle(alphabet_size, &counts[0]);
-	CreateHuffmanTree(&counts[0], alphabet_size, tree_limit, code->depth_);
+  if (length >= 50 && count >= 16 && quality >= 3) {
+	std::vector<int> counts(length);
+	memcpy(&counts[0], histogram, sizeof(counts[0]) * length);
+	OptimizeHuffmanCountsForRle(length, &counts[0]);
+	CreateHuffmanTree(&counts[0], length, 15, quality, depth);
   } else {
-	CreateHuffmanTree(histogram.data_, alphabet_size, tree_limit, code->depth_);
+	CreateHuffmanTree(histogram, length, 15, quality, depth);
   }
-  ConvertBitDepthsToSymbols(code->depth_, alphabet_size, code->bits_);
+  ConvertBitDepthsToSymbols(depth, length, bits);
 
-  if (code->count_ <= 4) {
-	StoreHuffmanCodeSimple(*code, alphabet_size, max_bits, storage_ix, storage);
+  if (count <= 4) {
+	StoreSimpleHuffmanTree(depth, s4, count, max_bits, storage_ix, storage);
   } else {
-	StoreHuffmanCodeComplex(*code, alphabet_size, storage_ix, storage);
-  }
-}
-
-template<int kSize>
-void BuildAndStoreEntropyCodes(
-	const std::vector<Histogram<kSize> >& histograms,
-	int alphabet_size,
-	std::vector<EntropyCode<kSize> >* entropy_codes,
-	int* storage_ix, uint8_t* storage) {
-  entropy_codes->resize(histograms.size());
-  for (int i = 0; i < histograms.size(); ++i) {
-	BuildAndStoreEntropyCode(histograms[i], 15, alphabet_size,
-							 &(*entropy_codes)[i],
-							 storage_ix, storage);
-  }
-}
-
-void EncodeCommand(const Command& cmd,
-				   const EntropyCodeCommand& entropy,
-				   int* storage_ix, uint8_t* storage) {
-  int code = cmd.command_prefix_;
-  WriteBits(entropy.depth_[code], entropy.bits_[code], storage_ix, storage);
-  if (code >= 128) {
-	code -= 128;
-  }
-  int insert_extra_bits = InsertLengthExtraBits(code);
-  uint64_t insert_extra_bits_val =
-	  cmd.insert_length_ - InsertLengthOffset(code);
-  int copy_extra_bits = CopyLengthExtraBits(code);
-  uint64_t copy_extra_bits_val = cmd.copy_length_code_ - CopyLengthOffset(code);
-  if (insert_extra_bits > 0) {
-	WriteBits(insert_extra_bits, insert_extra_bits_val, storage_ix, storage);
-  }
-  if (copy_extra_bits > 0) {
-	WriteBits(copy_extra_bits, copy_extra_bits_val, storage_ix, storage);
-  }
-}
-
-void EncodeCopyDistance(const Command& cmd, const EntropyCodeDistance& entropy,
-						int* storage_ix, uint8_t* storage) {
-  int code = cmd.distance_prefix_;
-  int extra_bits = cmd.distance_extra_bits_;
-  uint64_t extra_bits_val = cmd.distance_extra_bits_value_;
-  WriteBits(entropy.depth_[code], entropy.bits_[code], storage_ix, storage);
-  if (extra_bits > 0) {
-	WriteBits(extra_bits, extra_bits_val, storage_ix, storage);
-  }
-}
-
-void ComputeDistanceShortCodes(std::vector<Command>* cmds,
-							   size_t pos,
-							   const size_t max_backward,
-							   int* dist_ringbuffer,
-							   size_t* ringbuffer_idx) {
-  static const int kIndexOffset[16] = {
-	3, 2, 1, 0, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2
-  };
-  static const int kValueOffset[16] = {
-	0, 0, 0, 0, -1, 1, -2, 2, -3, 3, -1, 1, -2, 2, -3, 3
-  };
-  for (int i = 0; i < cmds->size(); ++i) {
-	pos += (*cmds)[i].insert_length_;
-	size_t max_distance = std::min(pos, max_backward);
-	int cur_dist = (*cmds)[i].copy_distance_;
-	int dist_code = cur_dist + 16;
-	if (cur_dist <= max_distance) {
-	  if (cur_dist == 0) break;
-	  int limits[16] = { 0, 0, 0, 0,
-						 6, 6, 11, 11,
-						 11, 11, 11, 11,
-						 12, 12, 12, 12 };
-	  for (int k = 0; k < 16; ++k) {
-		// Only accept more popular choices.
-		if (cur_dist < limits[k]) {
-		  // Typically unpopular ranges, don't replace a short distance
-		  // with them.
-		  continue;
-		}
-		int comp = (dist_ringbuffer[(*ringbuffer_idx + kIndexOffset[k]) & 3] +
-					kValueOffset[k]);
-		if (cur_dist == comp) {
-		  dist_code = k + 1;
-		  break;
-		}
-	  }
-	  if (dist_code > 1) {
-		dist_ringbuffer[*ringbuffer_idx & 3] = cur_dist;
-		++(*ringbuffer_idx);
-	  }
-	  pos += (*cmds)[i].copy_length_;
-	} else {
-	  int word_idx = cur_dist - max_distance - 1;
-	  const std::string word =
-		  GetTransformedDictionaryWord((*cmds)[i].copy_length_code_, word_idx);
-	  pos += word.size();
-	}
-	(*cmds)[i].distance_code_ = dist_code;
-  }
-}
-
-void ComputeCommandPrefixes(std::vector<Command>* cmds,
-							int num_direct_distance_codes,
-							int distance_postfix_bits) {
-  for (int i = 0; i < cmds->size(); ++i) {
-	Command* cmd = &(*cmds)[i];
-	cmd->command_prefix_ = CommandPrefix(cmd->insert_length_,
-										 cmd->copy_length_code_);
-	if (cmd->copy_length_code_ > 0) {
-	  PrefixEncodeCopyDistance(cmd->distance_code_,
-							   num_direct_distance_codes,
-							   distance_postfix_bits,
-							   &cmd->distance_prefix_,
-							   &cmd->distance_extra_bits_,
-							   &cmd->distance_extra_bits_value_);
-	}
-	if (cmd->command_prefix_ < 128 && cmd->distance_prefix_ == 0) {
-	  cmd->distance_prefix_ = 0xffff;
-	} else {
-	  cmd->command_prefix_ += 128;
-	}
+	StoreHuffmanTree(depth, length, quality, storage_ix, storage);
   }
 }
 
@@ -13285,7 +13395,7 @@ void MoveToFront(std::vector<int>* v, int index) {
 
 std::vector<int> MoveToFrontTransform(const std::vector<int>& v) {
   if (v.empty()) return v;
-  std::vector<int> mtf(*max_element(v.begin(), v.end()) + 1);
+  std::vector<int> mtf(*std::max_element(v.begin(), v.end()) + 1);
   for (int i = 0; i < mtf.size(); ++i) mtf[i] = i;
   std::vector<int> result(v.size());
   for (int i = 0; i < v.size(); ++i) {
@@ -13378,7 +13488,7 @@ int BestMaxZeroRunLengthPrefix(const std::vector<int>& v) {
 void EncodeContextMap(const std::vector<int>& context_map,
 					  int num_clusters,
 					  int* storage_ix, uint8_t* storage) {
-  EncodeVarLenUint8(num_clusters - 1, storage_ix, storage);
+  StoreVarLenUint8(num_clusters - 1, storage_ix, storage);
 
   if (num_clusters == 1) {
 	return;
@@ -13400,9 +13510,12 @@ void EncodeContextMap(const std::vector<int>& context_map,
 	WriteBits(4, max_run_length_prefix - 1, storage_ix, storage);
   }
   EntropyCodeContextMap symbol_code;
-  BuildAndStoreEntropyCode(symbol_histogram, 15,
+  memset(symbol_code.depth_, 0, sizeof(symbol_code.depth_));
+  memset(symbol_code.bits_, 0, sizeof(symbol_code.bits_));
+  BuildAndStoreHuffmanTree(symbol_histogram.data_,
 						   num_clusters + max_run_length_prefix,
-						   &symbol_code,
+						   9,  // quality
+						   symbol_code.depth_, symbol_code.bits_,
 						   storage_ix, storage);
   for (int i = 0; i < rle_symbols.size(); ++i) {
 	WriteBits(symbol_code.depth_[rle_symbols[i]],
@@ -13415,406 +13528,947 @@ void EncodeContextMap(const std::vector<int>& context_map,
   WriteBits(1, 1, storage_ix, storage);  // use move-to-front
 }
 
-struct BlockSplitCode {
-  EntropyCodeBlockType block_type_code;
-  EntropyCodeBlockLength block_len_code;
-};
-
-void EncodeBlockLength(const EntropyCodeBlockLength& entropy,
-					   int length,
-					   int* storage_ix, uint8_t* storage) {
-  int len_code = BlockLengthPrefix(length);
-  int extra_bits = BlockLengthExtraBits(len_code);
-  int extra_bits_value = length - BlockLengthOffset(len_code);
-  WriteBits(entropy.depth_[len_code], entropy.bits_[len_code],
-			storage_ix, storage);
-  if (extra_bits > 0) {
-	WriteBits(extra_bits, extra_bits_value, storage_ix, storage);
-  }
-}
-
-void ComputeBlockTypeShortCodes(BlockSplit* split) {
-  if (split->num_types_ <= 1) {
-	split->num_types_ = 1;
-	return;
-  }
-  int ringbuffer[2] = { 0, 1 };
-  size_t index = 0;
-  for (int i = 0; i < split->types_.size(); ++i) {
-	int type = split->types_[i];
-	int type_code;
-	if (type == ringbuffer[index & 1]) {
-	  type_code = 0;
-	} else if (type == ringbuffer[(index - 1) & 1] + 1) {
-	  type_code = 1;
-	} else {
-	  type_code = type + 2;
-	}
-	ringbuffer[index & 1] = type;
-	++index;
-	split->type_codes_.push_back(type_code);
-  }
-}
-
-void BuildAndEncodeBlockSplitCode(const BlockSplit& split,
-								  BlockSplitCode* code,
-								  int* storage_ix, uint8_t* storage) {
-  EncodeVarLenUint8(split.num_types_ - 1, storage_ix, storage);
-
-  if (split.num_types_ == 1) {
-	return;
-  }
-
-  HistogramBlockType type_histo;
-  for (int i = 1; i < split.type_codes_.size(); ++i) {
-	type_histo.Add(split.type_codes_[i]);
-  }
-  HistogramBlockLength length_histo;
-  for (int i = 0; i < split.lengths_.size(); ++i) {
-	length_histo.Add(BlockLengthPrefix(split.lengths_[i]));
-  }
-  BuildAndStoreEntropyCode(type_histo, 15, split.num_types_ + 2,
-						   &code->block_type_code,
-						   storage_ix, storage);
-  BuildAndStoreEntropyCode(length_histo, 15, kNumBlockLenPrefixes,
-						   &code->block_len_code,
-						   storage_ix, storage);
-  EncodeBlockLength(code->block_len_code, split.lengths_[0],
-					storage_ix, storage);
-}
-
-void MoveAndEncode(const BlockSplitCode& code,
-				   BlockSplitIterator* it,
-				   int* storage_ix, uint8_t* storage) {
-  if (it->length_ == 0) {
-	++it->idx_;
-	it->type_ = it->split_.types_[it->idx_];
-	it->length_ = it->split_.lengths_[it->idx_];
-	int type_code = it->split_.type_codes_[it->idx_];
-	WriteBits(code.block_type_code.depth_[type_code],
-			  code.block_type_code.bits_[type_code],
+void StoreBlockSwitch(const BlockSplitCode& code,
+					  const int block_ix,
+					  int* storage_ix,
+					  uint8_t* storage) {
+  if (block_ix > 0) {
+	int typecode = code.type_code[block_ix];
+	WriteBits(code.type_depths[typecode], code.type_bits[typecode],
 			  storage_ix, storage);
-	EncodeBlockLength(code.block_len_code, it->length_, storage_ix, storage);
   }
-  --it->length_;
+  int lencode = code.length_prefix[block_ix];
+  WriteBits(code.length_depths[lencode], code.length_bits[lencode],
+			storage_ix, storage);
+  WriteBits(code.length_nextra[block_ix], code.length_extra[block_ix],
+			storage_ix, storage);
 }
 
-struct EncodingParams {
-  int num_direct_distance_codes;
-  int distance_postfix_bits;
-  int literal_context_mode;
+void BuildAndStoreBlockSplitCode(const std::vector<int>& types,
+								 const std::vector<int>& lengths,
+								 const int num_types,
+								 const int quality,
+								 BlockSplitCode* code,
+								 int* storage_ix,
+								 uint8_t* storage) {
+  const int num_blocks = types.size();
+  std::vector<int> type_histo(num_types + 2);
+  std::vector<int> length_histo(26);
+  int last_type = 1;
+  int second_last_type = 0;
+  code->type_code.resize(num_blocks);
+  code->length_prefix.resize(num_blocks);
+  code->length_nextra.resize(num_blocks);
+  code->length_extra.resize(num_blocks);
+  code->type_depths.resize(num_types + 2);
+  code->type_bits.resize(num_types + 2);
+  code->length_depths.resize(26);
+  code->length_bits.resize(26);
+  for (int i = 0; i < num_blocks; ++i) {
+	int type = types[i];
+	int type_code = (type == last_type + 1 ? 1 :
+					 type == second_last_type ? 0 :
+					 type + 2);
+	second_last_type = last_type;
+	last_type = type;
+	code->type_code[i] = type_code;
+	if (i > 0) ++type_histo[type_code];
+	GetBlockLengthPrefixCode(lengths[i],
+							 &code->length_prefix[i],
+							 &code->length_nextra[i],
+							 &code->length_extra[i]);
+	++length_histo[code->length_prefix[i]];
+  }
+  StoreVarLenUint8(num_types - 1, storage_ix, storage);
+  if (num_types > 1) {
+	BuildAndStoreHuffmanTree(&type_histo[0], num_types + 2, quality,
+							 &code->type_depths[0], &code->type_bits[0],
+							 storage_ix, storage);
+	BuildAndStoreHuffmanTree(&length_histo[0], 26, quality,
+							 &code->length_depths[0], &code->length_bits[0],
+							 storage_ix, storage);
+	StoreBlockSwitch(*code, 0, storage_ix, storage);
+  }
+}
+
+void StoreTrivialContextMap(int num_types,
+							int context_bits,
+							int* storage_ix,
+							uint8_t* storage) {
+  StoreVarLenUint8(num_types - 1, storage_ix, storage);
+  if (num_types > 1) {
+	int repeat_code = context_bits - 1;
+	int repeat_bits = (1 << repeat_code) - 1;
+	int alphabet_size = num_types + repeat_code;
+	std::vector<int> histogram(alphabet_size);
+	std::vector<uint8_t> depths(alphabet_size);
+	std::vector<uint16_t> bits(alphabet_size);
+	// Write RLEMAX.
+	WriteBits(1, 1, storage_ix, storage);
+	WriteBits(4, repeat_code - 1, storage_ix, storage);
+	histogram[repeat_code] = num_types;
+	histogram[0] = 1;
+	for (int i = context_bits; i < alphabet_size; ++i) {
+	  histogram[i] = 1;
+	}
+	BuildAndStoreHuffmanTree(&histogram[0], alphabet_size, 1,
+							 &depths[0], &bits[0],
+							 storage_ix, storage);
+	for (int i = 0; i < num_types; ++i) {
+	  int code = (i == 0 ? 0 : i + context_bits - 1);
+	  WriteBits(depths[code], bits[code], storage_ix, storage);
+	  WriteBits(depths[repeat_code], bits[repeat_code], storage_ix, storage);
+	  WriteBits(repeat_code, repeat_bits, storage_ix, storage);
+	}
+	// Write IMTF (inverse-move-to-front) bit.
+	WriteBits(1, 1, storage_ix, storage);
+  }
+}
+
+// Manages the encoding of one block category (literal, command or distance).
+class BlockEncoder {
+ public:
+  BlockEncoder(int alphabet_size,
+			   int num_block_types,
+			   const std::vector<int>& block_types,
+			   const std::vector<int>& block_lengths)
+	  : alphabet_size_(alphabet_size),
+		num_block_types_(num_block_types),
+		block_types_(block_types),
+		block_lengths_(block_lengths),
+		block_ix_(0),
+		block_len_(block_lengths.empty() ? 0 : block_lengths[0]),
+		entropy_ix_(0) {}
+
+  // Creates entropy codes of block lengths and block types and stores them
+  // to the bit stream.
+  void BuildAndStoreBlockSwitchEntropyCodes(int quality,
+											int* storage_ix, uint8_t* storage) {
+	BuildAndStoreBlockSplitCode(
+		block_types_, block_lengths_, num_block_types_,
+		quality, &block_split_code_, storage_ix, storage);
+  }
+
+  // Creates entropy codes for all block types and stores them to the bit
+  // stream.
+  template<int kSize>
+  void BuildAndStoreEntropyCodes(
+	  const std::vector<Histogram<kSize> >& histograms,
+	  int quality,
+	  int* storage_ix, uint8_t* storage) {
+	depths_.resize(histograms.size() * alphabet_size_);
+	bits_.resize(histograms.size() * alphabet_size_);
+	for (int i = 0; i < histograms.size(); ++i) {
+	  int ix = i * alphabet_size_;
+	  BuildAndStoreHuffmanTree(&histograms[i].data_[0], alphabet_size_,
+							   quality,
+							   &depths_[ix], &bits_[ix],
+							   storage_ix, storage);
+	}
+  }
+
+  // Stores the next symbol with the entropy code of the current block type.
+  // Updates the block type and block length at block boundaries.
+  void StoreSymbol(int symbol, int* storage_ix, uint8_t* storage) {
+	if (block_len_ == 0) {
+	  ++block_ix_;
+	  block_len_ = block_lengths_[block_ix_];
+	  entropy_ix_ = block_types_[block_ix_] * alphabet_size_;
+	  StoreBlockSwitch(block_split_code_, block_ix_, storage_ix, storage);
+	}
+	--block_len_;
+	int ix = entropy_ix_ + symbol;
+	WriteBits(depths_[ix], bits_[ix], storage_ix, storage);
+  }
+
+  // Stores the next symbol with the entropy code of the current block type and
+  // context value.
+  // Updates the block type and block length at block boundaries.
+  template<int kContextBits>
+  void StoreSymbolWithContext(int symbol, int context,
+							  const std::vector<int>& context_map,
+							  int* storage_ix, uint8_t* storage) {
+	if (block_len_ == 0) {
+	  ++block_ix_;
+	  block_len_ = block_lengths_[block_ix_];
+	  entropy_ix_ = block_types_[block_ix_] << kContextBits;
+	  StoreBlockSwitch(block_split_code_, block_ix_, storage_ix, storage);
+	}
+	--block_len_;
+	int histo_ix = context_map[entropy_ix_ + context];
+	int ix = histo_ix * alphabet_size_ + symbol;
+	WriteBits(depths_[ix], bits_[ix], storage_ix, storage);
+  }
+
+ private:
+  const int alphabet_size_;
+  const int num_block_types_;
+  const std::vector<int>& block_types_;
+  const std::vector<int>& block_lengths_;
+  BlockSplitCode block_split_code_;
+  int block_ix_;
+  int block_len_;
+  int entropy_ix_;
+  std::vector<uint8_t> depths_;
+  std::vector<uint16_t> bits_;
 };
 
-struct MetaBlock {
-  std::vector<Command> cmds;
-  EncodingParams params;
-  BlockSplit literal_split;
-  BlockSplit command_split;
-  BlockSplit distance_split;
-  std::vector<int> literal_context_modes;
-  std::vector<int> literal_context_map;
-  std::vector<int> distance_context_map;
-  std::vector<HistogramLiteral> literal_histograms;
-  std::vector<HistogramCommand> command_histograms;
-  std::vector<HistogramDistance> distance_histograms;
+void JumpToByteBoundary(int* storage_ix, uint8_t* storage) {
+  *storage_ix = (*storage_ix + 7) & ~7;
+  storage[*storage_ix >> 3] = 0;
+}
+
+bool StoreMetaBlock(const uint8_t* input,
+					size_t start_pos,
+					size_t length,
+					size_t mask,
+					bool is_last,
+					int quality,
+					int num_direct_distance_codes,
+					int distance_postfix_bits,
+					int literal_context_mode,
+					const brotli::Command *commands,
+					size_t n_commands,
+					const MetaBlockSplit& mb,
+					int *storage_ix,
+					uint8_t *storage) {
+  if (!StoreCompressedMetaBlockHeader(is_last, length, storage_ix, storage)) {
+	return false;
+  }
+
+  if (length == 0) {
+	// Only the last meta-block can be empty, so jump to next byte.
+	JumpToByteBoundary(storage_ix, storage);
+	return true;
+  }
+
+  int num_distance_codes =
+	  kNumDistanceShortCodes + num_direct_distance_codes +
+	  (48 << distance_postfix_bits);
+
+  BlockEncoder literal_enc(256,
+						   mb.literal_split.num_types,
+						   mb.literal_split.types,
+						   mb.literal_split.lengths);
+  BlockEncoder command_enc(kNumCommandPrefixes,
+						   mb.command_split.num_types,
+						   mb.command_split.types,
+						   mb.command_split.lengths);
+  BlockEncoder distance_enc(num_distance_codes,
+							mb.distance_split.num_types,
+							mb.distance_split.types,
+							mb.distance_split.lengths);
+
+  literal_enc.BuildAndStoreBlockSwitchEntropyCodes(
+	  quality, storage_ix, storage);
+  command_enc.BuildAndStoreBlockSwitchEntropyCodes(
+	  quality, storage_ix, storage);
+  distance_enc.BuildAndStoreBlockSwitchEntropyCodes(
+	  quality, storage_ix, storage);
+
+  WriteBits(2, distance_postfix_bits, storage_ix, storage);
+  WriteBits(4, num_direct_distance_codes >> distance_postfix_bits,
+			storage_ix, storage);
+  for (int i = 0; i < mb.literal_split.num_types; ++i) {
+	WriteBits(2, literal_context_mode, storage_ix, storage);
+  }
+
+  if (mb.literal_context_map.empty()) {
+	StoreTrivialContextMap(mb.literal_histograms.size(), kLiteralContextBits,
+						   storage_ix, storage);
+  } else {
+	EncodeContextMap(mb.literal_context_map, mb.literal_histograms.size(),
+					 storage_ix, storage);
+  }
+
+  if (mb.distance_context_map.empty()) {
+	StoreTrivialContextMap(mb.distance_histograms.size(), kDistanceContextBits,
+						   storage_ix, storage);
+  } else {
+	EncodeContextMap(mb.distance_context_map, mb.distance_histograms.size(),
+					 storage_ix, storage);
+  }
+
+  literal_enc.BuildAndStoreEntropyCodes(mb.literal_histograms, quality,
+										storage_ix, storage);
+  command_enc.BuildAndStoreEntropyCodes(mb.command_histograms, quality,
+										storage_ix, storage);
+  distance_enc.BuildAndStoreEntropyCodes(mb.distance_histograms, quality,
+										 storage_ix, storage);
+
+  size_t pos = start_pos;
+  for (int i = 0; i < n_commands; ++i) {
+	const Command cmd = commands[i];
+	int cmd_code = cmd.cmd_prefix_;
+	int lennumextra = cmd.cmd_extra_ >> 48;
+	uint64_t lenextra = cmd.cmd_extra_ & 0xffffffffffffULL;
+	command_enc.StoreSymbol(cmd_code, storage_ix, storage);
+	WriteBits(lennumextra, lenextra, storage_ix, storage);
+	if (mb.literal_context_map.empty()) {
+	  for (int j = 0; j < cmd.insert_len_; j++) {
+		literal_enc.StoreSymbol(input[pos & mask], storage_ix, storage);
+		++pos;
+	  }
+	} else {
+	  for (int j = 0; j < cmd.insert_len_; ++j) {
+		uint8_t prev_byte = pos > 0 ? input[(pos - 1) & mask] : 0;
+		uint8_t prev_byte2 = pos > 1 ? input[(pos - 2) & mask] : 0;
+		int context = Context(prev_byte, prev_byte2,
+							  literal_context_mode);
+		int literal = input[pos & mask];
+		literal_enc.StoreSymbolWithContext<kLiteralContextBits>(
+			literal, context, mb.literal_context_map, storage_ix, storage);
+		++pos;
+	  }
+	}
+	if (cmd.copy_len_ > 0 && cmd.cmd_prefix_ >= 128) {
+	  int dist_code = cmd.dist_prefix_;
+	  int distnumextra = cmd.dist_extra_ >> 24;
+	  int distextra = cmd.dist_extra_ & 0xffffff;
+	  if (mb.distance_context_map.empty()) {
+		distance_enc.StoreSymbol(dist_code, storage_ix, storage);
+	  } else {
+		int context = cmd.DistanceContext();
+		distance_enc.StoreSymbolWithContext<kDistanceContextBits>(
+			dist_code, context, mb.distance_context_map, storage_ix, storage);
+	  }
+	  brotli::WriteBits(distnumextra, distextra, storage_ix, storage);
+	}
+	pos += cmd.copy_len_;
+  }
+  if (is_last) {
+	JumpToByteBoundary(storage_ix, storage);
+  }
+  return true;
+}
+
+// This is for storing uncompressed blocks (simple raw storage of
+// bytes-as-bytes).
+bool StoreUncompressedMetaBlock(bool final_block,
+								const uint8_t * __restrict input,
+								size_t position, size_t mask,
+								size_t len,
+								int * __restrict storage_ix,
+								uint8_t * __restrict storage) {
+  if (!brotli::StoreUncompressedMetaBlockHeader(len, storage_ix, storage)) {
+	return false;
+  }
+  JumpToByteBoundary(storage_ix, storage);
+
+  size_t masked_pos = position & mask;
+  if (masked_pos + len > mask + 1) {
+	size_t len1 = mask + 1 - masked_pos;
+	memcpy(&storage[*storage_ix >> 3], &input[masked_pos], len1);
+	*storage_ix += len1 << 3;
+	len -= len1;
+	masked_pos = 0;
+  }
+  memcpy(&storage[*storage_ix >> 3], &input[masked_pos], len);
+  *storage_ix += len << 3;
+
+  // We need to clear the next 4 bytes to continue to be
+  // compatible with WriteBits.
+  brotli::WriteBitsPrepareStorage(*storage_ix, storage);
+
+  // Since the uncomressed block itself may not be the final block, add an empty
+  // one after this.
+  if (final_block) {
+	brotli::WriteBits(1, 1, storage_ix, storage);  // islast
+	brotli::WriteBits(1, 1, storage_ix, storage);  // isempty
+	JumpToByteBoundary(storage_ix, storage);
+  }
+  return true;
+}
+
+}  // namespace brotli
+
+
+//#line 1 "encode.cc"
+// Copyright 2013 Google Inc. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// Implementation of Brotli compressor.
+
+
+//#line 1 "encode.h"
+// Copyright 2013 Google Inc. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// API for Brotli compression
+
+#ifndef BROTLI_ENC_ENCODE_H_
+#define BROTLI_ENC_ENCODE_H_
+
+#include <stddef.h>
+#include <stdint.h>
+#include <string>
+#include <vector>
+
+
+//#line 1 "ringbuffer.h"
+// Copyright 2013 Google Inc. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// Sliding window over the input data.
+
+#ifndef BROTLI_ENC_RINGBUFFER_H_
+#define BROTLI_ENC_RINGBUFFER_H_
+
+#include <stddef.h>
+#include <stdint.h>
+
+namespace brotli {
+
+// A RingBuffer(window_bits, tail_bits) contains `1 << window_bits' bytes of
+// data in a circular manner: writing a byte writes it to
+// `position() % (1 << window_bits)'. For convenience, the RingBuffer array
+// contains another copy of the first `1 << tail_bits' bytes:
+// buffer_[i] == buffer_[i + (1 << window_bits)] if i < (1 << tail_bits).
+class RingBuffer {
+ public:
+  RingBuffer(int window_bits, int tail_bits)
+	  : window_bits_(window_bits),
+		mask_((1 << window_bits) - 1),
+		tail_size_(1 << tail_bits),
+		pos_(0) {
+	static const int kSlackForFourByteHashingEverywhere = 3;
+	const int buflen = (1 << window_bits_) + tail_size_;
+	buffer_ = new uint8_t[buflen + kSlackForFourByteHashingEverywhere];
+	for (int i = 0; i < kSlackForFourByteHashingEverywhere; ++i) {
+	  buffer_[buflen + i] = 0;
+	}
+  }
+  ~RingBuffer() {
+	delete [] buffer_;
+  }
+
+  // Push bytes into the ring buffer.
+  void Write(const uint8_t *bytes, size_t n) {
+	const size_t masked_pos = pos_ & mask_;
+	// The length of the writes is limited so that we do not need to worry
+	// about a write
+	WriteTail(bytes, n);
+	if (PREDICT_TRUE(masked_pos + n <= (1 << window_bits_))) {
+	  // A single write fits.
+	  memcpy(&buffer_[masked_pos], bytes, n);
+	} else {
+	  // Split into two writes.
+	  // Copy into the end of the buffer, including the tail buffer.
+	  memcpy(&buffer_[masked_pos], bytes,
+			 std::min(n, ((1 << window_bits_) + tail_size_) - masked_pos));
+	  // Copy into the begining of the buffer
+	  memcpy(&buffer_[0], bytes + ((1 << window_bits_) - masked_pos),
+			 n - ((1 << window_bits_) - masked_pos));
+	}
+	pos_ += n;
+  }
+
+  void Reset() {
+	pos_ = 0;
+  }
+
+  // Logical cursor position in the ring buffer.
+  size_t position() const { return pos_; }
+
+  // Bit mask for getting the physical position for a logical position.
+  size_t mask() const { return mask_; }
+
+  uint8_t *start() { return &buffer_[0]; }
+  const uint8_t *start() const { return &buffer_[0]; }
+
+ private:
+  void WriteTail(const uint8_t *bytes, size_t n) {
+	const size_t masked_pos = pos_ & mask_;
+	if (PREDICT_FALSE(masked_pos < tail_size_)) {
+	  // Just fill the tail buffer with the beginning data.
+	  const size_t p = (1 << window_bits_) + masked_pos;
+	  memcpy(&buffer_[p], bytes, std::min(n, tail_size_ - masked_pos));
+	}
+  }
+
+  // Size of the ringbuffer is (1 << window_bits) + tail_size_.
+  const int window_bits_;
+  const size_t mask_;
+  const size_t tail_size_;
+
+  // Position to write in the ring buffer.
+  size_t pos_;
+  // The actual ring buffer containing the data and the copy of the beginning
+  // as a tail.
+  uint8_t *buffer_;
 };
 
-void BuildMetaBlock(const EncodingParams& params,
-					const std::vector<Command>& cmds,
-					const uint8_t* ringbuffer,
-					const size_t pos,
-					const size_t mask,
-					MetaBlock* mb) {
-  mb->cmds = cmds;
-  mb->params = params;
-  if (cmds.empty()) {
+}  // namespace brotli
+
+#endif  // BROTLI_ENC_RINGBUFFER_H_
+
+namespace brotli {
+
+static const int kMaxWindowBits = 24;
+static const int kMinWindowBits = 16;
+static const int kMinInputBlockBits = 16;
+static const int kMaxInputBlockBits = 24;
+
+struct BrotliParams {
+  BrotliParams()
+	  : mode(MODE_TEXT),
+		quality(11),
+		lgwin(22),
+		lgblock(0),
+		enable_transforms(false),
+		greedy_block_split(false) {}
+
+  enum Mode {
+	MODE_TEXT = 0,
+	MODE_FONT = 1,
+  };
+  Mode mode;
+
+  // Controls the compression-speed vs compression-density tradeoffs. The higher
+  // the quality, the slower the compression. Range is 0 to 11.
+  int quality;
+  // Base 2 logarithm of the sliding window size. Range is 16 to 24.
+  int lgwin;
+  // Base 2 logarithm of the maximum input block size. Range is 16 to 24.
+  // If set to 0, the value will be set based on the quality.
+  int lgblock;
+
+  bool enable_transforms;
+  bool greedy_block_split;
+};
+
+class BrotliCompressor {
+ public:
+  explicit BrotliCompressor(BrotliParams params);
+  ~BrotliCompressor();
+
+  // The maximum input size that can be processed at once.
+  size_t input_block_size() const { return 1 << params_.lgblock; }
+
+  // Encodes the data in input_buffer as a meta-block and writes it to
+  // encoded_buffer (*encoded_size should be set to the size of
+  // encoded_buffer) and sets *encoded_size to the number of bytes that
+  // was written. Returns 0 if there was an error and 1 otherwise.
+  bool WriteMetaBlock(const size_t input_size,
+					  const uint8_t* input_buffer,
+					  const bool is_last,
+					  size_t* encoded_size,
+					  uint8_t* encoded_buffer);
+
+  // Writes a zero-length meta-block with end-of-input bit set to the
+  // internal output buffer and copies the output buffer to encoded_buffer
+  // (*encoded_size should be set to the size of encoded_buffer) and sets
+  // *encoded_size to the number of bytes written. Returns false if there was
+  // an error and true otherwise.
+  bool FinishStream(size_t* encoded_size, uint8_t* encoded_buffer);
+
+  // No-op, but we keep it here for API backward-compatibility.
+  void WriteStreamHeader() {}
+
+ private:
+  // Initializes the hasher with the hashes of dictionary words.
+  void StoreDictionaryWordHashes(bool enable_transforms);
+
+  uint8_t* GetBrotliStorage(size_t size);
+
+  BrotliParams params_;
+  int max_backward_distance_;
+  std::unique_ptr<Hashers> hashers_;
+  int hash_type_;
+  size_t input_pos_;
+  std::unique_ptr<RingBuffer> ringbuffer_;
+  std::vector<float> literal_cost_;
+  int dist_cache_[4];
+  uint8_t last_byte_;
+  uint8_t last_byte_bits_;
+  int storage_size_;
+  std::unique_ptr<uint8_t[]> storage_;
+  static StaticDictionary *static_dictionary_;
+};
+
+// Compresses the data in input_buffer into encoded_buffer, and sets
+// *encoded_size to the compressed length.
+// Returns 0 if there was an error and 1 otherwise.
+int BrotliCompressBuffer(BrotliParams params,
+						 size_t input_size,
+						 const uint8_t* input_buffer,
+						 size_t* encoded_size,
+						 uint8_t* encoded_buffer);
+
+}  // namespace brotli
+
+#endif  // BROTLI_ENC_ENCODE_H_
+
+#include <algorithm>
+#include <limits>
+
+
+//#line 1 "literal_cost.h"
+// Copyright 2013 Google Inc. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// Literal cost model to allow backward reference replacement to be efficient.
+
+#ifndef BROTLI_ENC_LITERAL_COST_H_
+#define BROTLI_ENC_LITERAL_COST_H_
+
+#include <stddef.h>
+#include <stdint.h>
+
+namespace brotli {
+
+// Estimates how many bits the literals in the interval [pos, pos + len) in the
+// ringbuffer (data, mask) will take entropy coded and writes these estimates
+// to the ringbuffer (cost, mask).
+void EstimateBitCostsForLiterals(size_t pos, size_t len, size_t mask,
+								 size_t cost_mask, const uint8_t *data,
+								 float *cost);
+
+void EstimateBitCostsForLiteralsUTF8(size_t pos, size_t len, size_t mask,
+									 size_t cost_mask, const uint8_t *data,
+									 float *cost);
+
+}  // namespace brotli
+
+#endif  // BROTLI_ENC_LITERAL_COST_H_
+
+namespace brotli {
+
+int ParseAsUTF8(int* symbol, const uint8_t* input, int size) {
+  // ASCII
+  if ((input[0] & 0x80) == 0) {
+	*symbol = input[0];
+	if (*symbol > 0) {
+	  return 1;
+	}
+  }
+  // 2-byte UTF8
+  if (size > 1 &&
+	  (input[0] & 0xe0) == 0xc0 &&
+	  (input[1] & 0xc0) == 0x80) {
+	*symbol = (((input[0] & 0x1f) << 6) |
+			   (input[1] & 0x3f));
+	if (*symbol > 0x7f) {
+	  return 2;
+	}
+  }
+  // 3-byte UFT8
+  if (size > 2 &&
+	  (input[0] & 0xf0) == 0xe0 &&
+	  (input[1] & 0xc0) == 0x80 &&
+	  (input[2] & 0xc0) == 0x80) {
+	*symbol = (((input[0] & 0x0f) << 12) |
+			   ((input[1] & 0x3f) << 6) |
+			   (input[2] & 0x3f));
+	if (*symbol > 0x7ff) {
+	  return 3;
+	}
+  }
+  // 4-byte UFT8
+  if (size > 3 &&
+	  (input[0] & 0xf8) == 0xf0 &&
+	  (input[1] & 0xc0) == 0x80 &&
+	  (input[2] & 0xc0) == 0x80 &&
+	  (input[3] & 0xc0) == 0x80) {
+	*symbol = (((input[0] & 0x07) << 18) |
+			   ((input[1] & 0x3f) << 12) |
+			   ((input[2] & 0x3f) << 6) |
+			   (input[3] & 0x3f));
+	if (*symbol > 0xffff && *symbol <= 0x10ffff) {
+	  return 4;
+	}
+  }
+  // Not UTF8, emit a special symbol above the UTF8-code space
+  *symbol = 0x110000 | input[0];
+  return 1;
+}
+
+// Returns true if at least min_fraction of the data is UTF8-encoded.
+bool IsMostlyUTF8(const uint8_t* data, size_t length, double min_fraction) {
+  size_t size_utf8 = 0;
+  size_t pos = 0;
+  while (pos < length) {
+	int symbol;
+	int bytes_read = ParseAsUTF8(&symbol, data + pos, length - pos);
+	pos += bytes_read;
+	if (symbol < 0x110000) size_utf8 += bytes_read;
+  }
+  return size_utf8 > min_fraction * length;
+}
+
+void RecomputeDistancePrefixes(std::vector<Command>* cmds,
+							   int num_direct_distance_codes,
+							   int distance_postfix_bits) {
+  if (num_direct_distance_codes == 0 &&
+	  distance_postfix_bits == 0) {
 	return;
   }
-  ComputeCommandPrefixes(&mb->cmds,
-						 mb->params.num_direct_distance_codes,
-						 mb->params.distance_postfix_bits);
-  SplitBlock(mb->cmds,
-			 &ringbuffer[pos & mask],
-			 &mb->literal_split,
-			 &mb->command_split,
-			 &mb->distance_split);
-  ComputeBlockTypeShortCodes(&mb->literal_split);
-  ComputeBlockTypeShortCodes(&mb->command_split);
-  ComputeBlockTypeShortCodes(&mb->distance_split);
-
-  mb->literal_context_modes.resize(mb->literal_split.num_types_,
-								   mb->params.literal_context_mode);
-
-  int num_literal_contexts =
-	  mb->literal_split.num_types_ << kLiteralContextBits;
-  int num_distance_contexts =
-	  mb->distance_split.num_types_ << kDistanceContextBits;
-  std::vector<HistogramLiteral> literal_histograms(num_literal_contexts);
-  mb->command_histograms.resize(mb->command_split.num_types_);
-  std::vector<HistogramDistance> distance_histograms(num_distance_contexts);
-  BuildHistograms(mb->cmds,
-				  mb->literal_split,
-				  mb->command_split,
-				  mb->distance_split,
-				  ringbuffer,
-				  pos,
-				  mask,
-				  mb->literal_context_modes,
-				  &literal_histograms,
-				  &mb->command_histograms,
-				  &distance_histograms);
-
-  // Histogram ids need to fit in one byte.
-  static const int kMaxNumberOfHistograms = 256;
-
-  mb->literal_histograms = literal_histograms;
-  ClusterHistograms(literal_histograms,
-					1 << kLiteralContextBits,
-					mb->literal_split.num_types_,
-					kMaxNumberOfHistograms,
-					&mb->literal_histograms,
-					&mb->literal_context_map);
-
-  mb->distance_histograms = distance_histograms;
-  ClusterHistograms(distance_histograms,
-					1 << kDistanceContextBits,
-					mb->distance_split.num_types_,
-					kMaxNumberOfHistograms,
-					&mb->distance_histograms,
-					&mb->distance_context_map);
+  for (int i = 0; i < cmds->size(); ++i) {
+	Command* cmd = &(*cmds)[i];
+	if (cmd->copy_len_ > 0 && cmd->cmd_prefix_ >= 128) {
+	  PrefixEncodeCopyDistance(cmd->DistanceCode(),
+							   num_direct_distance_codes,
+							   distance_postfix_bits,
+							   &cmd->dist_prefix_,
+							   &cmd->dist_extra_);
+	}
+  }
 }
 
 size_t MetaBlockLength(const std::vector<Command>& cmds) {
   size_t length = 0;
   for (int i = 0; i < cmds.size(); ++i) {
 	const Command& cmd = cmds[i];
-	length += cmd.insert_length_ + cmd.copy_length_;
+	length += cmd.insert_len_ + cmd.copy_len_;
   }
   return length;
 }
 
-void StoreMetaBlock(const MetaBlock& mb,
-					const bool is_last,
-					const uint8_t* ringbuffer,
-					const size_t mask,
-					size_t* pos,
-					int* storage_ix, uint8_t* storage) {
-  size_t length = MetaBlockLength(mb.cmds);
-  const size_t end_pos = *pos + length;
-  EncodeMetaBlockLength(length, is_last, false, storage_ix, storage);
-
-  if (length == 0) {
-	return;
+uint8_t* BrotliCompressor::GetBrotliStorage(size_t size) {
+  if (storage_size_ < size) {
+	storage_.reset(new uint8_t[size]);
+	storage_size_ = size;
   }
-  BlockSplitCode literal_split_code;
-  BlockSplitCode command_split_code;
-  BlockSplitCode distance_split_code;
-  BuildAndEncodeBlockSplitCode(mb.literal_split, &literal_split_code,
-							   storage_ix, storage);
-  BuildAndEncodeBlockSplitCode(mb.command_split, &command_split_code,
-							   storage_ix, storage);
-  BuildAndEncodeBlockSplitCode(mb.distance_split, &distance_split_code,
-							   storage_ix, storage);
-  WriteBits(2, mb.params.distance_postfix_bits, storage_ix, storage);
-  WriteBits(4,
-			mb.params.num_direct_distance_codes >>
-			mb.params.distance_postfix_bits,
-			storage_ix, storage);
-  int num_distance_codes =
-	  kNumDistanceShortCodes + mb.params.num_direct_distance_codes +
-	  (48 << mb.params.distance_postfix_bits);
-  for (int i = 0; i < mb.literal_split.num_types_; ++i) {
-	WriteBits(2, mb.literal_context_modes[i], storage_ix, storage);
-  }
-  EncodeContextMap(mb.literal_context_map, mb.literal_histograms.size(),
-				   storage_ix, storage);
-  EncodeContextMap(mb.distance_context_map, mb.distance_histograms.size(),
-				   storage_ix, storage);
-  std::vector<EntropyCodeLiteral> literal_codes;
-  std::vector<EntropyCodeCommand> command_codes;
-  std::vector<EntropyCodeDistance> distance_codes;
-  BuildAndStoreEntropyCodes(mb.literal_histograms, 256, &literal_codes,
-							storage_ix, storage);
-  BuildAndStoreEntropyCodes(mb.command_histograms, kNumCommandPrefixes,
-							&command_codes, storage_ix, storage);
-  BuildAndStoreEntropyCodes(mb.distance_histograms, num_distance_codes,
-							&distance_codes, storage_ix, storage);
-  BlockSplitIterator literal_it(mb.literal_split);
-  BlockSplitIterator command_it(mb.command_split);
-  BlockSplitIterator distance_it(mb.distance_split);
-  for (int i = 0; i < mb.cmds.size(); ++i) {
-	const Command& cmd = mb.cmds[i];
-	MoveAndEncode(command_split_code, &command_it, storage_ix, storage);
-	EncodeCommand(cmd, command_codes[command_it.type_], storage_ix, storage);
-	for (int j = 0; j < cmd.insert_length_; ++j) {
-	  MoveAndEncode(literal_split_code, &literal_it, storage_ix, storage);
-	  int histogram_idx = literal_it.type_;
-	  uint8_t prev_byte = *pos > 0 ? ringbuffer[(*pos - 1) & mask] : 0;
-	  uint8_t prev_byte2 = *pos > 1 ? ringbuffer[(*pos - 2) & mask] : 0;
-	  int context = ((literal_it.type_ << kLiteralContextBits) +
-					 Context(prev_byte, prev_byte2,
-							 mb.literal_context_modes[literal_it.type_]));
-	  histogram_idx = mb.literal_context_map[context];
-	  int literal = ringbuffer[*pos & mask];
-	  WriteBits(literal_codes[histogram_idx].depth_[literal],
-				literal_codes[histogram_idx].bits_[literal],
-				storage_ix, storage);
-	  ++(*pos);
-	}
-	if (*pos < end_pos && cmd.distance_prefix_ != 0xffff) {
-	  MoveAndEncode(distance_split_code, &distance_it, storage_ix, storage);
-	  int context = (distance_it.type_ << 2) +
-		  ((cmd.copy_length_code_ > 4) ? 3 : cmd.copy_length_code_ - 2);
-	  int histogram_index = mb.distance_context_map[context];
-	  size_t max_distance = std::min(*pos, (size_t)kMaxBackwardDistance);
-	  EncodeCopyDistance(cmd, distance_codes[histogram_index],
-						 storage_ix, storage);
-	}
-	*pos += cmd.copy_length_;
-  }
+  return &storage_[0];
 }
 
 BrotliCompressor::BrotliCompressor(BrotliParams params)
 	: params_(params),
-	  window_bits_(kWindowBits),
 	  hashers_(new Hashers()),
-	  dist_ringbuffer_idx_(0),
-	  input_pos_(0),
-	  ringbuffer_(kRingBufferBits, kMetaBlockSizeBits),
-	  literal_cost_(1 << kRingBufferBits),
-	  storage_ix_(0),
-	  storage_(new uint8_t[2 << kMetaBlockSizeBits]) {
-  dist_ringbuffer_[0] = 16;
-  dist_ringbuffer_[1] = 15;
-  dist_ringbuffer_[2] = 11;
-  dist_ringbuffer_[3] = 4;
-  storage_[0] = 0;
+	  input_pos_(0) {
+  // Sanitize params.
+  if (params_.lgwin < kMinWindowBits) {
+	params_.lgwin = kMinWindowBits;
+  } else if (params_.lgwin > kMaxWindowBits) {
+	params_.lgwin = kMaxWindowBits;
+  }
+  if (params_.lgblock == 0) {
+	params_.lgblock = 16;
+	if (params_.quality >= 9 && params_.lgwin > params_.lgblock) {
+	  params_.lgblock = std::min(21, params_.lgwin);
+	}
+  } else {
+	params_.lgblock = std::min(kMaxInputBlockBits,
+							   std::max(kMinInputBlockBits, params_.lgblock));
+  }
+
+  // Set maximum distance, see section 9.1. of the spec.
+  max_backward_distance_ = (1 << params_.lgwin) - 16;
+
+  // Initialize input and literal cost ring buffers.
+  // We allocate at least lgwin + 1 bits for the ring buffer so that the newly
+  // added block fits there completely and we still get lgwin bits and at least
+  // read_block_size_bits + 1 bits because the copy tail length needs to be
+  // smaller than ringbuffer size.
+  int ringbuffer_bits = std::max(params_.lgwin + 1, params_.lgblock + 1);
+  ringbuffer_.reset(new RingBuffer(ringbuffer_bits, params_.lgblock));
+  literal_cost_.resize(1 << ringbuffer_bits);
+
+  // Initialize storage.
+  storage_size_ = 1 << 16;
+  storage_.reset(new uint8_t[storage_size_]);
+  if (params_.lgwin == 16) {
+	last_byte_ = 0;
+	last_byte_bits_ = 1;
+  } else {
+	last_byte_ = ((params_.lgwin - 17) << 1) | 1;
+	last_byte_bits_ = 4;
+  }
+
+  // Initialize distance cache.
+  dist_cache_[0] = 4;
+  dist_cache_[1] = 11;
+  dist_cache_[2] = 15;
+  dist_cache_[3] = 16;
+
+  // Initialize hashers.
   switch (params.mode) {
-	case BrotliParams::MODE_TEXT: hash_type_ = Hashers::HASH_15_8_4; break;
-	case BrotliParams::MODE_FONT: hash_type_ = Hashers::HASH_15_8_2; break;
+	case BrotliParams::MODE_TEXT: hash_type_ = 8; break;
+	case BrotliParams::MODE_FONT: hash_type_ = 9; break;
 	default: break;
   }
   hashers_->Init(hash_type_);
   if (params.mode == BrotliParams::MODE_TEXT) {
-	StoreDictionaryWordHashes();
+	StoreDictionaryWordHashes(params.enable_transforms);
   }
+
 }
 
 BrotliCompressor::~BrotliCompressor() {
-  delete[] storage_;
 }
 
 StaticDictionary *BrotliCompressor::static_dictionary_ = NULL;
 
-void BrotliCompressor::StoreDictionaryWordHashes() {
-  const int num_transforms = kNumTransforms;
+void BrotliCompressor::StoreDictionaryWordHashes(bool enable_transforms) {
   if (static_dictionary_ == NULL) {
 	static_dictionary_ = new StaticDictionary;
-	for (int t = num_transforms - 1; t >= 0; --t) {
-	  for (int i = kMaxDictionaryWordLength;
-		   i >= kMinDictionaryWordLength; --i) {
-		const int num_words = 1 << kBrotliDictionarySizeBitsByLength[i];
-		for (int j = num_words - 1; j >= 0; --j) {
-		  int word_id = t * num_words + j;
-		  std::string word = GetTransformedDictionaryWord(i, word_id);
-		  if (word.size() >= 4) {
-			static_dictionary_->Insert(word, i, word_id);
-		  }
-		}
-	  }
-	}
+	static_dictionary_->Fill(enable_transforms);
   }
   hashers_->SetStaticDictionary(static_dictionary_);
 }
 
-void BrotliCompressor::WriteStreamHeader() {
-  // Encode window size.
-  if (window_bits_ == 16) {
-	WriteBits(1, 0, &storage_ix_, storage_);
-  } else {
-	WriteBits(1, 1, &storage_ix_, storage_);
-	WriteBits(3, window_bits_ - 17, &storage_ix_, storage_);
-  }
-}
-
-void BrotliCompressor::WriteMetaBlock(const size_t input_size,
+bool BrotliCompressor::WriteMetaBlock(const size_t input_size,
 									  const uint8_t* input_buffer,
 									  const bool is_last,
 									  size_t* encoded_size,
 									  uint8_t* encoded_buffer) {
+  if (input_size > input_block_size()) {
+	return false;
+  }
   static const double kMinUTF8Ratio = 0.75;
   bool utf8_mode = false;
-  std::vector<Command> commands;
+  std::vector<Command> commands((input_size + 1) >> 1);
+  // Save the state of the distance cache in case we need to restore it for
+  // emitting an uncompressed block.
+  int saved_dist_cache[4];
+  memcpy(saved_dist_cache, dist_cache_, sizeof(dist_cache_));
   if (input_size > 0) {
-	ringbuffer_.Write(input_buffer, input_size);
+	ringbuffer_->Write(input_buffer, input_size);
 	utf8_mode = IsMostlyUTF8(
-	  &ringbuffer_.start()[input_pos_ & kRingBufferMask],
-	  input_size, kMinUTF8Ratio);
+		&ringbuffer_->start()[input_pos_ & ringbuffer_->mask()],
+		input_size, kMinUTF8Ratio);
 	if (utf8_mode) {
 	  EstimateBitCostsForLiteralsUTF8(input_pos_, input_size,
-									  kRingBufferMask, kRingBufferMask,
-									  ringbuffer_.start(), &literal_cost_[0]);
+									  ringbuffer_->mask(), ringbuffer_->mask(),
+									  ringbuffer_->start(), &literal_cost_[0]);
 	} else {
 	  EstimateBitCostsForLiterals(input_pos_, input_size,
-								  kRingBufferMask, kRingBufferMask,
-								  ringbuffer_.start(), &literal_cost_[0]);
+								  ringbuffer_->mask(), ringbuffer_->mask(),
+								  ringbuffer_->start(), &literal_cost_[0]);
 	}
+	int last_insert_len = 0;
+	int num_commands = 0;
+	double base_min_score = 8.115;
 	CreateBackwardReferences(
 		input_size, input_pos_,
-		ringbuffer_.start(),
-		&literal_cost_[0],
-		kRingBufferMask, kMaxBackwardDistance,
+		ringbuffer_->start(), ringbuffer_->mask(),
+		&literal_cost_[0], ringbuffer_->mask(),
+		max_backward_distance_,
+		base_min_score,
+		params_.quality,
 		hashers_.get(),
 		hash_type_,
-		&commands);
-	ComputeDistanceShortCodes(&commands, input_pos_, kMaxBackwardDistance,
-							  dist_ringbuffer_,
-							  &dist_ringbuffer_idx_);
+		dist_cache_,
+		&last_insert_len,
+		&commands[0],
+		&num_commands);
+	commands.resize(num_commands);
+	if (last_insert_len > 0) {
+	  commands.push_back(Command(last_insert_len));
+	}
   }
-  EncodingParams params;
-  params.num_direct_distance_codes =
+  int num_direct_distance_codes =
 	  params_.mode == BrotliParams::MODE_FONT ? 12 : 0;
-  params.distance_postfix_bits =
-	  params_.mode == BrotliParams::MODE_FONT ? 1 : 0;
-  params.literal_context_mode = CONTEXT_SIGNED;
-  const int storage_ix0 = storage_ix_;
-  MetaBlock mb;
-  BuildMetaBlock(params, commands, ringbuffer_.start(), input_pos_,
-				 kRingBufferMask, &mb);
-  StoreMetaBlock(mb, is_last, ringbuffer_.start(), kRingBufferMask,
-				 &input_pos_, &storage_ix_, storage_);
-  size_t output_size = is_last ? ((storage_ix_ + 7) >> 3) : (storage_ix_ >> 3);
-  output_size -= (storage_ix0 >> 3);
-  if (input_size + 4 < output_size) {
-	storage_ix_ = storage_ix0;
-	storage_[storage_ix_ >> 3] &= (1 << (storage_ix_ & 7)) - 1;
-	EncodeMetaBlockLength(input_size, false, true, &storage_ix_, storage_);
-	size_t hdr_size = (storage_ix_ + 7) >> 3;
-	memcpy(encoded_buffer, storage_, hdr_size);
-	memcpy(encoded_buffer + hdr_size, input_buffer, input_size);
-	*encoded_size = hdr_size + input_size;
-	if (is_last) {
-	  encoded_buffer[*encoded_size] = 0x3;  // ISLAST, ISEMPTY
-	  ++(*encoded_size);
-	}
-	storage_ix_ = 0;
-	storage_[0] = 0;
-  } else {
-	memcpy(encoded_buffer, storage_, output_size);
-	*encoded_size = output_size;
-	if (is_last) {
-	  storage_ix_ = 0;
-	  storage_[0] = 0;
+  int distance_postfix_bits = params_.mode == BrotliParams::MODE_FONT ? 1 : 0;
+  int literal_context_mode = CONTEXT_SIGNED;
+  const size_t max_out_size = 2 * input_size + 500;
+  uint8_t* storage = GetBrotliStorage(max_out_size);
+  storage[0] = last_byte_;
+  int storage_ix = last_byte_bits_;
+
+  MetaBlockSplit mb;
+  size_t len = MetaBlockLength(commands);
+  if (!commands.empty()) {
+	if (params_.greedy_block_split) {
+	  BuildMetaBlockGreedy(ringbuffer_->start(), input_pos_,
+						   ringbuffer_->mask(),
+						   commands.data(), commands.size(), params_.quality,
+						   &mb);
 	} else {
-	  storage_ix_ -= output_size << 3;
-	  storage_[storage_ix_ >> 3] = storage_[output_size];
+	  RecomputeDistancePrefixes(&commands,
+								num_direct_distance_codes,
+								distance_postfix_bits);
+	  BuildMetaBlock(ringbuffer_->start(), input_pos_, ringbuffer_->mask(),
+					 commands,
+					 num_direct_distance_codes,
+					 distance_postfix_bits,
+					 literal_context_mode,
+					 &mb);
 	}
   }
+  if (!StoreMetaBlock(ringbuffer_->start(), input_pos_, len,
+					  ringbuffer_->mask(),
+					  is_last, params_.quality,
+					  num_direct_distance_codes,
+					  distance_postfix_bits,
+					  literal_context_mode,
+					  commands.data(), commands.size(),
+					  mb,
+					  &storage_ix, storage)) {
+	return false;
+  }
+  size_t output_size = storage_ix >> 3;
+  if (input_size + 4 < output_size) {
+	// Restore the distance cache and last byte.
+	memcpy(dist_cache_, saved_dist_cache, sizeof(dist_cache_));
+	storage[0] = last_byte_;
+	storage_ix = last_byte_bits_;
+	if (!StoreUncompressedMetaBlock(is_last,
+									ringbuffer_->start(), input_pos_,
+									ringbuffer_->mask(), len,
+									&storage_ix, storage)) {
+	  return false;
+	}
+	output_size = storage_ix >> 3;
+  }
+  if (output_size > *encoded_size) {
+	return false;
+  }
+  memcpy(encoded_buffer, storage, output_size);
+  *encoded_size = output_size;
+  last_byte_ = storage[output_size];
+  last_byte_bits_ = storage_ix & 7;
+  input_pos_ += len;
+  return true;
 }
 
-void BrotliCompressor::FinishStream(
+bool BrotliCompressor::FinishStream(
 	size_t* encoded_size, uint8_t* encoded_buffer) {
-  WriteMetaBlock(0, NULL, true, encoded_size, encoded_buffer);
+  return WriteMetaBlock(0, NULL, true, encoded_size, encoded_buffer);
 }
 
 int BrotliCompressBuffer(BrotliParams params,
@@ -13822,16 +14476,17 @@ int BrotliCompressBuffer(BrotliParams params,
 						 const uint8_t* input_buffer,
 						 size_t* encoded_size,
 						 uint8_t* encoded_buffer) {
-  if (input_size == 0) {
+  if (*encoded_size == 0) {
+	// Output buffer needs at least one byte.
+	return 0;
+  } else  if (input_size == 0) {
 	encoded_buffer[0] = 6;
 	*encoded_size = 1;
 	return 1;
   }
 
   BrotliCompressor compressor(params);
-  compressor.WriteStreamHeader();
-
-  const int max_block_size = 1 << kMetaBlockSizeBits;
+  const int max_block_size = compressor.input_block_size();
   size_t max_output_size = *encoded_size;
   const uint8_t* input_end = input_buffer + input_size;
   *encoded_size = 0;
@@ -13844,18 +14499,21 @@ int BrotliCompressBuffer(BrotliParams params,
 	  is_last = true;
 	}
 	size_t output_size = max_output_size;
-	compressor.WriteMetaBlock(block_size, input_buffer, is_last,
-							  &output_size, &encoded_buffer[*encoded_size]);
+	if (!compressor.WriteMetaBlock(block_size, input_buffer,
+								   is_last, &output_size,
+								   &encoded_buffer[*encoded_size])) {
+	  return 0;
+	}
 	input_buffer += block_size;
 	*encoded_size += output_size;
 	max_output_size -= output_size;
   }
-
   return 1;
 }
 
 }  // namespace brotli
 
+//#include "deps/brotli/enc/encode_parallel.cc"
 
 //#line 1 "entropy_encode.cc"
 // Copyright 2010 Google Inc. All Rights Reserved.
@@ -13898,11 +14556,16 @@ struct HuffmanTree {
 
 HuffmanTree::HuffmanTree() {}
 
-// Sort the root nodes, least popular first.
+// Sort the root nodes, least popular first, break ties by value.
 bool SortHuffmanTree(const HuffmanTree &v0, const HuffmanTree &v1) {
   if (v0.total_count_ == v1.total_count_) {
 	return v0.index_right_or_value_ > v1.index_right_or_value_;
   }
+  return v0.total_count_ < v1.total_count_;
+}
+
+// Sort the root nodes, least popular first.
+bool SortHuffmanTreeFast(const HuffmanTree &v0, const HuffmanTree &v1) {
   return v0.total_count_ < v1.total_count_;
 }
 
@@ -13939,6 +14602,7 @@ void SetDepth(const HuffmanTree &p,
 void CreateHuffmanTree(const int *data,
 					   const int length,
 					   const int tree_limit,
+					   const int quality,
 					   uint8_t *depth) {
   // For block sizes below 64 kB, we never need to do a second iteration
   // of this loop. Probably all of our block sizes will be smaller than
@@ -13961,8 +14625,11 @@ void CreateHuffmanTree(const int *data,
 	  break;
 	}
 
-	std::sort(tree.begin(), tree.end(), SortHuffmanTree);
-
+	if (quality > 1) {
+	  std::sort(tree.begin(), tree.end(), SortHuffmanTree);
+	} else {
+	  std::sort(tree.begin(), tree.end(), SortHuffmanTreeFast);
+	}
 	// The nodes are:
 	// [0, n): the sorted leaf nodes that we start with.
 	// [n]: we add a sentinel here.
@@ -14014,12 +14681,12 @@ void CreateHuffmanTree(const int *data,
   }
 }
 
-void Reverse(uint8_t* v, int start, int end) {
+void Reverse(std::vector<uint8_t>* v, int start, int end) {
   --end;
   while (start < end) {
-	int tmp = v[start];
-	v[start] = v[end];
-	v[end] = tmp;
+	int tmp = (*v)[start];
+	(*v)[start] = (*v)[end];
+	(*v)[end] = tmp;
 	++start;
 	--end;
   }
@@ -14029,71 +14696,62 @@ void WriteHuffmanTreeRepetitions(
 	const int previous_value,
 	const int value,
 	int repetitions,
-	uint8_t* tree,
-	uint8_t* extra_bits,
-	int* tree_size) {
+	std::vector<uint8_t> *tree,
+	std::vector<uint8_t> *extra_bits_data) {
   if (previous_value != value) {
-	tree[*tree_size] = value;
-	extra_bits[*tree_size] = 0;
-	++(*tree_size);
+	tree->push_back(value);
+	extra_bits_data->push_back(0);
 	--repetitions;
   }
   if (repetitions == 7) {
-	tree[*tree_size] = value;
-	extra_bits[*tree_size] = 0;
-	++(*tree_size);
+	tree->push_back(value);
+	extra_bits_data->push_back(0);
 	--repetitions;
   }
   if (repetitions < 3) {
 	for (int i = 0; i < repetitions; ++i) {
-	  tree[*tree_size] = value;
-	  extra_bits[*tree_size] = 0;
-	  ++(*tree_size);
+	  tree->push_back(value);
+	  extra_bits_data->push_back(0);
 	}
   } else {
 	repetitions -= 3;
-	int start = *tree_size;
+	int start = tree->size();
 	while (repetitions >= 0) {
-	  tree[*tree_size] = 16;
-	  extra_bits[*tree_size] = repetitions & 0x3;
-	  ++(*tree_size);
+	  tree->push_back(16);
+	  extra_bits_data->push_back(repetitions & 0x3);
 	  repetitions >>= 2;
 	  --repetitions;
 	}
-	Reverse(tree, start, *tree_size);
-	Reverse(extra_bits, start, *tree_size);
+	Reverse(tree, start, tree->size());
+	Reverse(extra_bits_data, start, tree->size());
   }
 }
 
 void WriteHuffmanTreeRepetitionsZeros(
 	int repetitions,
-	uint8_t* tree,
-	uint8_t* extra_bits,
-	int* tree_size) {
+	std::vector<uint8_t> *tree,
+	std::vector<uint8_t> *extra_bits_data) {
   if (repetitions == 11) {
-	tree[*tree_size] = 0;
-	extra_bits[*tree_size] = 0;
-	++(*tree_size);
+	tree->push_back(0);
+	extra_bits_data->push_back(0);
 	--repetitions;
   }
   if (repetitions < 3) {
 	for (int i = 0; i < repetitions; ++i) {
-	  tree[*tree_size] = 0;
-	  extra_bits[*tree_size] = 0;
-	  ++(*tree_size);
+	  tree->push_back(0);
+	  extra_bits_data->push_back(0);
 	}
   } else {
 	repetitions -= 3;
-	int start = *tree_size;
+	int start = tree->size();
 	while (repetitions >= 0) {
-	  tree[*tree_size] = 17;
-	  extra_bits[*tree_size] = repetitions & 0x7;
-	  ++(*tree_size);
+	  tree->push_back(17);
+	  extra_bits_data->push_back(repetitions & 0x7);
 	  repetitions >>= 3;
 	  --repetitions;
 	}
-	Reverse(tree, start, *tree_size);
-	Reverse(extra_bits, start, *tree_size);
+	Reverse(tree, start, tree->size());
+	Reverse(extra_bits_data, start, tree->size());
   }
 }
 
@@ -14233,20 +14891,10 @@ static void DecideOverRleUse(const uint8_t* depth, const int length,
   int total_reps_non_zero = 0;
   int count_reps_zero = 0;
   int count_reps_non_zero = 0;
-  int new_length = length;
-  for (int i = 0; i < length; ++i) {
-	if (depth[length - i - 1] == 0) {
-	  --new_length;
-	} else {
-	  break;
-	}
-  }
-  for (uint32_t i = 0; i < new_length;) {
+  for (uint32_t i = 0; i < length;) {
 	const int value = depth[i];
 	int reps = 1;
-	// Find rle coding for longer codes.
-	// Shorter codes seem not to benefit from rle.
-	for (uint32_t k = i + 1; k < new_length && depth[k] == value; ++k) {
+	for (uint32_t k = i + 1; k < length && depth[k] == value; ++k) {
 	  ++reps;
 	}
 	if (reps >= 3 && value == 0) {
@@ -14265,46 +14913,50 @@ static void DecideOverRleUse(const uint8_t* depth, const int length,
   *use_rle_for_zero = total_reps_zero > 2;
 }
 
-void WriteHuffmanTree(const uint8_t* depth, const int length,
-					  uint8_t* tree,
-					  uint8_t* extra_bits_data,
-					  int* huffman_tree_size) {
+void WriteHuffmanTree(const uint8_t* depth,
+					  uint32_t length,
+					  std::vector<uint8_t> *tree,
+					  std::vector<uint8_t> *extra_bits_data) {
   int previous_value = 8;
 
+  // Throw away trailing zeros.
+  int new_length = length;
+  for (int i = 0; i < length; ++i) {
+	if (depth[length - i - 1] == 0) {
+	  --new_length;
+	} else {
+	  break;
+	}
+  }
+
   // First gather statistics on if it is a good idea to do rle.
-  bool use_rle_for_non_zero;
-  bool use_rle_for_zero;
-  DecideOverRleUse(depth, length, &use_rle_for_non_zero, &use_rle_for_zero);
+  bool use_rle_for_non_zero = false;
+  bool use_rle_for_zero = false;
+  if (length > 50) {
+	// Find rle coding for longer codes.
+	// Shorter codes seem not to benefit from rle.
+	DecideOverRleUse(depth, new_length,
+					 &use_rle_for_non_zero, &use_rle_for_zero);
+  }
 
   // Actual rle coding.
-  for (uint32_t i = 0; i < length;) {
+  for (uint32_t i = 0; i < new_length;) {
 	const int value = depth[i];
 	int reps = 1;
-	if (length > 50) {
-	  // Find rle coding for longer codes.
-	  // Shorter codes seem not to benefit from rle.
-	  if ((value != 0 && use_rle_for_non_zero) ||
-		  (value == 0 && use_rle_for_zero)) {
-		for (uint32_t k = i + 1; k < length && depth[k] == value; ++k) {
-		  ++reps;
-		}
+	if ((value != 0 && use_rle_for_non_zero) ||
+		(value == 0 && use_rle_for_zero)) {
+	  for (uint32_t k = i + 1; k < new_length && depth[k] == value; ++k) {
+		++reps;
 	  }
 	}
 	if (value == 0) {
-	  WriteHuffmanTreeRepetitionsZeros(reps, tree, extra_bits_data,
-									   huffman_tree_size);
+	  WriteHuffmanTreeRepetitionsZeros(reps, tree, extra_bits_data);
 	} else {
-	  WriteHuffmanTreeRepetitions(previous_value, value, reps, tree,
-								  extra_bits_data, huffman_tree_size);
+	  WriteHuffmanTreeRepetitions(previous_value,
+								  value, reps, tree, extra_bits_data);
 	  previous_value = value;
 	}
 	i += reps;
-  }
-  // Throw away trailing zeros.
-  for (; *huffman_tree_size > 0; --(*huffman_tree_size)) {
-	if (tree[*huffman_tree_size - 1] > 0 && tree[*huffman_tree_size - 1] < 17) {
-	  break;
-	}
   }
 }
 
@@ -14357,6 +15009,7 @@ void ConvertBitDepthsToSymbols(const uint8_t *depth, int len, uint16_t *bits) {
 }  // namespace brotli
 
 
+
 //#line 1 "histogram.cc"
 // Copyright 2013 Google Inc. All Rights Reserved.
 //
@@ -14398,8 +15051,8 @@ void BuildHistograms(
 	const Command &cmd = cmds[i];
 	insert_and_copy_it.Next();
 	(*insert_and_copy_histograms)[insert_and_copy_it.type_].Add(
-		cmd.command_prefix_);
-	for (int j = 0; j < cmd.insert_length_; ++j) {
+		cmd.cmd_prefix_);
+	for (int j = 0; j < cmd.insert_len_; ++j) {
 	  literal_it.Next();
 	  uint8_t prev_byte = pos > 0 ? ringbuffer[(pos - 1) & mask] : 0;
 	  uint8_t prev_byte2 = pos > 1 ? ringbuffer[(pos - 2) & mask] : 0;
@@ -14408,12 +15061,12 @@ void BuildHistograms(
 	  (*literal_histograms)[context].Add(ringbuffer[pos & mask]);
 	  ++pos;
 	}
-	pos += cmd.copy_length_;
-	if (cmd.copy_length_ > 0 && cmd.distance_prefix_ != 0xffff) {
+	pos += cmd.copy_len_;
+	if (cmd.copy_len_ > 0 && cmd.cmd_prefix_ >= 128) {
 	  dist_it.Next();
 	  int context = (dist_it.type_ << kDistanceContextBits) +
-		  ((cmd.copy_length_code_ > 4) ? 3 : cmd.copy_length_code_ - 2);
-	  (*copy_dist_histograms)[context].Add(cmd.distance_prefix_);
+		  cmd.DistanceContext();
+	  (*copy_dist_histograms)[context].Add(cmd.dist_prefix_);
 	}
   }
 }
@@ -14430,7 +15083,7 @@ void BuildLiteralHistogramsForBlockType(
   BlockSplitIterator literal_it(literal_split);
   for (int i = 0; i < cmds.size(); ++i) {
 	const Command &cmd = cmds[i];
-	for (int j = 0; j < cmd.insert_length_; ++j) {
+	for (int j = 0; j < cmd.insert_len_; ++j) {
 	  literal_it.Next();
 	  if (literal_it.type_ == block_type) {
 		uint8_t prev_byte = pos > 0 ? ringbuffer[(pos - 1) & mask] : 0;
@@ -14440,7 +15093,7 @@ void BuildLiteralHistogramsForBlockType(
 	  }
 	  ++pos;
 	}
-	pos += cmd.copy_length_;
+	pos += cmd.copy_len_;
   }
 }
 
@@ -14559,8 +15212,7 @@ void EstimateBitCostsForLiteralsUTF8(size_t pos, size_t len, size_t mask,
 	if (histo == 0) {
 	  histo = 1;
 	}
-	float lit_cost = log2(static_cast<double>(in_window_utf8[utf8_pos])
-						  / histo);
+	float lit_cost = FastLog2(in_window_utf8[utf8_pos]) - FastLog2(histo);
 	lit_cost += 0.02905;
 	if (lit_cost < 1.0) {
 	  lit_cost *= 0.5;
@@ -14605,7 +15257,7 @@ void EstimateBitCostsForLiterals(size_t pos, size_t len, size_t mask,
 	if (histo == 0) {
 	  histo = 1;
 	}
-	float lit_cost = log2(static_cast<double>(in_window) / histo);
+	float lit_cost = FastLog2(in_window) - FastLog2(histo);
 	lit_cost += 0.029;
 	if (lit_cost < 1.0) {
 	  lit_cost *= 0.5;
@@ -14618,8 +15270,8 @@ void EstimateBitCostsForLiterals(size_t pos, size_t len, size_t mask,
 }  // namespace brotli
 
 
-//#line 1 "prefix.cc"
-// Copyright 2013 Google Inc. All Rights Reserved.
+//#line 1 "metablock.cc"
+// Copyright 2015 Google Inc. All Rights Reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14633,151 +15285,266 @@ void EstimateBitCostsForLiterals(size_t pos, size_t len, size_t mask,
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-// Functions for encoding of integers into prefix codes the amount of extra
-// bits, and the actual values of the extra bits.
+// Algorithms for distributing the literals and commands of a metablock between
+// block types and contexts.
 
 namespace brotli {
 
-// Represents the range of values belonging to a prefix code:
-// [offset, offset + 2^nbits)
-struct PrefixCodeRange {
-  int offset;
-  int nbits;
-};
+void BuildMetaBlock(const uint8_t* ringbuffer,
+					const size_t pos,
+					const size_t mask,
+					const std::vector<Command>& cmds,
+					int num_direct_distance_codes,
+					int distance_postfix_bits,
+					int literal_context_mode,
+					MetaBlockSplit* mb) {
+  SplitBlock(cmds,
+			 &ringbuffer[pos & mask],
+			 &mb->literal_split,
+			 &mb->command_split,
+			 &mb->distance_split);
 
-static const PrefixCodeRange kBlockLengthPrefixCode[kNumBlockLenPrefixes] = {
-  {   1,  2}, {    5,  2}, {  9,   2}, {  13,  2},
-  {  17,  3}, {   25,  3}, {  33,  3}, {  41,  3},
-  {  49,  4}, {   65,  4}, {  81,  4}, {  97,  4},
-  { 113,  5}, {  145,  5}, { 177,  5}, { 209,  5},
-  { 241,  6}, {  305,  6}, { 369,  7}, { 497,  8},
-  { 753,  9}, { 1265, 10}, {2289, 11}, {4337, 12},
-  {8433, 13}, {16625, 24}
-};
+  std::vector<int> literal_context_modes(mb->literal_split.num_types,
+										 literal_context_mode);
 
-static const PrefixCodeRange kInsertLengthPrefixCode[kNumInsertLenPrefixes] = {
-  {   0,  0}, {   1,  0}, {  2,   0}, {    3,  0},
-  {   4,  0}, {   5,  0}, {  6,   1}, {    8,  1},
-  {  10,  2}, {  14,  2}, { 18,   3}, {   26,  3},
-  {  34,  4}, {  50,  4}, { 66,   5}, {   98,  5},
-  { 130,  6}, { 194,  7}, { 322,  8}, {  578,  9},
-  {1090, 10}, {2114, 12}, {6210, 14}, {22594, 24},
-};
+  int num_literal_contexts =
+	  mb->literal_split.num_types << kLiteralContextBits;
+  int num_distance_contexts =
+	  mb->distance_split.num_types << kDistanceContextBits;
+  std::vector<HistogramLiteral> literal_histograms(num_literal_contexts);
+  mb->command_histograms.resize(mb->command_split.num_types);
+  std::vector<HistogramDistance> distance_histograms(num_distance_contexts);
+  BuildHistograms(cmds,
+				  mb->literal_split,
+				  mb->command_split,
+				  mb->distance_split,
+				  ringbuffer,
+				  pos,
+				  mask,
+				  literal_context_modes,
+				  &literal_histograms,
+				  &mb->command_histograms,
+				  &distance_histograms);
 
-static const PrefixCodeRange kCopyLengthPrefixCode[kNumCopyLenPrefixes] = {
-  {  2, 0}, {   3,  0}, {   4,  0}, {   5,  0},
-  {  6, 0}, {   7,  0}, {   8,  0}, {   9,  0},
-  { 10, 1}, {  12,  1}, {  14,  2}, {  18,  2},
-  { 22, 3}, {  30,  3}, {  38,  4}, {  54,  4},
-  { 70, 5}, { 102,  5}, { 134,  6}, { 198,  7},
-  {326, 8}, { 582,  9}, {1094, 10}, {2118, 24},
-};
+  // Histogram ids need to fit in one byte.
+  static const int kMaxNumberOfHistograms = 256;
 
-static const int kInsertAndCopyRangeLut[9] = {
-  0, 1, 4, 2, 3, 6, 5, 7, 8,
-};
+  mb->literal_histograms = literal_histograms;
+  ClusterHistograms(literal_histograms,
+					1 << kLiteralContextBits,
+					mb->literal_split.num_types,
+					kMaxNumberOfHistograms,
+					&mb->literal_histograms,
+					&mb->literal_context_map);
 
-static const int kInsertRangeLut[9] = {
-  0, 0, 1, 1, 0, 2, 1, 2, 2,
-};
+  mb->distance_histograms = distance_histograms;
+  ClusterHistograms(distance_histograms,
+					1 << kDistanceContextBits,
+					mb->distance_split.num_types,
+					kMaxNumberOfHistograms,
+					&mb->distance_histograms,
+					&mb->distance_context_map);
+}
 
-static const int kCopyRangeLut[9] = {
-  0, 1, 0, 1, 2, 0, 2, 1, 2,
-};
+// Greedy block splitter for one block category (literal, command or distance).
+template<typename HistogramType>
+class BlockSplitter {
+ public:
+  BlockSplitter(int alphabet_size,
+				int min_block_size,
+				double split_threshold,
+				int num_symbols,
+				int quality,
+				BlockSplit* split,
+				std::vector<HistogramType>* histograms)
+	  : alphabet_size_(alphabet_size),
+		min_block_size_(min_block_size),
+		split_threshold_(split_threshold),
+		quality_(quality),
+		num_blocks_(0),
+		split_(split),
+		histograms_(histograms),
+		target_block_size_(min_block_size),
+		block_size_(0),
+		curr_histogram_ix_(0),
+		merge_last_count_(0) {
+	int max_num_blocks = num_symbols / min_block_size + 1;
+	// We have to allocate one more histogram than the maximum number of block
+	// types for the current histogram when the meta-block is too big.
+	int max_num_types = std::min(max_num_blocks, kMaxBlockTypes + 1);
+	split_->lengths.resize(max_num_blocks);
+	split_->types.resize(max_num_blocks);
+	histograms_->resize(max_num_types);
+	last_histogram_ix_[0] = last_histogram_ix_[1] = 0;
+  }
 
-int InsertLengthPrefix(int length) {
-  for (int i = 0; i < kNumInsertLenPrefixes; ++i) {
-	const PrefixCodeRange& range = kInsertLengthPrefixCode[i];
-	if (length >= range.offset && length < range.offset + (1 << range.nbits)) {
-	  return i;
+  // Adds the next symbol to the current histogram. When the current histogram
+  // reaches the target size, decides on merging the block.
+  void AddSymbol(int symbol) {
+	(*histograms_)[curr_histogram_ix_].Add(symbol);
+	++block_size_;
+	if (block_size_ == target_block_size_) {
+	  FinishBlock(/* is_final = */ false);
 	}
   }
-  return -1;
-}
 
-int CopyLengthPrefix(int length) {
-  for (int i = 0; i < kNumCopyLenPrefixes; ++i) {
-	const PrefixCodeRange& range = kCopyLengthPrefixCode[i];
-	if (length >= range.offset && length < range.offset + (1 << range.nbits)) {
-	  return i;
+  // Does either of three things:
+  //   (1) emits the current block with a new block type;
+  //   (2) emits the current block with the type of the second last block;
+  //   (3) merges the current block with the last block.
+  void FinishBlock(bool is_final) {
+	if (block_size_ < min_block_size_) {
+	  block_size_ = min_block_size_;
+	}
+	if (num_blocks_ == 0) {
+	  // Create first block.
+	  split_->lengths[0] = block_size_;
+	  split_->types[0] = 0;
+	  last_entropy_[0] =
+		  BitsEntropy(&(*histograms_)[0].data_[0], alphabet_size_);
+	  last_entropy_[1] = last_entropy_[0];
+	  ++num_blocks_;
+	  ++split_->num_types;
+	  ++curr_histogram_ix_;
+	  block_size_ = 0;
+	} else if (block_size_ > 0) {
+	  double entropy = BitsEntropy(&(*histograms_)[curr_histogram_ix_].data_[0],
+								   alphabet_size_);
+	  HistogramType combined_histo[2];
+	  double combined_entropy[2];
+	  double diff[2];
+	  for (int j = 0; j < 2; ++j) {
+		int last_histogram_ix = last_histogram_ix_[j];
+		combined_histo[j] = (*histograms_)[curr_histogram_ix_];
+		combined_histo[j].AddHistogram((*histograms_)[last_histogram_ix]);
+		combined_entropy[j] = BitsEntropy(
+			&combined_histo[j].data_[0], alphabet_size_);
+		diff[j] = combined_entropy[j] - entropy - last_entropy_[j];
+	  }
+
+	  if (split_->num_types < kMaxBlockTypes &&
+		  diff[0] > split_threshold_ &&
+		  diff[1] > split_threshold_) {
+		// Create new block.
+		split_->lengths[num_blocks_] = block_size_;
+		split_->types[num_blocks_] = split_->num_types;
+		last_histogram_ix_[1] = last_histogram_ix_[0];
+		last_histogram_ix_[0] = split_->num_types;
+		last_entropy_[1] = last_entropy_[0];
+		last_entropy_[0] = entropy;
+		++num_blocks_;
+		++split_->num_types;
+		++curr_histogram_ix_;
+		block_size_ = 0;
+		merge_last_count_ = 0;
+		target_block_size_ = min_block_size_;
+	  } else if (diff[1] < diff[0] - 20.0) {
+		// Combine this block with second last block.
+		split_->lengths[num_blocks_] = block_size_;
+		split_->types[num_blocks_] = split_->types[num_blocks_ - 2];
+		std::swap(last_histogram_ix_[0], last_histogram_ix_[1]);
+		(*histograms_)[last_histogram_ix_[0]] = combined_histo[1];
+		last_entropy_[1] = last_entropy_[0];
+		last_entropy_[0] = combined_entropy[1];
+		++num_blocks_;
+		block_size_ = 0;
+		(*histograms_)[curr_histogram_ix_].Clear();
+		merge_last_count_ = 0;
+		target_block_size_ = min_block_size_;
+	  } else {
+		// Combine this block with last block.
+		split_->lengths[num_blocks_ - 1] += block_size_;
+		(*histograms_)[last_histogram_ix_[0]] = combined_histo[0];
+		last_entropy_[0] = combined_entropy[0];
+		if (split_->num_types == 1) {
+		  last_entropy_[1] = last_entropy_[0];
+		}
+		block_size_ = 0;
+		(*histograms_)[curr_histogram_ix_].Clear();
+		if (++merge_last_count_ > 1) {
+		  target_block_size_ += min_block_size_;
+		}
+	  }
+	}
+	if (is_final) {
+	  (*histograms_).resize(split_->num_types);
+	  split_->types.resize(num_blocks_);
+	  split_->lengths.resize(num_blocks_);
 	}
   }
-  return -1;
-}
 
-int CommandPrefix(int insert_length, int copy_length) {
-  if (copy_length == 0) {
-	copy_length = 4;
+ private:
+  static const int kMaxBlockTypes = 256;
+
+  // Alphabet size of particular block category.
+  const int alphabet_size_;
+  // We collect at least this many symbols for each block.
+  const int min_block_size_;
+  // We merge histograms A and B if
+  //   entropy(A+B) < entropy(A) + entropy(B) + split_threshold_,
+  // where A is the current histogram and B is the histogram of the last or the
+  // second last block type.
+  const double split_threshold_;
+  // Quality setting used for speed vs. compression ratio decisions.
+  const int quality_;
+
+  int num_blocks_;
+  BlockSplit* split_;  // not owned
+  std::vector<HistogramType>* histograms_;  // not owned
+
+  // The number of symbols that we want to collect before deciding on whether
+  // or not to merge the block with a previous one or emit a new block.
+  int target_block_size_;
+  // The number of symbols in the current histogram.
+  int block_size_;
+  // Offset of the current histogram.
+  int curr_histogram_ix_;
+  // Offset of the histograms of the previous two block types.
+  int last_histogram_ix_[2];
+  // Entropy of the previous two block types.
+  double last_entropy_[2];
+  // The number of times we merged the current block with the last one.
+  int merge_last_count_;
+};
+
+void BuildMetaBlockGreedy(const uint8_t* ringbuffer,
+						  size_t pos,
+						  size_t mask,
+						  const Command *commands,
+						  size_t n_commands,
+						  int quality,
+						  MetaBlockSplit* mb) {
+  int num_literals = 0;
+  for (int i = 0; i < n_commands; ++i) {
+	num_literals += commands[i].insert_len_;
   }
-  int insert_prefix = InsertLengthPrefix(insert_length);
-  int copy_prefix = CopyLengthPrefix(copy_length);
-  int range_idx = 3 * (insert_prefix >> 3) + (copy_prefix >> 3);
-  return ((kInsertAndCopyRangeLut[range_idx] << 6) +
-		  ((insert_prefix & 7) << 3) + (copy_prefix & 7));
-}
 
-int InsertLengthExtraBits(int code) {
-  int insert_code = (kInsertRangeLut[code >> 6] << 3) + ((code >> 3) & 7);
-  return kInsertLengthPrefixCode[insert_code].nbits;
-}
+  BlockSplitter<HistogramLiteral> lit_blocks(
+	  256, 512, 400.0, num_literals, quality,
+	  &mb->literal_split, &mb->literal_histograms);
+  BlockSplitter<HistogramCommand> cmd_blocks(
+	  kNumCommandPrefixes, 1024, 500.0, n_commands, quality,
+	  &mb->command_split, &mb->command_histograms);
+  BlockSplitter<HistogramDistance> dist_blocks(
+	  64, 512, 100.0, n_commands, quality,
+	  &mb->distance_split, &mb->distance_histograms);
 
-int InsertLengthOffset(int code) {
-  int insert_code = (kInsertRangeLut[code >> 6] << 3) + ((code >> 3) & 7);
-  return kInsertLengthPrefixCode[insert_code].offset;
-}
-
-int CopyLengthExtraBits(int code) {
-  int copy_code = (kCopyRangeLut[code >> 6] << 3) + (code & 7);
-  return kCopyLengthPrefixCode[copy_code].nbits;
-}
-
-int CopyLengthOffset(int code) {
-  int copy_code = (kCopyRangeLut[code >> 6] << 3) + (code & 7);
-  return kCopyLengthPrefixCode[copy_code].offset;
-}
-
-void PrefixEncodeCopyDistance(int distance_code,
-							  int num_direct_codes,
-							  int postfix_bits,
-							  uint16_t* code,
-							  int* nbits,
-							  uint32_t* extra_bits) {
-  distance_code -= 1;
-  if (distance_code < kNumDistanceShortCodes + num_direct_codes) {
-	*code = distance_code;
-	*nbits = 0;
-	*extra_bits = 0;
-	return;
-  }
-  distance_code -= kNumDistanceShortCodes + num_direct_codes;
-  distance_code += (1 << (postfix_bits + 2));
-  int bucket = Log2Floor(distance_code) - 1;
-  int postfix_mask = (1 << postfix_bits) - 1;
-  int postfix = distance_code & postfix_mask;
-  int prefix = (distance_code >> bucket) & 1;
-  int offset = (2 + prefix) << bucket;
-  *nbits = bucket - postfix_bits;
-  *code = kNumDistanceShortCodes + num_direct_codes +
-	  ((2 * (*nbits - 1) + prefix) << postfix_bits) + postfix;
-  *extra_bits = (distance_code - offset) >> postfix_bits;
-}
-
-int BlockLengthPrefix(int length) {
-  for (int i = 0; i < kNumBlockLenPrefixes; ++i) {
-	const PrefixCodeRange& range = kBlockLengthPrefixCode[i];
-	if (length >= range.offset && length < range.offset + (1 << range.nbits)) {
-	  return i;
+  for (int i = 0; i < n_commands; ++i) {
+	const Command cmd = commands[i];
+	cmd_blocks.AddSymbol(cmd.cmd_prefix_);
+	for (int j = 0; j < cmd.insert_len_; ++j) {
+	  lit_blocks.AddSymbol(ringbuffer[pos & mask]);
+	  ++pos;
+	}
+	pos += cmd.copy_len_;
+	if (cmd.copy_len_ > 0 && cmd.cmd_prefix_ >= 128) {
+	  dist_blocks.AddSymbol(cmd.dist_prefix_);
 	}
   }
-  return -1;
-}
 
-int BlockLengthExtraBits(int length_code) {
-  return kBlockLengthPrefixCode[length_code].nbits;
-}
-
-int BlockLengthOffset(int length_code) {
-  return kBlockLengthPrefixCode[length_code].offset;
+  lit_blocks.FinishBlock(/* is_final = */ true);
+  cmd_blocks.FinishBlock(/* is_final = */ true);
+  dist_blocks.FinishBlock(/* is_final = */ true);
 }
 
 }  // namespace brotli
@@ -14789,40 +15556,31 @@ int BlockLengthOffset(int length_code) {
 #define kMinDictionaryWordLength          kMinDictionaryWordLength2
 
 //#line 1 "bit_reader.c"
-/* Copyright 2013 Google Inc. All Rights Reserved.
-
-   Licensed under the Apache License, Version 2.0 (the "License");
-   you may not use this file except in compliance with the License.
-   You may obtain a copy of the License at
-
-   http://www.apache.org/licenses/LICENSE-2.0
-
-   Unless required by applicable law or agreed to in writing, software
-   distributed under the License is distributed on an "AS IS" BASIS,
-   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-   See the License for the specific language governing permissions and
-   limitations under the License.
-
-   Bit reading helpers
-*/
+/* Bit reading helpers */
 
 #include <assert.h>
 #include <stdlib.h>
 
 
 //#line 1 "bit_reader.h"
+/* Bit reading helpers */
+
 #ifndef BROTLI_DEC_BIT_READER_H_
 #define BROTLI_DEC_BIT_READER_H_
 
 #include <string.h>
 
 //#line 1 "streams.h"
+/* Functions for streaming input and output. */
+
 #ifndef BROTLI_DEC_STREAMS_H_
 #define BROTLI_DEC_STREAMS_H_
 
 #include <stdio.h>
 
 //#line 1 "types.h"
+/* Common types */
+
 #ifndef BROTLI_DEC_TYPES_H_
 #define BROTLI_DEC_TYPES_H_
 
@@ -14830,10 +15588,11 @@ int BlockLengthOffset(int length_code) {
 
 #ifndef _MSC_VER
 #include <inttypes.h>
-#ifdef __STRICT_ANSI__
-#define BROTLI_INLINE
-#else  /* __STRICT_ANSI__ */
+#if defined(__cplusplus) || !defined(__STRICT_ANSI__) \
+	|| __STDC_VERSION__ >= 199901L
 #define BROTLI_INLINE inline
+#else
+#define BROTLI_INLINE
 #endif
 #else
 typedef signed   char int8_t;
@@ -14921,6 +15680,10 @@ BrotliInput BrotliStdinInput();
 int BrotliStdoutOutputFunction(void* data, const uint8_t* buf, size_t count);
 BrotliOutput BrotliStdoutOutput();
 
+/* Input callback that reads from a file. */
+int BrotliFileInputFunction(void* data, uint8_t* buf, size_t count);
+BrotliInput BrotliFileInput(FILE* f);
+
 /* Output callback that writes to a file. */
 int BrotliFileOutputFunction(void* data, const uint8_t* buf, size_t count);
 BrotliOutput BrotliFileOutput(FILE* f);
@@ -14936,12 +15699,19 @@ BrotliOutput BrotliFileOutput(FILE* f);
 extern "C" {
 #endif
 
+#if (defined(__x86_64__) || defined(_M_X64))
+/* This should be set to 1 only on little-endian machines. */
+#define BROTLI_USE_64_BITS 1
+#else
+#define BROTLI_USE_64_BITS 0
+#endif
 #define BROTLI_MAX_NUM_BIT_READ   25
 #define BROTLI_READ_SIZE          4096
 #define BROTLI_IBUF_SIZE          (2 * BROTLI_READ_SIZE + 32)
 #define BROTLI_IBUF_MASK          (2 * BROTLI_READ_SIZE - 1)
 
 #define UNALIGNED_COPY64(dst, src) memcpy(dst, src, 8)
+#define UNALIGNED_MOVE64(dst, src) memmove(dst, src, 8)
 
 static const uint32_t kBitMask[BROTLI_MAX_NUM_BIT_READ] = {
   0, 1, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047, 4095, 8191, 16383, 32767,
@@ -14954,14 +15724,32 @@ typedef struct {
   uint8_t buf_[BROTLI_IBUF_SIZE];
   uint8_t*    buf_ptr_;      /* next input will write here */
   BrotliInput input_;        /* input callback */
+#if (BROTLI_USE_64_BITS)
   uint64_t    val_;          /* pre-fetched bits */
+#else
+  uint32_t    val_;          /* pre-fetched bits */
+#endif
   uint32_t    pos_;          /* byte position in stream */
   uint32_t    bit_pos_;      /* current bit-reading position in val_ */
   uint32_t    bit_end_pos_;  /* bit-reading end position from LSB of val_ */
   int         eos_;          /* input stream is finished */
+
+  /* Set to 0 to support partial data streaming. Set to 1 to expect full data or
+	 for the last chunk of partial data. */
+  int         finish_;
+  /* indicates how much bytes already read when reading partial data */
+  int         tmp_bytes_read_;
 } BrotliBitReader;
 
-int BrotliInitBitReader(BrotliBitReader* const br, BrotliInput input);
+/* Initializes the bitreader fields. After this, BrotliWarmupBitReader must
+   be used. */
+void BrotliInitBitReader(BrotliBitReader* const br,
+						 BrotliInput input, int finish);
+
+/* Fetches data to fill up internal buffers. Returns 0 if there wasn't enough */
+/* data to read. It then buffers the read data and can be called again with */
+/* more data. If br->finish_ is 1, never fails. */
+int BrotliWarmupBitReader(BrotliBitReader* const br);
 
 /* Return the prefetched bits, so they can be looked up. */
 static BROTLI_INLINE uint32_t BrotliPrefetchBits(BrotliBitReader* const br) {
@@ -14981,11 +15769,14 @@ static BROTLI_INLINE void BrotliSetBitPos(BrotliBitReader* const br,
   br->bit_pos_ = val;
 }
 
-/* Reload up to 64 bits byte-by-byte */
-static BROTLI_INLINE void ShiftBytes(BrotliBitReader* const br) {
+/*
+ * Reload up to 32 bits byte-by-byte.
+ * This function works on both little and big endian.
+ */
+static BROTLI_INLINE void ShiftBytes32(BrotliBitReader* const br) {
   while (br->bit_pos_ >= 8) {
 	br->val_ >>= 8;
-	br->val_ |= ((uint64_t)br->buf_[br->pos_ & BROTLI_IBUF_MASK]) << 56;
+	br->val_ |= ((uint32_t)br->buf_[br->pos_ & BROTLI_IBUF_MASK]) << 24;
 	++br->pos_;
 	br->bit_pos_ -= 8;
 	br->bit_end_pos_ -= 8;
@@ -14996,9 +15787,12 @@ static BROTLI_INLINE void ShiftBytes(BrotliBitReader* const br) {
 
    Does nothing if there are at least 32 bytes present after current position.
 
-   Returns 0 if either:
+   Returns 0 if one of:
 	- the input callback returned an error, or
 	- there is no more input and the position is past the end of the stream.
+	- finish is false and less than BROTLI_READ_SIZE are available - a next call
+	  when more data is available makes it continue including the partially read
+	  data
 
    After encountering the end of the input stream, 32 additional zero bytes are
    copied to the ringbuffer, therefore it is safe to call this function after
@@ -15011,14 +15805,21 @@ static BROTLI_INLINE int BrotliReadMoreInput(BrotliBitReader* const br) {
 	return br->bit_pos_ <= br->bit_end_pos_;
   } else {
 	uint8_t* dst = br->buf_ptr_;
-	int bytes_read = BrotliRead(br->input_, dst, BROTLI_READ_SIZE);
+	int bytes_read = BrotliRead(br->input_, dst + br->tmp_bytes_read_,
+		(size_t) (BROTLI_READ_SIZE - br->tmp_bytes_read_));
 	if (bytes_read < 0) {
 	  return 0;
 	}
+	bytes_read += br->tmp_bytes_read_;
+	br->tmp_bytes_read_ = 0;
 	if (bytes_read < BROTLI_READ_SIZE) {
+	  if (!br->finish_) {
+		br->tmp_bytes_read_ = bytes_read;
+		return 0;
+	  }
 	  br->eos_ = 1;
 	  /* Store 32 bytes of zero after the stream end. */
-#if (defined(__x86_64__) || defined(_M_X64))
+#if (BROTLI_USE_64_BITS)
 	  *(uint64_t*)(dst + bytes_read) = 0;
 	  *(uint64_t*)(dst + bytes_read + 8) = 0;
 	  *(uint64_t*)(dst + bytes_read + 16) = 0;
@@ -15029,7 +15830,7 @@ static BROTLI_INLINE int BrotliReadMoreInput(BrotliBitReader* const br) {
 	}
 	if (dst == br->buf_) {
 	  /* Copy the head of the ringbuffer to the slack region. */
-#if (defined(__x86_64__) || defined(_M_X64))
+#if (BROTLI_USE_64_BITS)
 	  UNALIGNED_COPY64(br->buf_ + BROTLI_IBUF_SIZE - 32, br->buf_);
 	  UNALIGNED_COPY64(br->buf_ + BROTLI_IBUF_SIZE - 24, br->buf_ + 8);
 	  UNALIGNED_COPY64(br->buf_ + BROTLI_IBUF_SIZE - 16, br->buf_ + 16);
@@ -15046,30 +15847,45 @@ static BROTLI_INLINE int BrotliReadMoreInput(BrotliBitReader* const br) {
   }
 }
 
-/* Advances the Read buffer by 5 bytes to make room for reading next 24 bits. */
+/* Guarantees that there are at least 24 bits in the buffer. */
 static BROTLI_INLINE void BrotliFillBitWindow(BrotliBitReader* const br) {
+#if (BROTLI_USE_64_BITS)
   if (br->bit_pos_ >= 40) {
-#if (defined(__x86_64__) || defined(_M_X64))
+	/*
+	 * Advances the Read buffer by 5 bytes to make room for reading next
+	 * 24 bits.
+	 * The expression below needs a little-endian arch to work correctly.
+	 * This gives a large speedup for decoding speed.
+	 */
 	br->val_ >>= 40;
-	/* The expression below needs a little-endian arch to work correctly. */
-	/* This gives a large speedup for decoding speed. */
 	br->val_ |= *(const uint64_t*)(
 		br->buf_ + (br->pos_ & BROTLI_IBUF_MASK)) << 24;
 	br->pos_ += 5;
 	br->bit_pos_ -= 40;
 	br->bit_end_pos_ -= 40;
-#else
-	ShiftBytes(br);
-#endif
   }
+#else
+  ShiftBytes32(br);
+#endif
 }
 
 /* Reads the specified number of bits from Read Buffer. */
 static BROTLI_INLINE uint32_t BrotliReadBits(
 	BrotliBitReader* const br, int n_bits) {
   uint32_t val;
+#if (BROTLI_USE_64_BITS)
   BrotliFillBitWindow(br);
   val = (uint32_t)(br->val_ >> br->bit_pos_) & kBitMask[n_bits];
+#else
+  /*
+   * The if statement gives 2-4% speed boost on Canterbury data set with
+   * asm.js/firefox/x86-64.
+   */
+  if ((32 - br->bit_pos_) < ((uint32_t) n_bits)) {
+	BrotliFillBitWindow(br);
+  }
+  val = (br->val_ >> br->bit_pos_) & kBitMask[n_bits];
+#endif
 #ifdef BROTLI_DECODE_DEBUG
   printf("[BrotliReadBits]  %010d %2d  val: %6x\n",
 		 (br->pos_ << 3) + br->bit_pos_ - 64, n_bits, val);
@@ -15088,9 +15904,12 @@ static BROTLI_INLINE uint32_t BrotliReadBits(
 extern "C" {
 #endif
 
-int BrotliInitBitReader(BrotliBitReader* const br, BrotliInput input) {
-  size_t i;
+void BrotliInitBitReader(BrotliBitReader* const br,
+						 BrotliInput input, int finish) {
   assert(br != NULL);
+
+  br->finish_ = finish;
+  br->tmp_bytes_read_ = 0;
 
   br->buf_ptr_ = br->buf_;
   br->input_ = input;
@@ -15099,6 +15918,11 @@ int BrotliInitBitReader(BrotliBitReader* const br, BrotliInput input) {
   br->bit_pos_ = 0;
   br->bit_end_pos_ = 0;
   br->eos_ = 0;
+}
+
+int BrotliWarmupBitReader(BrotliBitReader* const br) {
+  size_t i;
+
   if (!BrotliReadMoreInput(br)) {
 	return 0;
   }
@@ -15122,6 +15946,98 @@ int BrotliInitBitReader(BrotliBitReader* const br, BrotliInput input) {
 
 
 //#line 1 "context.h"
+/* Lookup table to map the previous two bytes to a context id.
+
+   There are four different context modeling modes defined here:
+	 CONTEXT_LSB6: context id is the least significant 6 bits of the last byte,
+	 CONTEXT_MSB6: context id is the most significant 6 bits of the last byte,
+	 CONTEXT_UTF8: second-order context model tuned for UTF8-encoded text,
+	 CONTEXT_SIGNED: second-order context model tuned for signed integers.
+
+   The context id for the UTF8 context model is calculated as follows. If p1
+   and p2 are the previous two bytes, we calcualte the context as
+
+	 context = kContextLookup[p1] | kContextLookup[p2 + 256].
+
+   If the previous two bytes are ASCII characters (i.e. < 128), this will be
+   equivalent to
+
+	 context = 4 * context1(p1) + context2(p2),
+
+   where context1 is based on the previous byte in the following way:
+
+	 0  : non-ASCII control
+	 1  : \t, \n, \r
+	 2  : space
+	 3  : other punctuation
+	 4  : " '
+	 5  : %
+	 6  : ( < [ {
+	 7  : ) > ] }
+	 8  : , ; :
+	 9  : .
+	 10 : =
+	 11 : number
+	 12 : upper-case vowel
+	 13 : upper-case consonant
+	 14 : lower-case vowel
+	 15 : lower-case consonant
+
+   and context2 is based on the second last byte:
+
+	 0 : control, space
+	 1 : punctuation
+	 2 : upper-case letter, number
+	 3 : lower-case letter
+
+   If the last byte is ASCII, and the second last byte is not (in a valid UTF8
+   stream it will be a continuation byte, value between 128 and 191), the
+   context is the same as if the second last byte was an ASCII control or space.
+
+   If the last byte is a UTF8 lead byte (value >= 192), then the next byte will
+   be a continuation byte and the context id is 2 or 3 depending on the LSB of
+   the last byte and to a lesser extent on the second last byte if it is ASCII.
+
+   If the last byte is a UTF8 continuation byte, the second last byte can be:
+	 - continuation byte: the next byte is probably ASCII or lead byte (assuming
+	   4-byte UTF8 characters are rare) and the context id is 0 or 1.
+	 - lead byte (192 - 207): next byte is ASCII or lead byte, context is 0 or 1
+	 - lead byte (208 - 255): next byte is continuation byte, context is 2 or 3
+
+   The possible value combinations of the previous two bytes, the range of
+   context ids and the type of the next byte is summarized in the table below:
+
+   |--------\-----------------------------------------------------------------|
+   |         \                         Last byte                              |
+   | Second   \---------------------------------------------------------------|
+   | last byte \    ASCII            |   cont. byte        |   lead byte      |
+   |            \   (0-127)          |   (128-191)         |   (192-)         |
+   |=============|===================|=====================|==================|
+   |  ASCII      | next: ASCII/lead  |  not valid          |  next: cont.     |
+   |  (0-127)    | context: 4 - 63   |                     |  context: 2 - 3  |
+   |-------------|-------------------|---------------------|------------------|
+   |  cont. byte | next: ASCII/lead  |  next: ASCII/lead   |  next: cont.     |
+   |  (128-191)  | context: 4 - 63   |  context: 0 - 1     |  context: 2 - 3  |
+   |-------------|-------------------|---------------------|------------------|
+   |  lead byte  | not valid         |  next: ASCII/lead   |  not valid       |
+   |  (192-207)  |                   |  context: 0 - 1     |                  |
+   |-------------|-------------------|---------------------|------------------|
+   |  lead byte  | not valid         |  next: cont.        |  not valid       |
+   |  (208-)     |                   |  context: 2 - 3     |                  |
+   |-------------|-------------------|---------------------|------------------|
+
+   The context id for the signed context mode is calculated as:
+
+	 context = (kContextLookup[512 + p1] << 3) | kContextLookup[512 + p2].
+
+   For any context modeling modes, the context ids can be calculated by |-ing
+   together two lookups from one table using context model dependent offsets:
+
+	 context = kContextLookup[offset1 + p1] | kContextLookup[offset2 + p2].
+
+   where offset1 and offset2 are dependent on the context mode.
+*/
+
 #ifndef BROTLI_DEC_CONTEXT_H_
 #define BROTLI_DEC_CONTEXT_H_
 
@@ -15276,43 +16192,318 @@ static const int kContextLookupOffsets[8] = {
 
 
 //#line 1 "decode.h"
+/* API for Brotli decompression */
+
 #ifndef BROTLI_DEC_DECODE_H_
 #define BROTLI_DEC_DECODE_H_
+
+
+//#line 1 "state.h"
+/* Brotli state for partial streaming decoding. */
+
+#ifndef BROTLI_DEC_STATE_H_
+#define BROTLI_DEC_STATE_H_
+
+#include <stdio.h>
+
+
+//#line 1 "huffman.h"
+/* Utilities for building Huffman decoding tables. */
+
+#ifndef BROTLI_DEC_HUFFMAN_H_
+#define BROTLI_DEC_HUFFMAN_H_
+
+#include <assert.h>
 
 #if defined(__cplusplus) || defined(c_plusplus)
 extern "C" {
 #endif
 
+/* Maximum possible Huffman table size for an alphabet size of 704, max code
+ * length 15 and root table bits 8. */
+#define BROTLI_HUFFMAN_MAX_TABLE_SIZE  1080
+
+typedef struct {
+  uint8_t bits;     /* number of bits used for this symbol */
+  uint16_t value;   /* symbol value or table offset */
+} HuffmanCode;
+
+/* Builds Huffman lookup table assuming code lengths are in symbol order. */
+/* Returns false in case of error (invalid tree or memory error). */
+int BrotliBuildHuffmanTable(HuffmanCode* root_table,
+							int root_bits,
+							const uint8_t* const code_lengths,
+							int code_lengths_size);
+
+/* Contains a collection of huffman trees with the same alphabet size. */
+typedef struct {
+  int alphabet_size;
+  int num_htrees;
+  HuffmanCode* codes;
+  HuffmanCode** htrees;
+} HuffmanTreeGroup;
+
+void BrotliHuffmanTreeGroupInit(HuffmanTreeGroup* group,
+								int alphabet_size, int ntrees);
+void BrotliHuffmanTreeGroupRelease(HuffmanTreeGroup* group);
+
+#if defined(__cplusplus) || defined(c_plusplus)
+}    /* extern "C" */
+#endif
+
+#endif  /* BROTLI_DEC_HUFFMAN_H_ */
+
+#if defined(__cplusplus) || defined(c_plusplus)
+extern "C" {
+#endif
+
+typedef enum {
+  BROTLI_STATE_UNINITED = 0,
+  BROTLI_STATE_BITREADER_WARMUP = 1,
+  BROTLI_STATE_METABLOCK_BEGIN = 10,
+  BROTLI_STATE_METABLOCK_HEADER_1 = 11,
+  BROTLI_STATE_METABLOCK_HEADER_2 = 12,
+  BROTLI_STATE_BLOCK_BEGIN = 13,
+  BROTLI_STATE_BLOCK_INNER = 14,
+  BROTLI_STATE_BLOCK_DISTANCE = 15,
+  BROTLI_STATE_BLOCK_POST = 16,
+  BROTLI_STATE_UNCOMPRESSED = 17,
+  BROTLI_STATE_METABLOCK_DONE = 20,
+  BROTLI_STATE_HUFFMAN_CODE_0 = 30,
+  BROTLI_STATE_HUFFMAN_CODE_1 = 31,
+  BROTLI_STATE_HUFFMAN_CODE_2 = 32,
+  BROTLI_STATE_CONTEXT_MAP_1 = 33,
+  BROTLI_STATE_CONTEXT_MAP_2 = 34,
+  BROTLI_STATE_TREE_GROUP = 35,
+  BROTLI_STATE_SUB_NONE = 50,
+  BROTLI_STATE_SUB_UNCOMPRESSED_SHORT = 51,
+  BROTLI_STATE_SUB_UNCOMPRESSED_FILL = 52,
+  BROTLI_STATE_SUB_UNCOMPRESSED_COPY = 53,
+  BROTLI_STATE_SUB_UNCOMPRESSED_WARMUP = 54,
+  BROTLI_STATE_SUB_HUFFMAN_LENGTH_BEGIN = 60,
+  BROTLI_STATE_SUB_HUFFMAN_LENGTH_SYMBOLS = 61,
+  BROTLI_STATE_SUB_HUFFMAN_DONE = 62,
+  BROTLI_STATE_SUB_TREE_GROUP = 70,
+  BROTLI_STATE_SUB_CONTEXT_MAP_HUFFMAN = 80,
+  BROTLI_STATE_SUB_CONTEXT_MAPS = 81,
+  BROTLI_STATE_DONE = 100
+} BrotliRunningState;
+
+typedef struct {
+  BrotliRunningState state;
+  BrotliRunningState sub_state[2];  /* State inside function call */
+
+  int pos;
+  int input_end;
+  int window_bits;
+  int max_backward_distance;
+  int max_distance;
+  int ringbuffer_size;
+  int ringbuffer_mask;
+  uint8_t* ringbuffer;
+  uint8_t* ringbuffer_end;
+  /* This ring buffer holds a few past copy distances that will be used by */
+  /* some special distance codes. */
+  int dist_rb[4];
+  int dist_rb_idx;
+  /* The previous 2 bytes used for context. */
+  uint8_t prev_byte1;
+  uint8_t prev_byte2;
+  HuffmanTreeGroup hgroup[3];
+  HuffmanCode* block_type_trees;
+  HuffmanCode* block_len_trees;
+  BrotliBitReader br;
+  /* This counter is reused for several disjoint loops. */
+  int loop_counter;
+  /* This is true if the literal context map histogram type always matches the
+  block type. It is then not needed to keep the context (faster decoding). */
+  int trivial_literal_context;
+
+  int meta_block_remaining_len;
+  int is_uncompressed;
+  int block_length[3];
+  int block_type[3];
+  int num_block_types[3];
+  int block_type_rb[6];
+  int block_type_rb_index[3];
+  int distance_postfix_bits;
+  int num_direct_distance_codes;
+  int distance_postfix_mask;
+  int num_distance_codes;
+  uint8_t* context_map;
+  uint8_t* context_modes;
+  int num_literal_htrees;
+  uint8_t* dist_context_map;
+  int num_dist_htrees;
+  int context_offset;
+  uint8_t* context_map_slice;
+  uint8_t literal_htree_index;
+  int dist_context_offset;
+  uint8_t* dist_context_map_slice;
+  uint8_t dist_htree_index;
+  int context_lookup_offset1;
+  int context_lookup_offset2;
+  uint8_t context_mode;
+  HuffmanCode* htree_command;
+
+  int cmd_code;
+  int range_idx;
+  int insert_code;
+  int copy_code;
+  int insert_length;
+  int copy_length;
+  int distance_code;
+  int distance;
+  const uint8_t* copy_src;
+  uint8_t* copy_dst;
+
+  /* For CopyUncompressedBlockToOutput */
+  int nbytes;
+
+  /* For HuffmanTreeGroupDecode */
+  int htrees_decoded;
+
+  /* For ReadHuffmanCodeLengths */
+  int symbol;
+  uint8_t prev_code_len;
+  int repeat;
+  uint8_t repeat_code_len;
+  int space;
+  HuffmanCode table[32];
+  uint8_t code_length_code_lengths[18];
+
+  /* For ReadHuffmanCode */
+  int simple_code_or_skip;
+  uint8_t* code_lengths;
+
+  /* For HuffmanTreeGroupDecode */
+  int htree_index;
+  HuffmanCode* next;
+
+  /* For DecodeContextMap */
+  int context_index;
+  int max_run_length_prefix;
+  HuffmanCode* context_map_table;
+} BrotliState;
+
+void BrotliStateInit(BrotliState* s);
+void BrotliStateCleanup(BrotliState* s);
+
+#if defined(__cplusplus) || defined(c_plusplus)
+} /* extern "C" */
+#endif
+
+#endif  /* BROTLI_DEC_STATE_H_ */
+
+#if defined(__cplusplus) || defined(c_plusplus)
+extern "C" {
+#endif
+
+typedef enum {
+  /* Decoding error, e.g. corrupt input or no memory */
+  BROTLI_RESULT_ERROR = 0,
+  /* Successfully completely done */
+  BROTLI_RESULT_SUCCESS = 1,
+  /* Partially done, but must be called again with more input */
+  BROTLI_RESULT_PARTIAL = 2
+} BrotliResult;
+
 /* Sets *decoded_size to the decompressed size of the given encoded stream. */
 /* This function only works if the encoded buffer has a single meta block, */
-/* and this meta block must have the "is last" bit set. */
+/* or if it has two meta-blocks, where the first is uncompressed and the */
+/* second is empty. */
 /* Returns 1 on success, 0 on failure. */
-int BrotliDecompressedSize(size_t encoded_size,
-						   const uint8_t* encoded_buffer,
-						   size_t* decoded_size);
+BrotliResult BrotliDecompressedSize(size_t encoded_size,
+									const uint8_t* encoded_buffer,
+									size_t* decoded_size);
 
 /* Decompresses the data in encoded_buffer into decoded_buffer, and sets */
 /* *decoded_size to the decompressed length. */
 /* Returns 0 if there was either a bit stream error or memory allocation */
 /* error, and 1 otherwise. */
 /* If decoded size is zero, returns 1 and keeps decoded_buffer unchanged. */
-int BrotliDecompressBuffer(size_t encoded_size,
-						   const uint8_t* encoded_buffer,
-						   size_t* decoded_size,
-						   uint8_t* decoded_buffer);
+BrotliResult BrotliDecompressBuffer(size_t encoded_size,
+									const uint8_t* encoded_buffer,
+									size_t* decoded_size,
+									uint8_t* decoded_buffer);
 
 /* Same as above, but uses the specified input and output callbacks instead */
 /* of reading from and writing to pre-allocated memory buffers. */
-int BrotliDecompress(BrotliInput input, BrotliOutput output);
+BrotliResult BrotliDecompress(BrotliInput input, BrotliOutput output);
+
+/* Same as above, but supports the caller to call the decoder repeatedly with
+   partial data to support streaming. The state must be initialized with
+   BrotliStateInit and reused with every call for the same stream.
+   Return values:
+   0: failure.
+   1: success, and done.
+   2: success so far, end not reached so should call again with more input.
+   The finish parameter is used as follows, for a series of calls with the
+   same state:
+   0: Every call except the last one must be called with finish set to 0. The
+	  last call may have finish set to either 0 or 1. Only if finish is 0, can
+	  the function return 2. It may also return 0 or 1, in that case no more
+	  calls (even with finish 1) may be made.
+   1: Only the last call may have finish set to 1. It's ok to give empty input
+	  if all input was already given to previous calls. It is also ok to have
+	  only one single call in total, with finish 1, and with all input
+	  available immediately. That matches the non-streaming case. If finish is
+	  1, the function can only return 0 or 1, never 2. After a finish, no more
+	  calls may be done.
+   After everything is done, the state must be cleaned with BrotliStateCleanup
+   to free allocated resources.
+   The given BrotliOutput must always accept all output and make enough space,
+   it returning a smaller value than the amount of bytes to write always results
+   in an error.
+*/
+BrotliResult BrotliDecompressStreaming(BrotliInput input, BrotliOutput output,
+									   int finish, BrotliState* s);
+
+/* Same as above, but with memory buffers.
+   Must be called with an allocated input buffer in *next_in and an allocated
+   output buffer in *next_out. The values *available_in and *available_out
+   must specify the allocated size in *next_in and *next_out respectively.
+   The value *total_out must be 0 initially, and will be summed with the
+   amount of output bytes written after each call, so that at the end it
+   gives the complete decoded size.
+   After each call, *available_in will be decremented by the amount of input
+   bytes consumed, and the *next_in pointer will be incremented by that amount.
+   Similarly, *available_out will be decremented by the amount of output
+   bytes written, and the *next_out pointer will be incremented by that
+   amount.
+
+   The input may be partial. With each next function call, *next_in and
+   *available_in must be updated to point to a next part of the compressed
+   input. The current implementation will always consume all input unless
+   an error occurs, so normally *available_in will always be 0 after
+   calling this function and the next adjacent part of input is desired.
+
+   In the current implementation, the function requires that there is enough
+   output buffer size to write all currently processed input, so
+   *available_out must be large enough. Since the function updates *next_out
+   each time, as long as the output buffer is large enough you can keep
+   reusing this variable. It is also possible to update *next_out and
+   *available_out yourself before a next call, e.g. to point to a new larger
+   buffer.
+*/
+BrotliResult BrotliDecompressBufferStreaming(size_t* available_in,
+											 const uint8_t** next_in,
+											 int finish,
+											 size_t* available_out,
+											 uint8_t** next_out,
+											 size_t* total_out,
+											 BrotliState* s);
 
 #if defined(__cplusplus) || defined(c_plusplus)
-}    /* extern "C" */
+} /* extern "C" */
 #endif
 
 #endif  /* BROTLI_DEC_DECODE_H_ */
 
 
 //#line 1 "dictionary.h"
+/* Collection of static dictionary words. */
+
 #ifndef BROTLI_DEC_DICTIONARY_H_
 #define BROTLI_DEC_DICTIONARY_H_
 
@@ -24791,6 +25982,8 @@ static const int kMaxDictionaryWordLength = 24;
 
 
 //#line 1 "transform.h"
+/* Transformations on dictionary words. */
+
 #ifndef BROTLI_DEC_TRANSFORM_H_
 #define BROTLI_DEC_TRANSFORM_H_
 
@@ -24957,7 +26150,7 @@ static const Transform kTransforms[] = {
 
 static const int kNumTransforms = sizeof(kTransforms) / sizeof(kTransforms[0]);
 
-static int ToUpperCase(uint8_t *p, int len) {
+static int ToUpperCase(uint8_t *p) {
   if (p[0] < 0xc0) {
 	if (p[0] >= 'a' && p[0] <= 'z') {
 	  p[0] ^= 32;
@@ -24995,10 +26188,10 @@ static BROTLI_INLINE int TransformDictionaryWord(
   while (i < len) { dst[idx++] = word[i++]; }
   uppercase = &dst[idx - len];
   if (t == kUppercaseFirst) {
-	ToUpperCase(uppercase, len);
+	ToUpperCase(uppercase);
   } else if (t == kUppercaseAll) {
 	while (len > 0) {
-	  int step = ToUpperCase(uppercase, len);
+	  int step = ToUpperCase(uppercase);
 	  uppercase += step;
 	  len -= step;
 	}
@@ -25014,36 +26207,11 @@ static BROTLI_INLINE int TransformDictionaryWord(
 #endif  /* BROTLI_DEC_TRANSFORM_H_ */
 
 
-//#line 1 "huffman.h"
-#ifndef BROTLI_DEC_HUFFMAN_H_
-#define BROTLI_DEC_HUFFMAN_H_
-
-#include <assert.h>
-
-#if defined(__cplusplus) || defined(c_plusplus)
-extern "C" {
-#endif
-
-typedef struct {
-  uint8_t bits;     /* number of bits used for this symbol */
-  uint16_t value;   /* symbol value or table offset */
-} HuffmanCode;
-
-/* Builds Huffman lookup table assuming code lengths are in symbol order. */
-/* Returns false in case of error (invalid tree or memory error). */
-int BrotliBuildHuffmanTable(HuffmanCode* root_table,
-							int root_bits,
-							const uint8_t* const code_lengths,
-							int code_lengths_size);
-
-#if defined(__cplusplus) || defined(c_plusplus)
-}    /* extern "C" */
-#endif
-
-#endif  /* BROTLI_DEC_HUFFMAN_H_ */
-
-
 //#line 1 "prefix.h"
+/* Lookup tables to map prefix codes to value ranges. This is used during
+   decoding of the block lengths, literal insertion lengths and copy lengths.
+*/
+
 #ifndef BROTLI_DEC_PREFIX_H_
 #define BROTLI_DEC_PREFIX_H_
 
@@ -25094,8 +26262,10 @@ static const int kCopyRangeLut[9] = {
 
 
 //#line 1 "safe_malloc.h"
-#ifndef BROTLI_UTILS_UTILS_H_
-#define BROTLI_UTILS_UTILS_H_
+/* Size-checked memory allocation. */
+
+#ifndef BROTLI_DEC_SAFE_MALLOC_H_
+#define BROTLI_DEC_SAFE_MALLOC_H_
 
 #include <assert.h>
 
@@ -25119,7 +26289,7 @@ void* BrotliSafeMalloc(uint64_t nmemb, size_t size);
 }    /* extern "C" */
 #endif
 
-#endif  /* BROTLI_UTILS_UTILS_H_ */
+#endif  /* BROTLI_DEC_SAFE_MALLOC_H_ */
 
 #if defined(__cplusplus) || defined(c_plusplus)
 extern "C" {
@@ -25146,8 +26316,6 @@ static const int kDistanceContextBits = 2;
 
 #define HUFFMAN_TABLE_BITS      8
 #define HUFFMAN_TABLE_MASK      0xff
-/* This is a rough estimate, not an exact bound. */
-#define HUFFMAN_MAX_TABLE_SIZE  2048
 
 #define CODE_LENGTH_CODES 18
 static const uint8_t kCodeLengthCodeOrder[CODE_LENGTH_CODES] = {
@@ -25227,187 +26395,229 @@ static void PrintUcharVector(const uint8_t* v, int len) {
   printf("\n");
 }
 
-static int ReadHuffmanCodeLengths(
+static BrotliResult ReadHuffmanCodeLengths(
 	const uint8_t* code_length_code_lengths,
 	int num_symbols, uint8_t* code_lengths,
-	BrotliBitReader* br) {
-  int symbol = 0;
-  uint8_t prev_code_len = kDefaultCodeLength;
-  int repeat = 0;
-  uint8_t repeat_code_len = 0;
-  int space = 32768;
-  HuffmanCode table[32];
+	BrotliState* s) {
+  BrotliBitReader* br = &s->br;
+  switch (s->sub_state[1]) {
+	case BROTLI_STATE_SUB_HUFFMAN_LENGTH_BEGIN:
+	  s->symbol = 0;
+	  s->prev_code_len = kDefaultCodeLength;
+	  s->repeat = 0;
+	  s->repeat_code_len = 0;
+	  s->space = 32768;
 
-  if (!BrotliBuildHuffmanTable(table, 5,
-							   code_length_code_lengths,
-							   CODE_LENGTH_CODES)) {
-	printf("[ReadHuffmanCodeLengths] Building code length tree failed: ");
-	PrintUcharVector(code_length_code_lengths, CODE_LENGTH_CODES);
-	return 0;
+	  if (!BrotliBuildHuffmanTable(s->table, 5,
+								   code_length_code_lengths,
+								   CODE_LENGTH_CODES)) {
+		printf("[ReadHuffmanCodeLengths] Building code length tree failed: ");
+		PrintUcharVector(code_length_code_lengths, CODE_LENGTH_CODES);
+		return BROTLI_RESULT_ERROR;
+	  }
+	  s->sub_state[1] = BROTLI_STATE_SUB_HUFFMAN_LENGTH_SYMBOLS;
+	  /* No break, continue to next state. */
+	case BROTLI_STATE_SUB_HUFFMAN_LENGTH_SYMBOLS:
+	  while (s->symbol < num_symbols && s->space > 0) {
+		const HuffmanCode* p = s->table;
+		uint8_t code_len;
+		if (!BrotliReadMoreInput(br)) {
+		  return BROTLI_RESULT_PARTIAL;
+		}
+		BrotliFillBitWindow(br);
+		p += (br->val_ >> br->bit_pos_) & 31;
+		br->bit_pos_ += p->bits;
+		code_len = (uint8_t)p->value;
+		if (code_len < kCodeLengthRepeatCode) {
+		  s->repeat = 0;
+		  code_lengths[s->symbol++] = code_len;
+		  if (code_len != 0) {
+			s->prev_code_len = code_len;
+			s->space -= 32768 >> code_len;
+		  }
+		} else {
+		  const int extra_bits = code_len - 14;
+		  int old_repeat;
+		  int repeat_delta;
+		  uint8_t new_len = 0;
+		  if (code_len == kCodeLengthRepeatCode) {
+			new_len =  s->prev_code_len;
+		  }
+		  if (s->repeat_code_len != new_len) {
+			s->repeat = 0;
+			s->repeat_code_len = new_len;
+		  }
+		  old_repeat = s->repeat;
+		  if (s->repeat > 0) {
+			s->repeat -= 2;
+			s->repeat <<= extra_bits;
+		  }
+		  s->repeat += (int)BrotliReadBits(br, extra_bits) + 3;
+		  repeat_delta = s->repeat - old_repeat;
+		  if (s->symbol + repeat_delta > num_symbols) {
+			return BROTLI_RESULT_ERROR;
+		  }
+		  memset(&code_lengths[s->symbol], s->repeat_code_len,
+				 (size_t)repeat_delta);
+		  s->symbol += repeat_delta;
+		  if (s->repeat_code_len != 0) {
+			s->space -= repeat_delta << (15 - s->repeat_code_len);
+		  }
+		}
+	  }
+	  if (s->space != 0) {
+		printf("[ReadHuffmanCodeLengths] s->space = %d\n", s->space);
+		return BROTLI_RESULT_ERROR;
+	  }
+	  memset(&code_lengths[s->symbol], 0, (size_t)(num_symbols - s->symbol));
+	  s->sub_state[1] = BROTLI_STATE_SUB_NONE;
+	  return BROTLI_RESULT_SUCCESS;
+	default:
+	  return BROTLI_RESULT_ERROR;
   }
-
-  while (symbol < num_symbols && space > 0) {
-	const HuffmanCode* p = table;
-	uint8_t code_len;
-	if (!BrotliReadMoreInput(br)) {
-	  printf("[ReadHuffmanCodeLengths] Unexpected end of input.\n");
-	  return 0;
-	}
-	BrotliFillBitWindow(br);
-	p += (br->val_ >> br->bit_pos_) & 31;
-	br->bit_pos_ += p->bits;
-	code_len = (uint8_t)p->value;
-	if (code_len < kCodeLengthRepeatCode) {
-	  repeat = 0;
-	  code_lengths[symbol++] = code_len;
-	  if (code_len != 0) {
-		prev_code_len = code_len;
-		space -= 32768 >> code_len;
-	  }
-	} else {
-	  const int extra_bits = code_len - 14;
-	  int old_repeat;
-	  int repeat_delta;
-	  uint8_t new_len = 0;
-	  if (code_len == kCodeLengthRepeatCode) {
-		new_len =  prev_code_len;
-	  }
-	  if (repeat_code_len != new_len) {
-		repeat = 0;
-		repeat_code_len = new_len;
-	  }
-	  old_repeat = repeat;
-	  if (repeat > 0) {
-		repeat -= 2;
-		repeat <<= extra_bits;
-	  }
-	  repeat += (int)BrotliReadBits(br, extra_bits) + 3;
-	  repeat_delta = repeat - old_repeat;
-	  if (symbol + repeat_delta > num_symbols) {
-		return 0;
-	  }
-	  memset(&code_lengths[symbol], repeat_code_len, (size_t)repeat_delta);
-	  symbol += repeat_delta;
-	  if (repeat_code_len != 0) {
-		space -= repeat_delta << (15 - repeat_code_len);
-	  }
-	}
-  }
-  if (space != 0) {
-	printf("[ReadHuffmanCodeLengths] space = %d\n", space);
-	return 0;
-  }
-  memset(&code_lengths[symbol], 0, (size_t)(num_symbols - symbol));
-  return 1;
+  return BROTLI_RESULT_ERROR;
 }
 
-static int ReadHuffmanCode(int alphabet_size,
-						   HuffmanCode* table,
-						   BrotliBitReader* br) {
-  int ok = 1;
+static BrotliResult ReadHuffmanCode(int alphabet_size,
+									HuffmanCode* table,
+									int* opt_table_size,
+									BrotliState* s) {
+  BrotliBitReader* br = &s->br;
+  BrotliResult result = BROTLI_RESULT_SUCCESS;
   int table_size = 0;
-  int simple_code_or_skip;
-  uint8_t* code_lengths = NULL;
-
-  code_lengths =
-	  (uint8_t*)BrotliSafeMalloc((uint64_t)alphabet_size,
-								 sizeof(*code_lengths));
-  if (code_lengths == NULL) {
-	return 0;
-  }
-  if (!BrotliReadMoreInput(br)) {
-	printf("[ReadHuffmanCode] Unexpected end of input.\n");
-	return 0;
-  }
-  /* simple_code_or_skip is used as follows:
-	 1 for simple code;
-	 0 for no skipping, 2 skips 2 code lengths, 3 skips 3 code lengths */
-  simple_code_or_skip = (int)BrotliReadBits(br, 2);
-  BROTLI_LOG_UINT(simple_code_or_skip);
-  if (simple_code_or_skip == 1) {
-	/* Read symbols, codes & code lengths directly. */
-	int i;
-	int max_bits_counter = alphabet_size - 1;
-	int max_bits = 0;
-	int symbols[4] = { 0 };
-	const int num_symbols = (int)BrotliReadBits(br, 2) + 1;
-	while (max_bits_counter) {
-	  max_bits_counter >>= 1;
-	  ++max_bits;
-	}
-	memset(code_lengths, 0, (size_t)alphabet_size);
-	for (i = 0; i < num_symbols; ++i) {
-	  symbols[i] = (int)BrotliReadBits(br, max_bits) % alphabet_size;
-	  code_lengths[symbols[i]] = 2;
-	}
-	code_lengths[symbols[0]] = 1;
-	switch (num_symbols) {
-	  case 1:
-		break;
-	  case 3:
-		ok = ((symbols[0] != symbols[1]) &&
-			  (symbols[0] != symbols[2]) &&
-			  (symbols[1] != symbols[2]));
-		break;
-	  case 2:
-		ok = (symbols[0] != symbols[1]);
-		code_lengths[symbols[1]] = 1;
-		break;
-	  case 4:
-		ok = ((symbols[0] != symbols[1]) &&
-			  (symbols[0] != symbols[2]) &&
-			  (symbols[0] != symbols[3]) &&
-			  (symbols[1] != symbols[2]) &&
-			  (symbols[1] != symbols[3]) &&
-			  (symbols[2] != symbols[3]));
-		if (BrotliReadBits(br, 1)) {
-		  code_lengths[symbols[2]] = 3;
-		  code_lengths[symbols[3]] = 3;
-		} else {
-		  code_lengths[symbols[0]] = 2;
+  /* State machine */
+  for (;;) {
+	switch(s->sub_state[1]) {
+	  case BROTLI_STATE_SUB_NONE:
+		if (!BrotliReadMoreInput(br)) {
+		  return BROTLI_RESULT_PARTIAL;
 		}
-		break;
+		s->code_lengths =
+			(uint8_t*)BrotliSafeMalloc((uint64_t)alphabet_size,
+									   sizeof(*s->code_lengths));
+		if (s->code_lengths == NULL) {
+		  return BROTLI_RESULT_ERROR;
+		}
+		/* simple_code_or_skip is used as follows:
+		   1 for simple code;
+		   0 for no skipping, 2 skips 2 code lengths, 3 skips 3 code lengths */
+		s->simple_code_or_skip = (int)BrotliReadBits(br, 2);
+		BROTLI_LOG_UINT(s->simple_code_or_skip);
+		if (s->simple_code_or_skip == 1) {
+		  /* Read symbols, codes & code lengths directly. */
+		  int i;
+		  int max_bits_counter = alphabet_size - 1;
+		  int max_bits = 0;
+		  int symbols[4] = { 0 };
+		  const int num_symbols = (int)BrotliReadBits(br, 2) + 1;
+		  while (max_bits_counter) {
+			max_bits_counter >>= 1;
+			++max_bits;
+		  }
+		  memset(s->code_lengths, 0, (size_t)alphabet_size);
+		  for (i = 0; i < num_symbols; ++i) {
+			symbols[i] = (int)BrotliReadBits(br, max_bits) % alphabet_size;
+			s->code_lengths[symbols[i]] = 2;
+		  }
+		  s->code_lengths[symbols[0]] = 1;
+		  switch (num_symbols) {
+			case 1:
+			  break;
+			case 3:
+			  if ((symbols[0] == symbols[1]) ||
+				  (symbols[0] == symbols[2]) ||
+				  (symbols[1] == symbols[2])) {
+				return BROTLI_RESULT_ERROR;
+			  }
+			  break;
+			case 2:
+			  if (symbols[0] == symbols[1]) {
+				return BROTLI_RESULT_ERROR;
+			  }
+			  s->code_lengths[symbols[1]] = 1;
+			  break;
+			case 4:
+			  if ((symbols[0] == symbols[1]) ||
+				  (symbols[0] == symbols[2]) ||
+				  (symbols[0] == symbols[3]) ||
+				  (symbols[1] == symbols[2]) ||
+				  (symbols[1] == symbols[3]) ||
+				  (symbols[2] == symbols[3])) {
+				return BROTLI_RESULT_ERROR;
+			  }
+			  if (BrotliReadBits(br, 1)) {
+				s->code_lengths[symbols[2]] = 3;
+				s->code_lengths[symbols[3]] = 3;
+			  } else {
+				s->code_lengths[symbols[0]] = 2;
+			  }
+			  break;
+		  }
+		  BROTLI_LOG_UINT(num_symbols);
+		  s->sub_state[1] = BROTLI_STATE_SUB_HUFFMAN_DONE;
+		  break;
+		} else {  /* Decode Huffman-coded code lengths. */
+		  int i;
+		  int space = 32;
+		  int num_codes = 0;
+		  /* Static Huffman code for the code length code lengths */
+		  static const HuffmanCode huff[16] = {
+			{2, 0}, {2, 4}, {2, 3}, {3, 2}, {2, 0}, {2, 4}, {2, 3}, {4, 1},
+			{2, 0}, {2, 4}, {2, 3}, {3, 2}, {2, 0}, {2, 4}, {2, 3}, {4, 5},
+		  };
+		  for (i = 0; i < CODE_LENGTH_CODES; i++) {
+			s->code_length_code_lengths[i] = 0;
+		  }
+		  for (i = s->simple_code_or_skip;
+			  i < CODE_LENGTH_CODES && space > 0; ++i) {
+			const int code_len_idx = kCodeLengthCodeOrder[i];
+			const HuffmanCode* p = huff;
+			uint8_t v;
+			BrotliFillBitWindow(br);
+			p += (br->val_ >> br->bit_pos_) & 15;
+			br->bit_pos_ += p->bits;
+			v = (uint8_t)p->value;
+			s->code_length_code_lengths[code_len_idx] = v;
+			BROTLI_LOG_ARRAY_INDEX(s->code_length_code_lengths, code_len_idx);
+			if (v != 0) {
+			  space -= (32 >> v);
+			  ++num_codes;
+			}
+		  }
+		  if (!(num_codes == 1 || space == 0)) {
+			return BROTLI_RESULT_ERROR;
+		  }
+		  s->sub_state[1] = BROTLI_STATE_SUB_HUFFMAN_LENGTH_BEGIN;
+		}
+		/* No break, go to next state */
+	  case BROTLI_STATE_SUB_HUFFMAN_LENGTH_BEGIN:
+	  case BROTLI_STATE_SUB_HUFFMAN_LENGTH_SYMBOLS:
+		result = ReadHuffmanCodeLengths(s->code_length_code_lengths,
+										alphabet_size, s->code_lengths, s);
+		if (result != BROTLI_RESULT_SUCCESS) return result;
+		s->sub_state[1] = BROTLI_STATE_SUB_HUFFMAN_DONE;
+		/* No break, go to next state */
+	  case BROTLI_STATE_SUB_HUFFMAN_DONE:
+		table_size = BrotliBuildHuffmanTable(table, HUFFMAN_TABLE_BITS,
+											 s->code_lengths, alphabet_size);
+		if (table_size == 0) {
+		  printf("[ReadHuffmanCode] BuildHuffmanTable failed: ");
+		  PrintUcharVector(s->code_lengths, alphabet_size);
+		  return BROTLI_RESULT_ERROR;
+		}
+		free(s->code_lengths);
+		s->code_lengths = NULL;
+		if (opt_table_size) {
+		  *opt_table_size = table_size;
+		}
+		s->sub_state[1] = BROTLI_STATE_SUB_NONE;
+		return result;
+	  default:
+		return BROTLI_RESULT_ERROR;  /* unknown state */
 	}
-	BROTLI_LOG_UINT(num_symbols);
-  } else {  /* Decode Huffman-coded code lengths. */
-	int i;
-	uint8_t code_length_code_lengths[CODE_LENGTH_CODES] = { 0 };
-	int space = 32;
-	int num_codes = 0;
-	/* Static Huffman code for the code length code lengths */
-	static const HuffmanCode huff[16] = {
-	  {2, 0}, {2, 4}, {2, 3}, {3, 2}, {2, 0}, {2, 4}, {2, 3}, {4, 1},
-	  {2, 0}, {2, 4}, {2, 3}, {3, 2}, {2, 0}, {2, 4}, {2, 3}, {4, 5},
-	};
-	for (i = simple_code_or_skip; i < CODE_LENGTH_CODES && space > 0; ++i) {
-	  const int code_len_idx = kCodeLengthCodeOrder[i];
-	  const HuffmanCode* p = huff;
-	  uint8_t v;
-	  BrotliFillBitWindow(br);
-	  p += (br->val_ >> br->bit_pos_) & 15;
-	  br->bit_pos_ += p->bits;
-	  v = (uint8_t)p->value;
-	  code_length_code_lengths[code_len_idx] = v;
-	  BROTLI_LOG_ARRAY_INDEX(code_length_code_lengths, code_len_idx);
-	  if (v != 0) {
-		space -= (32 >> v);
-		++num_codes;
-	  }
-	}
-	ok = (num_codes == 1 || space == 0) &&
-		ReadHuffmanCodeLengths(code_length_code_lengths,
-							   alphabet_size, code_lengths, br);
   }
-  if (ok) {
-	table_size = BrotliBuildHuffmanTable(table, HUFFMAN_TABLE_BITS,
-										 code_lengths, alphabet_size);
-	if (table_size == 0) {
-	  printf("[ReadHuffmanCode] BuildHuffmanTable failed: ");
-	  PrintUcharVector(code_lengths, alphabet_size);
-	}
-  }
-  free(code_lengths);
-  return table_size;
+
+  return BROTLI_RESULT_ERROR;
 }
 
 static BROTLI_INLINE int ReadBlockLength(const HuffmanCode* table,
@@ -25451,119 +26661,121 @@ static void InverseMoveToFrontTransform(uint8_t* v, int v_len) {
   }
 }
 
-/* Contains a collection of huffman trees with the same alphabet size. */
-typedef struct {
-  int alphabet_size;
-  int num_htrees;
-  HuffmanCode* codes;
-  HuffmanCode** htrees;
-} HuffmanTreeGroup;
-
-static void HuffmanTreeGroupInit(HuffmanTreeGroup* group, int alphabet_size,
-								 int ntrees) {
-  group->alphabet_size = alphabet_size;
-  group->num_htrees = ntrees;
-  group->codes = (HuffmanCode*)malloc(
-	  sizeof(HuffmanCode) * (size_t)(ntrees * HUFFMAN_MAX_TABLE_SIZE));
-  group->htrees = (HuffmanCode**)malloc(sizeof(HuffmanCode*) * (size_t)ntrees);
-}
-
-static void HuffmanTreeGroupRelease(HuffmanTreeGroup* group) {
-  if (group->codes) {
-	free(group->codes);
-  }
-  if (group->htrees) {
-	free(group->htrees);
-  }
-}
-
-static int HuffmanTreeGroupDecode(HuffmanTreeGroup* group,
-								  BrotliBitReader* br) {
-  int i;
-  int table_size;
-  HuffmanCode* next = group->codes;
-  for (i = 0; i < group->num_htrees; ++i) {
-	group->htrees[i] = next;
-	table_size = ReadHuffmanCode(group->alphabet_size, next, br);
-	next += table_size;
-	if (table_size == 0) {
-	  return 0;
-	}
-  }
-  return 1;
-}
-
-static int DecodeContextMap(int context_map_size,
-							int* num_htrees,
-							uint8_t** context_map,
-							BrotliBitReader* br) {
-  int ok = 1;
-  int use_rle_for_zeros;
-  int max_run_length_prefix = 0;
-  HuffmanCode* table;
-  int i;
-  if (!BrotliReadMoreInput(br)) {
-	printf("[DecodeContextMap] Unexpected end of input.\n");
-	return 0;
-  }
-  *num_htrees = DecodeVarLenUint8(br) + 1;
-
-  BROTLI_LOG_UINT(context_map_size);
-  BROTLI_LOG_UINT(*num_htrees);
-
-  *context_map = (uint8_t*)malloc((size_t)context_map_size);
-  if (*context_map == 0) {
-	return 0;
-  }
-  if (*num_htrees <= 1) {
-	memset(*context_map, 0, (size_t)context_map_size);
-	return 1;
-  }
-
-  use_rle_for_zeros = (int)BrotliReadBits(br, 1);
-  if (use_rle_for_zeros) {
-	max_run_length_prefix = (int)BrotliReadBits(br, 4) + 1;
-  }
-  table = (HuffmanCode*)malloc(HUFFMAN_MAX_TABLE_SIZE * sizeof(*table));
-  if (table == NULL) {
-	return 0;
-  }
-  if (!ReadHuffmanCode(*num_htrees + max_run_length_prefix, table, br)) {
-	ok = 0;
-	goto End;
-  }
-  for (i = 0; i < context_map_size;) {
-	int code;
-	if (!BrotliReadMoreInput(br)) {
-	  printf("[DecodeContextMap] Unexpected end of input.\n");
-	  ok = 0;
-	  goto End;
-	}
-	code = ReadSymbol(table, br);
-	if (code == 0) {
-	  (*context_map)[i] = 0;
-	  ++i;
-	} else if (code <= max_run_length_prefix) {
-	  int reps = 1 + (1 << code) + (int)BrotliReadBits(br, code);
-	  while (--reps) {
-		if (i >= context_map_size) {
-		  ok = 0;
-		  goto End;
+static BrotliResult HuffmanTreeGroupDecode(HuffmanTreeGroup* group,
+										   BrotliState* s) {
+  switch (s->sub_state[0]) {
+	case BROTLI_STATE_SUB_NONE:
+	  s->next = group->codes;
+	  s->htree_index = 0;
+	  s->sub_state[0] = BROTLI_STATE_SUB_TREE_GROUP;
+	  /* No break, continue to next state. */
+	case BROTLI_STATE_SUB_TREE_GROUP:
+	  while (s->htree_index < group->num_htrees) {
+		int table_size;
+		BrotliResult result =
+			ReadHuffmanCode(group->alphabet_size, s->next, &table_size, s);
+		if (result != BROTLI_RESULT_SUCCESS) return result;
+		group->htrees[s->htree_index] = s->next;
+		s->next += table_size;
+		if (table_size == 0) {
+		  return BROTLI_RESULT_ERROR;
 		}
-		(*context_map)[i] = 0;
-		++i;
+		++s->htree_index;
 	  }
-	} else {
-	  (*context_map)[i] = (uint8_t)(code - max_run_length_prefix);
-	  ++i;
-	}
+	  s->sub_state[0] = BROTLI_STATE_SUB_NONE;
+	  return BROTLI_RESULT_SUCCESS;
+	default:
+	  return BROTLI_RESULT_ERROR;  /* unknown state */
   }
-  if (BrotliReadBits(br, 1)) {
-	InverseMoveToFrontTransform(*context_map, context_map_size);
+
+  return BROTLI_RESULT_ERROR;
+}
+
+static BrotliResult DecodeContextMap(int context_map_size,
+									 int* num_htrees,
+									 uint8_t** context_map,
+									 BrotliState* s) {
+  BrotliBitReader* br = &s->br;
+  BrotliResult result = BROTLI_RESULT_SUCCESS;
+  int use_rle_for_zeros;
+
+  switch(s->sub_state[0]) {
+	case BROTLI_STATE_SUB_NONE:
+	  if (!BrotliReadMoreInput(br)) {
+		return BROTLI_RESULT_PARTIAL;
+	  }
+	  *num_htrees = DecodeVarLenUint8(br) + 1;
+
+	  s->context_index = 0;
+
+	  BROTLI_LOG_UINT(context_map_size);
+	  BROTLI_LOG_UINT(*num_htrees);
+
+	  *context_map = (uint8_t*)malloc((size_t)context_map_size);
+	  if (*context_map == 0) {
+		return BROTLI_RESULT_ERROR;
+	  }
+	  if (*num_htrees <= 1) {
+		memset(*context_map, 0, (size_t)context_map_size);
+		return BROTLI_RESULT_SUCCESS;
+	  }
+
+	  use_rle_for_zeros = (int)BrotliReadBits(br, 1);
+	  if (use_rle_for_zeros) {
+		s->max_run_length_prefix = (int)BrotliReadBits(br, 4) + 1;
+	  } else {
+		s->max_run_length_prefix = 0;
+	  }
+	  s->context_map_table = (HuffmanCode*)malloc(
+		  BROTLI_HUFFMAN_MAX_TABLE_SIZE * sizeof(*s->context_map_table));
+	  if (s->context_map_table == NULL) {
+		return BROTLI_RESULT_ERROR;
+	  }
+	  s->sub_state[0] = BROTLI_STATE_SUB_CONTEXT_MAP_HUFFMAN;
+	  /* No break, continue to next state. */
+	case BROTLI_STATE_SUB_CONTEXT_MAP_HUFFMAN:
+	  result = ReadHuffmanCode(*num_htrees + s->max_run_length_prefix,
+							   s->context_map_table, NULL, s);
+	  if (result != BROTLI_RESULT_SUCCESS) return result;
+	  s->sub_state[0] = BROTLI_STATE_SUB_CONTEXT_MAPS;
+	  /* No break, continue to next state. */
+	case BROTLI_STATE_SUB_CONTEXT_MAPS:
+	  while (s->context_index < context_map_size) {
+		int code;
+		if (!BrotliReadMoreInput(br)) {
+		  return BROTLI_RESULT_PARTIAL;
+		}
+		code = ReadSymbol(s->context_map_table, br);
+		if (code == 0) {
+		  (*context_map)[s->context_index] = 0;
+		  ++s->context_index;
+		} else if (code <= s->max_run_length_prefix) {
+		  int reps = 1 + (1 << code) + (int)BrotliReadBits(br, code);
+		  while (--reps) {
+			if (s->context_index >= context_map_size) {
+			  return BROTLI_RESULT_ERROR;
+			}
+			(*context_map)[s->context_index] = 0;
+			++s->context_index;
+		  }
+		} else {
+		  (*context_map)[s->context_index] =
+			  (uint8_t)(code - s->max_run_length_prefix);
+		  ++s->context_index;
+		}
+	  }
+	  if (BrotliReadBits(br, 1)) {
+		InverseMoveToFrontTransform(*context_map, context_map_size);
+	  }
+	  free(s->context_map_table);
+	  s->context_map_table = NULL;
+	  s->sub_state[0] = BROTLI_STATE_SUB_NONE;
+	  return BROTLI_RESULT_SUCCESS;
+	default:
+	  return BROTLI_RESULT_ERROR;  /* unknown state */
   }
-End:
-  free(table);
-  return ok;
+
+  return BROTLI_RESULT_ERROR;
 }
 
 static BROTLI_INLINE void DecodeBlockType(const int max_block_type,
@@ -25575,7 +26787,8 @@ static BROTLI_INLINE void DecodeBlockType(const int max_block_type,
 										  BrotliBitReader* br) {
   int* ringbuffer = ringbuffers + tree_type * 2;
   int* index = indexes + tree_type;
-  int type_code = ReadSymbol(&trees[tree_type * HUFFMAN_MAX_TABLE_SIZE], br);
+  int type_code =
+	  ReadSymbol(&trees[tree_type * BROTLI_HUFFMAN_MAX_TABLE_SIZE], br);
   int block_type;
   if (type_code == 0) {
 	block_type = ringbuffer[*index & 1];
@@ -25590,6 +26803,22 @@ static BROTLI_INLINE void DecodeBlockType(const int max_block_type,
   block_types[tree_type] = block_type;
   ringbuffer[(*index) & 1] = block_type;
   ++(*index);
+}
+
+/* Decodes the block type and updates the state for literal context. */
+static BROTLI_INLINE void DecodeBlockTypeWithContext(BrotliState* s,
+													 BrotliBitReader* br) {
+  DecodeBlockType(s->num_block_types[0],
+				  s->block_type_trees, 0,
+				  s->block_type, s->block_type_rb,
+				  s->block_type_rb_index, br);
+  s->block_length[0] = ReadBlockLength(s->block_len_trees, br);
+  s->context_offset = s->block_type[0] << kLiteralContextBits;
+  s->context_map_slice = s->context_map + s->context_offset;
+  s->literal_htree_index = s->context_map_slice[0];
+  s->context_mode = s->context_modes[s->block_type[0]];
+  s->context_lookup_offset1 = kContextLookupOffsets[s->context_mode];
+  s->context_lookup_offset2 = kContextLookupOffsets[s->context_mode + 1];
 }
 
 /* Copy len bytes from src to dst. It can write up to ten extra bytes
@@ -25627,7 +26856,7 @@ static BROTLI_INLINE void IncrementalCopyFastPath(
 	uint8_t* dst, const uint8_t* src, int len) {
   if (src < dst) {
 	while (dst - src < 8) {
-	  UNALIGNED_COPY64(dst, src);
+	  UNALIGNED_MOVE64(dst, src);
 	  len -= (int)(dst - src);
 	  dst += dst - src;
 	}
@@ -25640,571 +26869,831 @@ static BROTLI_INLINE void IncrementalCopyFastPath(
   }
 }
 
-int CopyUncompressedBlockToOutput(BrotliOutput output, int len, int pos,
-								  uint8_t* ringbuffer, int ringbuffer_mask,
-								  BrotliBitReader* br) {
-  const int rb_size = ringbuffer_mask + 1;
-  uint8_t* ringbuffer_end = ringbuffer + rb_size;
-  int rb_pos = pos & ringbuffer_mask;
-  int br_pos = br->pos_ & BROTLI_IBUF_MASK;
-  int nbytes;
+BrotliResult CopyUncompressedBlockToOutput(BrotliOutput output,
+										   int pos,
+										   BrotliState* s) {
+  const int rb_size = s->ringbuffer_mask + 1;
+  uint8_t* ringbuffer_end = s->ringbuffer + rb_size;
+  int rb_pos = pos & s->ringbuffer_mask;
+  int br_pos = s->br.pos_ & BROTLI_IBUF_MASK;
+  uint32_t remaining_bits;
+  int num_read;
 
-  /* For short lengths copy byte-by-byte */
-  if (len < 8 || br->bit_pos_ + (uint32_t)(len << 3) < br->bit_end_pos_) {
-	while (len-- > 0) {
-	  if (!BrotliReadMoreInput(br)) {
-		return 0;
-	  }
-	  ringbuffer[rb_pos++]= (uint8_t)BrotliReadBits(br, 8);
-	  if (rb_pos == rb_size) {
-		if (BrotliWrite(output, ringbuffer, (size_t)rb_size) < rb_size) {
-		  return 0;
+  /* State machine */
+  for (;;) {
+	switch (s->sub_state[0]) {
+	  case BROTLI_STATE_SUB_NONE:
+		/* For short lengths copy byte-by-byte */
+		if (s->meta_block_remaining_len < 8 || s->br.bit_pos_ +
+			(uint32_t)(s->meta_block_remaining_len << 3) < s->br.bit_end_pos_) {
+		  s->sub_state[0] = BROTLI_STATE_SUB_UNCOMPRESSED_SHORT;
+		  break;
 		}
-		rb_pos = 0;
-	  }
+		if (s->br.bit_end_pos_ < 64) {
+		  return BROTLI_RESULT_ERROR;
+		}
+		/*
+		 * Copy remaining 0-4 in 32-bit case or 0-8 bytes in the 64-bit case
+		 * from s->br.val_ to ringbuffer.
+		 */
+#if (BROTLI_USE_64_BITS)
+		remaining_bits = 64;
+#else
+		remaining_bits = 32;
+#endif
+		while (s->br.bit_pos_ < remaining_bits) {
+		  s->ringbuffer[rb_pos] = (uint8_t)(s->br.val_ >> s->br.bit_pos_);
+		  s->br.bit_pos_ += 8;
+		  ++rb_pos;
+		  --s->meta_block_remaining_len;
+		}
+
+		/* Copy remaining bytes from s->br.buf_ to ringbuffer. */
+		s->nbytes = (int)(s->br.bit_end_pos_ - s->br.bit_pos_) >> 3;
+		if (br_pos + s->nbytes > BROTLI_IBUF_MASK) {
+		  int tail = BROTLI_IBUF_MASK + 1 - br_pos;
+		  memcpy(&s->ringbuffer[rb_pos], &s->br.buf_[br_pos], (size_t)tail);
+		  s->nbytes -= tail;
+		  rb_pos += tail;
+		  s->meta_block_remaining_len -= tail;
+		  br_pos = 0;
+		}
+		memcpy(&s->ringbuffer[rb_pos], &s->br.buf_[br_pos], (size_t)s->nbytes);
+		rb_pos += s->nbytes;
+		s->meta_block_remaining_len -= s->nbytes;
+
+		/* If we wrote past the logical end of the ringbuffer, copy the tail of
+		   the ringbuffer to its beginning and flush the ringbuffer to the
+		   output. */
+		if (rb_pos >= rb_size) {
+		  if (BrotliWrite(output, s->ringbuffer, (size_t)rb_size) < rb_size) {
+			return BROTLI_RESULT_ERROR;
+		  }
+		  rb_pos -= rb_size;
+		  s->meta_block_remaining_len += rb_size;
+		  memcpy(s->ringbuffer, ringbuffer_end, (size_t)rb_pos);
+		}
+		s->sub_state[0] = BROTLI_STATE_SUB_UNCOMPRESSED_FILL;
+		break;
+	  case BROTLI_STATE_SUB_UNCOMPRESSED_SHORT:
+		while (s->meta_block_remaining_len > 0) {
+		  if (!BrotliReadMoreInput(&s->br)) {
+			return BROTLI_RESULT_PARTIAL;
+		  }
+		  s->ringbuffer[rb_pos++] = (uint8_t)BrotliReadBits(&s->br, 8);
+		  if (rb_pos == rb_size) {
+			if (BrotliWrite(output, s->ringbuffer, (size_t)rb_size) < rb_size) {
+			  return BROTLI_RESULT_ERROR;
+			}
+			rb_pos = 0;
+		  }
+		  s->meta_block_remaining_len--;
+		}
+		s->sub_state[0] = BROTLI_STATE_SUB_NONE;
+		return BROTLI_RESULT_SUCCESS;
+	  case BROTLI_STATE_SUB_UNCOMPRESSED_FILL:
+		/* If we have more to copy than the remaining size of the ringbuffer,
+		   then we first fill the ringbuffer from the input and then flush the
+		   ringbuffer to the output */
+		while (rb_pos + s->meta_block_remaining_len >= rb_size) {
+		  s->nbytes = rb_size - rb_pos;
+		  if (BrotliRead(s->br.input_, &s->ringbuffer[rb_pos],
+						 (size_t)s->nbytes) < s->nbytes) {
+			return BROTLI_RESULT_PARTIAL;
+		  }
+		  if (BrotliWrite(output, s->ringbuffer, (size_t)rb_size) < s->nbytes) {
+			return BROTLI_RESULT_ERROR;
+		  }
+		  s->meta_block_remaining_len -= s->nbytes;
+		  rb_pos = 0;
+		}
+		s->sub_state[0] = BROTLI_STATE_SUB_UNCOMPRESSED_COPY;
+		/* No break, continue to next state */
+	  case BROTLI_STATE_SUB_UNCOMPRESSED_COPY:
+		/* Copy straight from the input onto the ringbuffer. The ringbuffer will
+		   be flushed to the output at a later time. */
+		num_read = BrotliRead(s->br.input_, &s->ringbuffer[rb_pos],
+							  (size_t)s->meta_block_remaining_len);
+		s->meta_block_remaining_len -= num_read;
+		if (s->meta_block_remaining_len > 0) {
+		  return BROTLI_RESULT_PARTIAL;
+		}
+
+		/* Restore the state of the bit reader. */
+		BrotliInitBitReader(&s->br, s->br.input_, s->br.finish_);
+		s->sub_state[0] = BROTLI_STATE_SUB_UNCOMPRESSED_WARMUP;
+		/* No break, continue to next state */
+	  case BROTLI_STATE_SUB_UNCOMPRESSED_WARMUP:
+		if (!BrotliWarmupBitReader(&s->br)) {
+		  return BROTLI_RESULT_PARTIAL;
+		}
+		s->sub_state[0] = BROTLI_STATE_SUB_NONE;
+		return BROTLI_RESULT_SUCCESS;
+		break;
+	  default:
+		return BROTLI_RESULT_ERROR;  /* Unknown state */
 	}
-	return 1;
   }
-
-  if (br->bit_end_pos_ < 64) {
-	return 0;
-  }
-
-  /* Copy remaining 0-8 bytes from br->val_ to ringbuffer. */
-  while (br->bit_pos_ < 64) {
-	ringbuffer[rb_pos] = (uint8_t)(br->val_ >> br->bit_pos_);
-	br->bit_pos_ += 8;
-	++rb_pos;
-	--len;
-  }
-
-  /* Copy remaining bytes from br->buf_ to ringbuffer. */
-  nbytes = (int)(br->bit_end_pos_ - br->bit_pos_) >> 3;
-  if (br_pos + nbytes > BROTLI_IBUF_MASK) {
-	int tail = BROTLI_IBUF_MASK + 1 - br_pos;
-	memcpy(&ringbuffer[rb_pos], &br->buf_[br_pos], (size_t)tail);
-	nbytes -= tail;
-	rb_pos += tail;
-	len -= tail;
-	br_pos = 0;
-  }
-  memcpy(&ringbuffer[rb_pos], &br->buf_[br_pos], (size_t)nbytes);
-  rb_pos += nbytes;
-  len -= nbytes;
-
-  /* If we wrote past the logical end of the ringbuffer, copy the tail of the
-	 ringbuffer to its beginning and flush the ringbuffer to the output. */
-  if (rb_pos >= rb_size) {
-	if (BrotliWrite(output, ringbuffer, (size_t)rb_size) < rb_size) {
-	  return 0;
-	}
-	rb_pos -= rb_size;
-	memcpy(ringbuffer, ringbuffer_end, (size_t)rb_pos);
-  }
-
-  /* If we have more to copy than the remaining size of the ringbuffer, then we
-	 first fill the ringbuffer from the input and then flush the ringbuffer to
-	 the output */
-  while (rb_pos + len >= rb_size) {
-	nbytes = rb_size - rb_pos;
-	if (BrotliRead(br->input_, &ringbuffer[rb_pos], (size_t)nbytes) < nbytes ||
-		BrotliWrite(output, ringbuffer, (size_t)rb_size) < nbytes) {
-	  return 0;
-	}
-	len -= nbytes;
-	rb_pos = 0;
-  }
-
-  /* Copy straight from the input onto the ringbuffer. The ringbuffer will be
-	 flushed to the output at a later time. */
-  if (BrotliRead(br->input_, &ringbuffer[rb_pos], (size_t)len) < len) {
-	return 0;
-  }
-
-  /* Restore the state of the bit reader. */
-  BrotliInitBitReader(br, br->input_);
-  return 1;
+  return BROTLI_RESULT_ERROR;
 }
 
-int BrotliDecompressedSize(size_t encoded_size,
-						   const uint8_t* encoded_buffer,
-						   size_t* decoded_size) {
-  BrotliMemInput memin;
-  BrotliInput input = BrotliInitMemInput(encoded_buffer, encoded_size, &memin);
-  BrotliBitReader br;
-  int meta_block_len;
-  int input_end;
-  int is_uncompressed;
-  if (!BrotliInitBitReader(&br, input)) {
-	return 0;
+BrotliResult BrotliDecompressedSize(size_t encoded_size,
+									const uint8_t* encoded_buffer,
+									size_t* decoded_size) {
+  int i;
+  uint64_t val = 0;
+  int bit_pos = 0;
+  int is_last;
+  int is_uncompressed = 0;
+  int size_nibbles;
+  int meta_block_len = 0;
+  if (encoded_size == 0) {
+	return BROTLI_RESULT_ERROR;
   }
-  DecodeWindowBits(&br);
-  DecodeMetaBlockLength(&br, &meta_block_len, &input_end, &is_uncompressed);
-  if (!input_end) {
-	return 0;
+  /* Look at the first 8 bytes, it is enough to decode the length of the first
+	 meta-block. */
+  for (i = 0; (size_t)i < encoded_size && i < 8; ++i) {
+	val |= (uint64_t)encoded_buffer[i] << (8 * i);
   }
-  *decoded_size = (size_t)meta_block_len;
-  return 1;
+  /* Skip the window bits. */
+  bit_pos += (val & 1) ? 4 : 1;
+  /* Decode the ISLAST bit. */
+  is_last = (val >> bit_pos) & 1;
+  ++bit_pos;
+  if (is_last) {
+	/* Decode the ISEMPTY bit, if it is set to 1, we are done. */
+	if ((val >> bit_pos) & 1) {
+	  *decoded_size = 0;
+	  return BROTLI_RESULT_SUCCESS;
+	}
+	++bit_pos;
+  }
+  /* Decode the length of the first meta-block. */
+  size_nibbles = (int)((val >> bit_pos) & 3) + 4;
+  bit_pos += 2;
+  for (i = 0; i < size_nibbles; ++i) {
+	meta_block_len |= (int)((val >> bit_pos) & 0xf) << (4 * i);
+	bit_pos += 4;
+  }
+  ++meta_block_len;
+  if (is_last) {
+	/* If this meta-block is the only one, we are done. */
+	*decoded_size = (size_t)meta_block_len;
+	return BROTLI_RESULT_SUCCESS;
+  }
+  is_uncompressed = (val >> bit_pos) & 1;
+  ++bit_pos;
+  if (is_uncompressed) {
+	/* If the first meta-block is uncompressed, we skip it and look at the
+	   first two bits (ISLAST and ISEMPTY) of the next meta-block, and if
+	   both are set to 1, we have a stream with an uncompressed meta-block
+	   followed by an empty one, so the decompressed size is the size of the
+	   first meta-block. */
+	size_t offset = (size_t)((bit_pos + 7) >> 3) + (size_t)meta_block_len;
+	if (offset < encoded_size && ((encoded_buffer[offset] & 3) == 3)) {
+	  *decoded_size = (size_t)meta_block_len;
+	  return BROTLI_RESULT_SUCCESS;
+	}
+  }
+  return BROTLI_RESULT_ERROR;
 }
 
-int BrotliDecompressBuffer(size_t encoded_size,
-						   const uint8_t* encoded_buffer,
-						   size_t* decoded_size,
-						   uint8_t* decoded_buffer) {
+BrotliResult BrotliDecompressBuffer(size_t encoded_size,
+									const uint8_t* encoded_buffer,
+									size_t* decoded_size,
+									uint8_t* decoded_buffer) {
   BrotliMemInput memin;
   BrotliInput in = BrotliInitMemInput(encoded_buffer, encoded_size, &memin);
   BrotliMemOutput mout;
   BrotliOutput out = BrotliInitMemOutput(decoded_buffer, *decoded_size, &mout);
-  int success = BrotliDecompress(in, out);
+  BrotliResult success = BrotliDecompress(in, out);
   *decoded_size = mout.pos;
   return success;
 }
 
-int BrotliDecompress(BrotliInput input, BrotliOutput output) {
-  int ok = 1;
-  int i;
-  int pos = 0;
-  int input_end = 0;
-  int window_bits = 0;
-  int max_backward_distance;
-  int max_distance = 0;
-  int ringbuffer_size;
-  int ringbuffer_mask;
-  uint8_t* ringbuffer;
-  uint8_t* ringbuffer_end;
-  /* This ring buffer holds a few past copy distances that will be used by */
-  /* some special distance codes. */
-  int dist_rb[4] = { 16, 15, 11, 4 };
-  int dist_rb_idx = 0;
-  /* The previous 2 bytes used for context. */
-  uint8_t prev_byte1 = 0;
-  uint8_t prev_byte2 = 0;
-  HuffmanTreeGroup hgroup[3];
-  HuffmanCode* block_type_trees = NULL;
-  HuffmanCode* block_len_trees = NULL;
-  BrotliBitReader br;
+BrotliResult BrotliDecompress(BrotliInput input, BrotliOutput output) {
+  BrotliState s;
+  BrotliResult result;
+  BrotliStateInit(&s);
+  result = BrotliDecompressStreaming(input, output, 1, &s);
+  if (result == BROTLI_RESULT_PARTIAL) {
+	/* Not ok: it didn't finish even though this is a non-streaming function. */
+	result = BROTLI_RESULT_ERROR;
+  }
+  BrotliStateCleanup(&s);
+  return result;
+}
+
+BrotliResult BrotliDecompressBufferStreaming(size_t* available_in,
+											 const uint8_t** next_in,
+											 int finish,
+											 size_t* available_out,
+											 uint8_t** next_out,
+											 size_t* total_out,
+											 BrotliState* s) {
+  BrotliResult result;
+  BrotliMemInput memin;
+  BrotliInput in = BrotliInitMemInput(*next_in, *available_in, &memin);
+  BrotliMemOutput memout;
+  BrotliOutput out = BrotliInitMemOutput(*next_out, *available_out, &memout);
+
+  result = BrotliDecompressStreaming(in, out, finish, s);
+
+  /* The current implementation reads everything, so 0 bytes are available. */
+  *next_in += memin.pos;
+  *available_in -= memin.pos;
+
+  /* Update the output position to where we write next. */
+  *next_out += memout.pos;
+  *available_out -= memout.pos;
+  *total_out += memout.pos;
+
+  return result;
+}
+
+BrotliResult BrotliDecompressStreaming(BrotliInput input, BrotliOutput output,
+									   int finish, BrotliState* s) {
+  uint8_t context;
+  int pos = s->pos;
+  int i = s->loop_counter;
+  BrotliResult result = BROTLI_RESULT_SUCCESS;
+  BrotliBitReader* br = &s->br;
+  int initial_remaining_len;
+  int bytes_copied;
 
   /* We need the slack region for the following reasons:
 	   - always doing two 8-byte copies for fast backward copying
 	   - transforms
-	   - flushing the input ringbuffer when decoding uncompressed blocks */
+	   - flushing the input s->ringbuffer when decoding uncompressed blocks */
   static const int kRingBufferWriteAheadSlack = 128 + BROTLI_READ_SIZE;
 
-  if (!BrotliInitBitReader(&br, input)) {
-	return 0;
-  }
+  s->br.finish_ = finish;
 
-  /* Decode window size. */
-  window_bits = DecodeWindowBits(&br);
-  max_backward_distance = (1 << window_bits) - 16;
-
-  ringbuffer_size = 1 << window_bits;
-  ringbuffer_mask = ringbuffer_size - 1;
-  ringbuffer = (uint8_t*)malloc((size_t)(ringbuffer_size +
-										 kRingBufferWriteAheadSlack +
-										 kMaxDictionaryWordLength));
-  if (!ringbuffer) {
-	ok = 0;
-  }
-  ringbuffer_end = ringbuffer + ringbuffer_size;
-
-  if (ok) {
-	block_type_trees = (HuffmanCode*)malloc(
-		3 * HUFFMAN_MAX_TABLE_SIZE * sizeof(HuffmanCode));
-	block_len_trees = (HuffmanCode*)malloc(
-		3 * HUFFMAN_MAX_TABLE_SIZE * sizeof(HuffmanCode));
-	if (block_type_trees == NULL || block_len_trees == NULL) {
-	  ok = 0;
-	}
-  }
-
-  while (!input_end && ok) {
-	int meta_block_remaining_len = 0;
-	int is_uncompressed;
-	int block_length[3] = { 1 << 28, 1 << 28, 1 << 28 };
-	int block_type[3] = { 0 };
-	int num_block_types[3] = { 1, 1, 1 };
-	int block_type_rb[6] = { 0, 1, 0, 1, 0, 1 };
-	int block_type_rb_index[3] = { 0 };
-	int distance_postfix_bits;
-	int num_direct_distance_codes;
-	int distance_postfix_mask;
-	int num_distance_codes;
-	uint8_t* context_map = NULL;
-	uint8_t* context_modes = NULL;
-	int num_literal_htrees;
-	uint8_t* dist_context_map = NULL;
-	int num_dist_htrees;
-	int context_offset = 0;
-	uint8_t* context_map_slice = NULL;
-	uint8_t literal_htree_index = 0;
-	int dist_context_offset = 0;
-	uint8_t* dist_context_map_slice = NULL;
-	uint8_t dist_htree_index = 0;
-	int context_lookup_offset1 = 0;
-	int context_lookup_offset2 = 0;
-	uint8_t context_mode;
-	HuffmanCode* htree_command;
-
-	for (i = 0; i < 3; ++i) {
-	  hgroup[i].codes = NULL;
-	  hgroup[i].htrees = NULL;
+  /* State machine */
+  for (;;) {
+	if (result != BROTLI_RESULT_SUCCESS) {
+	  if (result == BROTLI_RESULT_PARTIAL && finish) {
+		printf("Unexpected end of input. State: %d\n", s->state);
+		result = BROTLI_RESULT_ERROR;
+	  }
+	  break;  /* Fail, or partial data. */
 	}
 
-	if (!BrotliReadMoreInput(&br)) {
-	  printf("[BrotliDecompress] Unexpected end of input.\n");
-	  ok = 0;
-	  goto End;
-	}
-	BROTLI_LOG_UINT(pos);
-	DecodeMetaBlockLength(&br, &meta_block_remaining_len,
-						  &input_end, &is_uncompressed);
-	BROTLI_LOG_UINT(meta_block_remaining_len);
-	if (meta_block_remaining_len == 0) {
-	  goto End;
-	}
-	if (is_uncompressed) {
-	  BrotliSetBitPos(&br, (br.bit_pos_ + 7) & (uint32_t)(~7UL));
-	  ok = CopyUncompressedBlockToOutput(output, meta_block_remaining_len, pos,
-										 ringbuffer, ringbuffer_mask, &br);
-	  pos += meta_block_remaining_len;
-	  goto End;
-	}
-	for (i = 0; i < 3; ++i) {
-	  num_block_types[i] = DecodeVarLenUint8(&br) + 1;
-	  if (num_block_types[i] >= 2) {
-		if (!ReadHuffmanCode(num_block_types[i] + 2,
-							 &block_type_trees[i * HUFFMAN_MAX_TABLE_SIZE],
-							 &br) ||
-			!ReadHuffmanCode(kNumBlockLengthCodes,
-							 &block_len_trees[i * HUFFMAN_MAX_TABLE_SIZE],
-							 &br)) {
-		  ok = 0;
-		  goto End;
+	switch (s->state) {
+	  case BROTLI_STATE_UNINITED:
+		pos = 0;
+		s->input_end = 0;
+		s->window_bits = 0;
+		s->max_distance = 0;
+		s->dist_rb[0] = 16;
+		s->dist_rb[1] = 15;
+		s->dist_rb[2] = 11;
+		s->dist_rb[3] = 4;
+		s->dist_rb_idx = 0;
+		s->prev_byte1 = 0;
+		s->prev_byte2 = 0;
+		s->block_type_trees = NULL;
+		s->block_len_trees = NULL;
+
+		BrotliInitBitReader(br, input, finish);
+
+		s->state = BROTLI_STATE_BITREADER_WARMUP;
+		/* No break, continue to next state */
+	  case BROTLI_STATE_BITREADER_WARMUP:
+		if (!BrotliWarmupBitReader(br)) {
+		  result = BROTLI_RESULT_PARTIAL;
+		  break;
 		}
-		block_length[i] = ReadBlockLength(
-			&block_len_trees[i * HUFFMAN_MAX_TABLE_SIZE], &br);
-		block_type_rb_index[i] = 1;
-	  }
-	}
+		/* Decode window size. */
+		s->window_bits = DecodeWindowBits(br);
+		s->max_backward_distance = (1 << s->window_bits) - 16;
 
-	BROTLI_LOG_UINT(num_block_types[0]);
-	BROTLI_LOG_UINT(num_block_types[1]);
-	BROTLI_LOG_UINT(num_block_types[2]);
-	BROTLI_LOG_UINT(block_length[0]);
-	BROTLI_LOG_UINT(block_length[1]);
-	BROTLI_LOG_UINT(block_length[2]);
-
-	if (!BrotliReadMoreInput(&br)) {
-	  printf("[BrotliDecompress] Unexpected end of input.\n");
-	  ok = 0;
-	  goto End;
-	}
-	distance_postfix_bits = (int)BrotliReadBits(&br, 2);
-	num_direct_distance_codes = NUM_DISTANCE_SHORT_CODES +
-		((int)BrotliReadBits(&br, 4) << distance_postfix_bits);
-	distance_postfix_mask = (1 << distance_postfix_bits) - 1;
-	num_distance_codes = (num_direct_distance_codes +
-						  (48 << distance_postfix_bits));
-	context_modes = (uint8_t*)malloc((size_t)num_block_types[0]);
-	if (context_modes == 0) {
-	  ok = 0;
-	  goto End;
-	}
-	for (i = 0; i < num_block_types[0]; ++i) {
-	  context_modes[i] = (uint8_t)(BrotliReadBits(&br, 2) << 1);
-	  BROTLI_LOG_ARRAY_INDEX(context_modes, i);
-	}
-	BROTLI_LOG_UINT(num_direct_distance_codes);
-	BROTLI_LOG_UINT(distance_postfix_bits);
-
-	if (!DecodeContextMap(num_block_types[0] << kLiteralContextBits,
-						  &num_literal_htrees, &context_map, &br) ||
-		!DecodeContextMap(num_block_types[2] << kDistanceContextBits,
-						  &num_dist_htrees, &dist_context_map, &br)) {
-	  ok = 0;
-	  goto End;
-	}
-
-	HuffmanTreeGroupInit(&hgroup[0], kNumLiteralCodes, num_literal_htrees);
-	HuffmanTreeGroupInit(&hgroup[1], kNumInsertAndCopyCodes,
-						 num_block_types[1]);
-	HuffmanTreeGroupInit(&hgroup[2], num_distance_codes, num_dist_htrees);
-
-	for (i = 0; i < 3; ++i) {
-	  if (!HuffmanTreeGroupDecode(&hgroup[i], &br)) {
-		ok = 0;
-		goto End;
-	  }
-	}
-
-	context_map_slice = context_map;
-	dist_context_map_slice = dist_context_map;
-	context_mode = context_modes[block_type[0]];
-	context_lookup_offset1 = kContextLookupOffsets[context_mode];
-	context_lookup_offset2 = kContextLookupOffsets[context_mode + 1];
-	htree_command = hgroup[1].htrees[0];
-
-	while (meta_block_remaining_len > 0) {
-	  int cmd_code;
-	  int range_idx;
-	  int insert_code;
-	  int copy_code;
-	  int insert_length;
-	  int copy_length;
-	  int distance_code;
-	  int distance;
-	  uint8_t context;
-	  int j;
-	  const uint8_t* copy_src;
-	  uint8_t* copy_dst;
-	  if (!BrotliReadMoreInput(&br)) {
-		printf("[BrotliDecompress] Unexpected end of input.\n");
-		ok = 0;
-		goto End;
-	  }
-	  if (block_length[1] == 0) {
-		DecodeBlockType(num_block_types[1],
-						block_type_trees, 1, block_type, block_type_rb,
-						block_type_rb_index, &br);
-		block_length[1] = ReadBlockLength(
-			&block_len_trees[HUFFMAN_MAX_TABLE_SIZE], &br);
-		htree_command = hgroup[1].htrees[block_type[1]];
-	  }
-	  --block_length[1];
-	  cmd_code = ReadSymbol(htree_command, &br);
-	  range_idx = cmd_code >> 6;
-	  if (range_idx >= 2) {
-		range_idx -= 2;
-		distance_code = -1;
-	  } else {
-		distance_code = 0;
-	  }
-	  insert_code = kInsertRangeLut[range_idx] + ((cmd_code >> 3) & 7);
-	  copy_code = kCopyRangeLut[range_idx] + (cmd_code & 7);
-	  insert_length = kInsertLengthPrefixCode[insert_code].offset +
-		  (int)BrotliReadBits(&br, kInsertLengthPrefixCode[insert_code].nbits);
-	  copy_length = kCopyLengthPrefixCode[copy_code].offset +
-		  (int)BrotliReadBits(&br, kCopyLengthPrefixCode[copy_code].nbits);
-	  BROTLI_LOG_UINT(insert_length);
-	  BROTLI_LOG_UINT(copy_length);
-	  BROTLI_LOG_UINT(distance_code);
-	  for (j = 0; j < insert_length; ++j) {
-		if (!BrotliReadMoreInput(&br)) {
-		  printf("[BrotliDecompress] Unexpected end of input.\n");
-		  ok = 0;
-		  goto End;
+		s->ringbuffer_size = 1 << s->window_bits;
+		s->ringbuffer_mask = s->ringbuffer_size - 1;
+		s->ringbuffer = (uint8_t*)malloc((size_t)(s->ringbuffer_size +
+											   kRingBufferWriteAheadSlack +
+											   kMaxDictionaryWordLength));
+		if (!s->ringbuffer) {
+		  result = BROTLI_RESULT_ERROR;
+		  break;
 		}
-		if (block_length[0] == 0) {
-		  DecodeBlockType(num_block_types[0],
-						  block_type_trees, 0, block_type, block_type_rb,
-						  block_type_rb_index, &br);
-		  block_length[0] = ReadBlockLength(block_len_trees, &br);
-		  context_offset = block_type[0] << kLiteralContextBits;
-		  context_map_slice = context_map + context_offset;
-		  context_mode = context_modes[block_type[0]];
-		  context_lookup_offset1 = kContextLookupOffsets[context_mode];
-		  context_lookup_offset2 = kContextLookupOffsets[context_mode + 1];
+		s->ringbuffer_end = s->ringbuffer + s->ringbuffer_size;
+
+		s->block_type_trees = (HuffmanCode*)malloc(
+			3 * BROTLI_HUFFMAN_MAX_TABLE_SIZE * sizeof(HuffmanCode));
+		s->block_len_trees = (HuffmanCode*)malloc(
+			3 * BROTLI_HUFFMAN_MAX_TABLE_SIZE * sizeof(HuffmanCode));
+		if (s->block_type_trees == NULL || s->block_len_trees == NULL) {
+		  result = BROTLI_RESULT_ERROR;
+		  break;
 		}
-		context = (kContextLookup[context_lookup_offset1 + prev_byte1] |
-				   kContextLookup[context_lookup_offset2 + prev_byte2]);
-		BROTLI_LOG_UINT(context);
-		literal_htree_index = context_map_slice[context];
-		--block_length[0];
-		prev_byte2 = prev_byte1;
-		prev_byte1 = (uint8_t)ReadSymbol(hgroup[0].htrees[literal_htree_index],
-										 &br);
-		ringbuffer[pos & ringbuffer_mask] = prev_byte1;
-		BROTLI_LOG_UINT(literal_htree_index);
-		BROTLI_LOG_ARRAY_INDEX(ringbuffer, pos & ringbuffer_mask);
-		if ((pos & ringbuffer_mask) == ringbuffer_mask) {
-		  if (BrotliWrite(output, ringbuffer, (size_t)ringbuffer_size) < 0) {
-			ok = 0;
-			goto End;
+
+		s->state = BROTLI_STATE_METABLOCK_BEGIN;
+		/* No break, continue to next state */
+	  case BROTLI_STATE_METABLOCK_BEGIN:
+		if (!BrotliReadMoreInput(br)) {
+		  result = BROTLI_RESULT_PARTIAL;
+		  break;
+		}
+		if (s->input_end) {
+		  s->state = BROTLI_STATE_DONE;
+		  break;
+		}
+		s->meta_block_remaining_len = 0;
+		s->block_length[0] = 1 << 28;
+		s->block_length[1] = 1 << 28;
+		s->block_length[2] = 1 << 28;
+		s->block_type[0] = 0;
+		s->num_block_types[0] = 1;
+		s->num_block_types[1] = 1;
+		s->num_block_types[2] = 1;
+		s->block_type_rb[0] = 0;
+		s->block_type_rb[1] = 1;
+		s->block_type_rb[2] = 0;
+		s->block_type_rb[3] = 1;
+		s->block_type_rb[4] = 0;
+		s->block_type_rb[5] = 1;
+		s->block_type_rb_index[0] = 0;
+		s->context_map = NULL;
+		s->context_modes = NULL;
+		s->dist_context_map = NULL;
+		s->context_offset = 0;
+		s->context_map_slice = NULL;
+		s->literal_htree_index = 0;
+		s->dist_context_offset = 0;
+		s->dist_context_map_slice = NULL;
+		s->dist_htree_index = 0;
+		s->context_lookup_offset1 = 0;
+		s->context_lookup_offset2 = 0;
+		for (i = 0; i < 3; ++i) {
+		  s->hgroup[i].codes = NULL;
+		  s->hgroup[i].htrees = NULL;
+		}
+		s->state = BROTLI_STATE_METABLOCK_HEADER_1;
+		/* No break, continue to next state */
+	  case BROTLI_STATE_METABLOCK_HEADER_1:
+		if (!BrotliReadMoreInput(br)) {
+		  result = BROTLI_RESULT_PARTIAL;
+		  break;
+		}
+		BROTLI_LOG_UINT(pos);
+		DecodeMetaBlockLength(br, &s->meta_block_remaining_len,
+							  &s->input_end, &s->is_uncompressed);
+		BROTLI_LOG_UINT(s->meta_block_remaining_len);
+		if (s->meta_block_remaining_len == 0) {
+		  s->state = BROTLI_STATE_METABLOCK_DONE;
+		  break;
+		}
+		if (s->is_uncompressed) {
+		  BrotliSetBitPos(br, (s->br.bit_pos_ + 7) & (uint32_t)(~7UL));
+		  s->state = BROTLI_STATE_UNCOMPRESSED;
+		  break;
+		}
+		i = 0;
+		s->state = BROTLI_STATE_HUFFMAN_CODE_0;
+		break;
+	  case BROTLI_STATE_UNCOMPRESSED:
+		initial_remaining_len = s->meta_block_remaining_len;
+		/* pos is given as argument since s->pos is only updated at the end. */
+		result = CopyUncompressedBlockToOutput(output, pos, s);
+		bytes_copied = initial_remaining_len - s->meta_block_remaining_len;
+		pos += bytes_copied;
+		if (bytes_copied > 0) {
+		  s->prev_byte2 = bytes_copied == 1 ? s->prev_byte1 :
+			  s->ringbuffer[(pos - 2) & s->ringbuffer_mask];
+		  s->prev_byte1 = s->ringbuffer[(pos - 1) & s->ringbuffer_mask];
+		}
+		if (result != BROTLI_RESULT_SUCCESS) break;
+		s->state = BROTLI_STATE_METABLOCK_DONE;
+		break;
+	  case BROTLI_STATE_HUFFMAN_CODE_0:
+		if (i >= 3) {
+		  BROTLI_LOG_UINT(s->num_block_types[0]);
+		  BROTLI_LOG_UINT(s->num_block_types[1]);
+		  BROTLI_LOG_UINT(s->num_block_types[2]);
+		  BROTLI_LOG_UINT(s->block_length[0]);
+		  BROTLI_LOG_UINT(s->block_length[1]);
+		  BROTLI_LOG_UINT(s->block_length[2]);
+
+		  s->state = BROTLI_STATE_METABLOCK_HEADER_2;
+		  break;
+		}
+		s->num_block_types[i] = DecodeVarLenUint8(br) + 1;
+		s->state = BROTLI_STATE_HUFFMAN_CODE_1;
+		/* No break, continue to next state */
+	  case BROTLI_STATE_HUFFMAN_CODE_1:
+		if (s->num_block_types[i] >= 2) {
+		  result = ReadHuffmanCode(s->num_block_types[i] + 2,
+			  &s->block_type_trees[i * BROTLI_HUFFMAN_MAX_TABLE_SIZE],
+			  NULL, s);
+		  if (result != BROTLI_RESULT_SUCCESS) break;
+		  s->state = BROTLI_STATE_HUFFMAN_CODE_2;
+		} else {
+		  i++;
+		  s->state = BROTLI_STATE_HUFFMAN_CODE_0;
+		  break;
+		}
+		/* No break, continue to next state */
+	  case BROTLI_STATE_HUFFMAN_CODE_2:
+		result = ReadHuffmanCode(kNumBlockLengthCodes,
+			&s->block_len_trees[i * BROTLI_HUFFMAN_MAX_TABLE_SIZE],
+			NULL, s);
+		if (result != BROTLI_RESULT_SUCCESS) break;
+		s->block_length[i] = ReadBlockLength(
+			&s->block_len_trees[i * BROTLI_HUFFMAN_MAX_TABLE_SIZE], br);
+		s->block_type_rb_index[i] = 1;
+		i++;
+		s->state = BROTLI_STATE_HUFFMAN_CODE_0;
+		break;
+	  case BROTLI_STATE_METABLOCK_HEADER_2:
+		if (!BrotliReadMoreInput(br)) {
+		  result = BROTLI_RESULT_PARTIAL;
+		  break;
+		}
+		s->distance_postfix_bits = (int)BrotliReadBits(br, 2);
+		s->num_direct_distance_codes = NUM_DISTANCE_SHORT_CODES +
+			((int)BrotliReadBits(br, 4) << s->distance_postfix_bits);
+		s->distance_postfix_mask = (1 << s->distance_postfix_bits) - 1;
+		s->num_distance_codes = (s->num_direct_distance_codes +
+							  (48 << s->distance_postfix_bits));
+		s->context_modes = (uint8_t*)malloc((size_t)s->num_block_types[0]);
+		if (s->context_modes == 0) {
+		  result = BROTLI_RESULT_ERROR;
+		  break;
+		}
+		for (i = 0; i < s->num_block_types[0]; ++i) {
+		  s->context_modes[i] = (uint8_t)(BrotliReadBits(br, 2) << 1);
+		  BROTLI_LOG_ARRAY_INDEX(s->context_modes, i);
+		}
+		BROTLI_LOG_UINT(s->num_direct_distance_codes);
+		BROTLI_LOG_UINT(s->distance_postfix_bits);
+		s->state = BROTLI_STATE_CONTEXT_MAP_1;
+		/* No break, continue to next state */
+	  case BROTLI_STATE_CONTEXT_MAP_1:
+		result = DecodeContextMap(s->num_block_types[0] << kLiteralContextBits,
+								  &s->num_literal_htrees, &s->context_map, s);
+
+		s->trivial_literal_context = 1;
+		for (i = 0; i < s->num_block_types[0] << kLiteralContextBits; i++) {
+		  if (s->context_map[i] != i >> kLiteralContextBits) {
+			s->trivial_literal_context = 0;
+			break;
 		  }
 		}
-		++pos;
-	  }
-	  meta_block_remaining_len -= insert_length;
-	  if (meta_block_remaining_len <= 0) break;
 
-	  if (distance_code < 0) {
-		uint8_t context;
-		if (!BrotliReadMoreInput(&br)) {
-		  printf("[BrotliDecompress] Unexpected end of input.\n");
-		  ok = 0;
-		  goto End;
+		if (result != BROTLI_RESULT_SUCCESS) break;
+		s->state = BROTLI_STATE_CONTEXT_MAP_2;
+		/* No break, continue to next state */
+	  case BROTLI_STATE_CONTEXT_MAP_2:
+		result = DecodeContextMap(s->num_block_types[2] << kDistanceContextBits,
+								  &s->num_dist_htrees, &s->dist_context_map, s);
+		if (result != BROTLI_RESULT_SUCCESS) break;
+
+		BrotliHuffmanTreeGroupInit(&s->hgroup[0], kNumLiteralCodes,
+								   s->num_literal_htrees);
+		BrotliHuffmanTreeGroupInit(&s->hgroup[1], kNumInsertAndCopyCodes,
+								   s->num_block_types[1]);
+		BrotliHuffmanTreeGroupInit(&s->hgroup[2], s->num_distance_codes,
+								   s->num_dist_htrees);
+		i = 0;
+		s->state = BROTLI_STATE_TREE_GROUP;
+		/* No break, continue to next state */
+	  case BROTLI_STATE_TREE_GROUP:
+		result = HuffmanTreeGroupDecode(&s->hgroup[i], s);
+		if (result != BROTLI_RESULT_SUCCESS) break;
+		i++;
+
+		if (i >= 3) {
+		  s->context_map_slice = s->context_map;
+		  s->dist_context_map_slice = s->dist_context_map;
+		  s->context_mode = s->context_modes[s->block_type[0]];
+		  s->context_lookup_offset1 = kContextLookupOffsets[s->context_mode];
+		  s->context_lookup_offset2 =
+			  kContextLookupOffsets[s->context_mode + 1];
+		  s->htree_command = s->hgroup[1].htrees[0];
+
+		  s->state = BROTLI_STATE_BLOCK_BEGIN;
+		  break;
 		}
-		if (block_length[2] == 0) {
-		  DecodeBlockType(num_block_types[2],
-						  block_type_trees, 2, block_type, block_type_rb,
-						  block_type_rb_index, &br);
-		  block_length[2] = ReadBlockLength(
-			  &block_len_trees[2 * HUFFMAN_MAX_TABLE_SIZE], &br);
-		  dist_htree_index = (uint8_t)block_type[2];
-		  dist_context_offset = block_type[2] << kDistanceContextBits;
-		  dist_context_map_slice = dist_context_map + dist_context_offset;
+
+		break;
+	  case BROTLI_STATE_BLOCK_BEGIN:
+ /* Block decoding is the inner loop, jumping with goto makes it 3% faster */
+ BlockBegin:
+		if (!BrotliReadMoreInput(br)) {
+		  result = BROTLI_RESULT_PARTIAL;
+		  break;
 		}
-		--block_length[2];
-		context = (uint8_t)(copy_length > 4 ? 3 : copy_length - 2);
-		dist_htree_index = dist_context_map_slice[context];
-		distance_code = ReadSymbol(hgroup[2].htrees[dist_htree_index], &br);
-		if (distance_code >= num_direct_distance_codes) {
+		if (s->meta_block_remaining_len <= 0) {
+		  /* Protect pos from overflow, wrap it around at every GB of input. */
+		  pos &= 0x3fffffff;
+
+		  /* Next metablock, if any */
+		  s->state = BROTLI_STATE_METABLOCK_DONE;
+		  break;
+		}
+
+		if (s->block_length[1] == 0) {
+		  DecodeBlockType(s->num_block_types[1],
+						  s->block_type_trees, 1,
+						  s->block_type, s->block_type_rb,
+						  s->block_type_rb_index, br);
+		  s->block_length[1] = ReadBlockLength(
+			  &s->block_len_trees[BROTLI_HUFFMAN_MAX_TABLE_SIZE], br);
+		  s->htree_command = s->hgroup[1].htrees[s->block_type[1]];
+		}
+		--s->block_length[1];
+		s->cmd_code = ReadSymbol(s->htree_command, br);
+		s->range_idx = s->cmd_code >> 6;
+		if (s->range_idx >= 2) {
+		  s->range_idx -= 2;
+		  s->distance_code = -1;
+		} else {
+		  s->distance_code = 0;
+		}
+		s->insert_code =
+			kInsertRangeLut[s->range_idx] + ((s->cmd_code >> 3) & 7);
+		s->copy_code = kCopyRangeLut[s->range_idx] + (s->cmd_code & 7);
+		s->insert_length = kInsertLengthPrefixCode[s->insert_code].offset +
+			(int)BrotliReadBits(br,
+								kInsertLengthPrefixCode[s->insert_code].nbits);
+		s->copy_length = kCopyLengthPrefixCode[s->copy_code].offset +
+			(int)BrotliReadBits(br, kCopyLengthPrefixCode[s->copy_code].nbits);
+		BROTLI_LOG_UINT(s->insert_length);
+		BROTLI_LOG_UINT(s->copy_length);
+		BROTLI_LOG_UINT(s->distance_code);
+
+		i = 0;
+		s->state = BROTLI_STATE_BLOCK_INNER;
+		/* No break, go to next state */
+	  case BROTLI_STATE_BLOCK_INNER:
+		if (s->trivial_literal_context) {
+		  while (i < s->insert_length) {
+			if (!BrotliReadMoreInput(br)) {
+			  result = BROTLI_RESULT_PARTIAL;
+			  break;
+			}
+			if (s->block_length[0] == 0) {
+			  DecodeBlockTypeWithContext(s, br);
+			}
+
+			s->ringbuffer[pos & s->ringbuffer_mask] = (uint8_t)ReadSymbol(
+				s->hgroup[0].htrees[s->literal_htree_index], br);
+
+			--s->block_length[0];
+			BROTLI_LOG_UINT(s->literal_htree_index);
+			BROTLI_LOG_ARRAY_INDEX(s->ringbuffer, pos & s->ringbuffer_mask);
+			if ((pos & s->ringbuffer_mask) == s->ringbuffer_mask) {
+			  if (BrotliWrite(output, s->ringbuffer,
+							  (size_t)s->ringbuffer_size) < 0) {
+				result = BROTLI_RESULT_ERROR;
+				break;
+			  }
+			}
+			++pos;
+			++i;
+		  }
+		} else {
+		  while (i < s->insert_length) {
+			if (!BrotliReadMoreInput(br)) {
+			  result = BROTLI_RESULT_PARTIAL;
+			  break;
+			}
+			if (s->block_length[0] == 0) {
+			  DecodeBlockTypeWithContext(s, br);
+			}
+
+			context =
+				(kContextLookup[s->context_lookup_offset1 + s->prev_byte1] |
+				 kContextLookup[s->context_lookup_offset2 + s->prev_byte2]);
+			BROTLI_LOG_UINT(context);
+			s->literal_htree_index = s->context_map_slice[context];
+			--s->block_length[0];
+			s->prev_byte2 = s->prev_byte1;
+			s->prev_byte1 = (uint8_t)ReadSymbol(
+				s->hgroup[0].htrees[s->literal_htree_index], br);
+			s->ringbuffer[pos & s->ringbuffer_mask] = s->prev_byte1;
+			BROTLI_LOG_UINT(s->literal_htree_index);
+			BROTLI_LOG_ARRAY_INDEX(s->ringbuffer, pos & s->ringbuffer_mask);
+			if ((pos & s->ringbuffer_mask) == s->ringbuffer_mask) {
+			  if (BrotliWrite(output, s->ringbuffer,
+							  (size_t)s->ringbuffer_size) < 0) {
+				result = BROTLI_RESULT_ERROR;
+				break;
+			  }
+			}
+			++pos;
+			++i;
+		  }
+		}
+
+		if (result != BROTLI_RESULT_SUCCESS) break;
+
+		s->meta_block_remaining_len -= s->insert_length;
+		if (s->meta_block_remaining_len <= 0) {
+		  s->state = BROTLI_STATE_METABLOCK_DONE;
+		  break;
+		} else if (s->distance_code < 0) {
+		  s->state = BROTLI_STATE_BLOCK_DISTANCE;
+		} else {
+		  s->state = BROTLI_STATE_BLOCK_POST;
+		  break;
+		}
+		/* No break, go to next state */
+	  case BROTLI_STATE_BLOCK_DISTANCE:
+		if (!BrotliReadMoreInput(br)) {
+		  result = BROTLI_RESULT_PARTIAL;
+		  break;
+		}
+		assert(s->distance_code < 0);
+
+		if (s->block_length[2] == 0) {
+		  DecodeBlockType(s->num_block_types[2],
+						  s->block_type_trees, 2,
+						  s->block_type, s->block_type_rb,
+						  s->block_type_rb_index, br);
+		  s->block_length[2] = ReadBlockLength(
+			  &s->block_len_trees[2 * BROTLI_HUFFMAN_MAX_TABLE_SIZE], br);
+		  s->dist_context_offset = s->block_type[2] << kDistanceContextBits;
+		  s->dist_context_map_slice =
+			  s->dist_context_map + s->dist_context_offset;
+		}
+		--s->block_length[2];
+		context = (uint8_t)(s->copy_length > 4 ? 3 : s->copy_length - 2);
+		s->dist_htree_index = s->dist_context_map_slice[context];
+		s->distance_code =
+			ReadSymbol(s->hgroup[2].htrees[s->dist_htree_index], br);
+		if (s->distance_code >= s->num_direct_distance_codes) {
 		  int nbits;
 		  int postfix;
 		  int offset;
-		  distance_code -= num_direct_distance_codes;
-		  postfix = distance_code & distance_postfix_mask;
-		  distance_code >>= distance_postfix_bits;
-		  nbits = (distance_code >> 1) + 1;
-		  offset = ((2 + (distance_code & 1)) << nbits) - 4;
-		  distance_code = num_direct_distance_codes +
-			  ((offset + (int)BrotliReadBits(&br, nbits)) <<
-			   distance_postfix_bits) + postfix;
+		  s->distance_code -= s->num_direct_distance_codes;
+		  postfix = s->distance_code & s->distance_postfix_mask;
+		  s->distance_code >>= s->distance_postfix_bits;
+		  nbits = (s->distance_code >> 1) + 1;
+		  offset = ((2 + (s->distance_code & 1)) << nbits) - 4;
+		  s->distance_code = s->num_direct_distance_codes +
+			  ((offset + (int)BrotliReadBits(br, nbits)) <<
+			   s->distance_postfix_bits) + postfix;
 		}
-	  }
+		s->state = BROTLI_STATE_BLOCK_POST;
+		/* No break, go to next state */
+	  case BROTLI_STATE_BLOCK_POST:
+		if (!BrotliReadMoreInput(br)) {
+		  result = BROTLI_RESULT_PARTIAL;
+		  break;
+		}
+		/* Convert the distance code to the actual distance by possibly */
+		/* looking up past distnaces from the s->ringbuffer. */
+		s->distance =
+			TranslateShortCodes(s->distance_code, s->dist_rb, s->dist_rb_idx);
+		if (s->distance < 0) {
+		  result = BROTLI_RESULT_ERROR;
+		  break;
+		}
+		BROTLI_LOG_UINT(s->distance);
 
-	  /* Convert the distance code to the actual distance by possibly looking */
-	  /* up past distnaces from the ringbuffer. */
-	  distance = TranslateShortCodes(distance_code, dist_rb, dist_rb_idx);
-	  if (distance < 0) {
-		ok = 0;
-		goto End;
-	  }
-	  BROTLI_LOG_UINT(distance);
+		if (pos < s->max_backward_distance &&
+			s->max_distance != s->max_backward_distance) {
+		  s->max_distance = pos;
+		} else {
+		  s->max_distance = s->max_backward_distance;
+		}
 
-	  if (pos < max_backward_distance &&
-		  max_distance != max_backward_distance) {
-		max_distance = pos;
-	  } else {
-		max_distance = max_backward_distance;
-	  }
+		s->copy_dst = &s->ringbuffer[pos & s->ringbuffer_mask];
 
-	  copy_dst = &ringbuffer[pos & ringbuffer_mask];
-
-	  if (distance > max_distance) {
-		if (copy_length >= kMinDictionaryWordLength &&
-			copy_length <= kMaxDictionaryWordLength) {
-		  int offset = kBrotliDictionaryOffsetsByLength[copy_length];
-		  int word_id = distance - max_distance - 1;
-		  int shift = kBrotliDictionarySizeBitsByLength[copy_length];
-		  int mask = (1 << shift) - 1;
-		  int word_idx = word_id & mask;
-		  int transform_idx = word_id >> shift;
-		  offset += word_idx * copy_length;
-		  if (transform_idx < kNumTransforms) {
-			const uint8_t* word = &kBrotliDictionary[offset];
-			int len = TransformDictionaryWord(
-				copy_dst, word, copy_length, transform_idx);
-			copy_dst += len;
-			pos += len;
-			meta_block_remaining_len -= len;
-			if (copy_dst >= ringbuffer_end) {
-			  if (BrotliWrite(output, ringbuffer,
-							  (size_t)ringbuffer_size) < 0) {
-				ok = 0;
-				goto End;
+		if (s->distance > s->max_distance) {
+		  if (s->copy_length >= kMinDictionaryWordLength &&
+			  s->copy_length <= kMaxDictionaryWordLength) {
+			int offset = kBrotliDictionaryOffsetsByLength[s->copy_length];
+			int word_id = s->distance - s->max_distance - 1;
+			int shift = kBrotliDictionarySizeBitsByLength[s->copy_length];
+			int mask = (1 << shift) - 1;
+			int word_idx = word_id & mask;
+			int transform_idx = word_id >> shift;
+			offset += word_idx * s->copy_length;
+			if (transform_idx < kNumTransforms) {
+			  const uint8_t* word = &kBrotliDictionary[offset];
+			  int len = TransformDictionaryWord(
+				  s->copy_dst, word, s->copy_length, transform_idx);
+			  s->copy_dst += len;
+			  pos += len;
+			  s->meta_block_remaining_len -= len;
+			  if (s->copy_dst >= s->ringbuffer_end) {
+				if (BrotliWrite(output, s->ringbuffer,
+								(size_t)s->ringbuffer_size) < 0) {
+				  result = BROTLI_RESULT_ERROR;
+				  break;
+				}
+				memcpy(s->ringbuffer, s->ringbuffer_end,
+					   (size_t)(s->copy_dst - s->ringbuffer_end));
 			  }
-			  memcpy(ringbuffer, ringbuffer_end,
-					 (size_t)(copy_dst - ringbuffer_end));
+			} else {
+			  printf("Invalid backward reference. pos: %d distance: %d "
+					 "len: %d bytes left: %d\n",
+					 pos, s->distance, s->copy_length,
+					 s->meta_block_remaining_len);
+			  result = BROTLI_RESULT_ERROR;
+			  break;
 			}
 		  } else {
 			printf("Invalid backward reference. pos: %d distance: %d "
-				   "len: %d bytes left: %d\n", pos, distance, copy_length,
-				   meta_block_remaining_len);
-			ok = 0;
-			goto End;
+				   "len: %d bytes left: %d\n", pos, s->distance, s->copy_length,
+				   s->meta_block_remaining_len);
+			result = BROTLI_RESULT_ERROR;
+			break;
 		  }
 		} else {
-		  printf("Invalid backward reference. pos: %d distance: %d "
-				 "len: %d bytes left: %d\n", pos, distance, copy_length,
-				 meta_block_remaining_len);
-		  ok = 0;
-		  goto End;
-		}
-	  } else {
-		if (distance_code > 0) {
-		  dist_rb[dist_rb_idx & 3] = distance;
-		  ++dist_rb_idx;
-		}
+		  if (s->distance_code > 0) {
+			s->dist_rb[s->dist_rb_idx & 3] = s->distance;
+			++s->dist_rb_idx;
+		  }
 
-		if (copy_length > meta_block_remaining_len) {
-		  printf("Invalid backward reference. pos: %d distance: %d "
-				 "len: %d bytes left: %d\n", pos, distance, copy_length,
-				 meta_block_remaining_len);
-		  ok = 0;
-		  goto End;
-		}
+		  if (s->copy_length > s->meta_block_remaining_len) {
+			printf("Invalid backward reference. pos: %d distance: %d "
+				   "len: %d bytes left: %d\n", pos, s->distance, s->copy_length,
+				   s->meta_block_remaining_len);
+			result = BROTLI_RESULT_ERROR;
+			break;
+		  }
 
-		copy_src = &ringbuffer[(pos - distance) & ringbuffer_mask];
+		  s->copy_src =
+			  &s->ringbuffer[(pos - s->distance) & s->ringbuffer_mask];
 
 #if (defined(__x86_64__) || defined(_M_X64))
-		if (copy_src + copy_length <= ringbuffer_end &&
-			copy_dst + copy_length < ringbuffer_end) {
-		  if (copy_length <= 16 && distance >= 8) {
-			UNALIGNED_COPY64(copy_dst, copy_src);
-			UNALIGNED_COPY64(copy_dst + 8, copy_src + 8);
-		  } else {
-			IncrementalCopyFastPath(copy_dst, copy_src, copy_length);
+		  if (s->copy_src + s->copy_length <= s->ringbuffer_end &&
+			  s->copy_dst + s->copy_length < s->ringbuffer_end) {
+			if (s->copy_length <= 16 && s->distance >= 8) {
+			  UNALIGNED_COPY64(s->copy_dst, s->copy_src);
+			  UNALIGNED_COPY64(s->copy_dst + 8, s->copy_src + 8);
+			} else {
+			  IncrementalCopyFastPath(s->copy_dst, s->copy_src, s->copy_length);
+			}
+			pos += s->copy_length;
+			s->meta_block_remaining_len -= s->copy_length;
+			s->copy_length = 0;
 		  }
-		  pos += copy_length;
-		  meta_block_remaining_len -= copy_length;
-		  copy_length = 0;
-		}
 #endif
 
-		for (j = 0; j < copy_length; ++j) {
-		  ringbuffer[pos & ringbuffer_mask] =
-			  ringbuffer[(pos - distance) & ringbuffer_mask];
-		  if ((pos & ringbuffer_mask) == ringbuffer_mask) {
-			if (BrotliWrite(output, ringbuffer, (size_t)ringbuffer_size) < 0) {
-			  ok = 0;
-			  goto End;
+		  for (i = 0; i < s->copy_length; ++i) {
+			s->ringbuffer[pos & s->ringbuffer_mask] =
+				s->ringbuffer[(pos - s->distance) & s->ringbuffer_mask];
+			if ((pos & s->ringbuffer_mask) == s->ringbuffer_mask) {
+			  if (BrotliWrite(output, s->ringbuffer,
+							  (size_t)s->ringbuffer_size) < 0) {
+				result = BROTLI_RESULT_ERROR;
+				break;
+			  }
 			}
+			++pos;
+			--s->meta_block_remaining_len;
 		  }
-		  ++pos;
-		  --meta_block_remaining_len;
 		}
-	  }
 
-	  /* When we get here, we must have inserted at least one literal and */
-	  /* made a copy of at least length two, therefore accessing the last 2 */
-	  /* bytes is valid. */
-	  prev_byte1 = ringbuffer[(pos - 1) & ringbuffer_mask];
-	  prev_byte2 = ringbuffer[(pos - 2) & ringbuffer_mask];
-	}
-
-	/* Protect pos from overflow, wrap it around at every GB of input data */
-	pos &= 0x3fffffff;
-
- End:
-	if (context_modes != 0) {
-	  free(context_modes);
-	}
-	if (context_map != 0) {
-	  free(context_map);
-	}
-	if (dist_context_map != 0) {
-	  free(dist_context_map);
-	}
-	for (i = 0; i < 3; ++i) {
-	  HuffmanTreeGroupRelease(&hgroup[i]);
+		/* When we get here, we must have inserted at least one literal and */
+		/* made a copy of at least length two, therefore accessing the last 2 */
+		/* bytes is valid. */
+		s->prev_byte1 = s->ringbuffer[(pos - 1) & s->ringbuffer_mask];
+		s->prev_byte2 = s->ringbuffer[(pos - 2) & s->ringbuffer_mask];
+		s->state = BROTLI_STATE_BLOCK_BEGIN;
+		goto BlockBegin;
+	  case BROTLI_STATE_METABLOCK_DONE:
+		if (s->context_modes != 0) {
+		  free(s->context_modes);
+		  s->context_modes = NULL;
+		}
+		if (s->context_map != 0) {
+		  free(s->context_map);
+		  s->context_map = NULL;
+		}
+		if (s->dist_context_map != 0) {
+		  free(s->dist_context_map);
+		  s->dist_context_map = NULL;
+		}
+		for (i = 0; i < 3; ++i) {
+		  BrotliHuffmanTreeGroupRelease(&s->hgroup[i]);
+		  s->hgroup[i].codes = NULL;
+		  s->hgroup[i].htrees = NULL;
+		}
+		s->state = BROTLI_STATE_METABLOCK_BEGIN;
+		break;
+	  case BROTLI_STATE_DONE:
+		if (s->ringbuffer != 0) {
+		  if (BrotliWrite(output, s->ringbuffer,
+						  (size_t)(pos & s->ringbuffer_mask)) < 0) {
+			result = BROTLI_RESULT_ERROR;
+		  }
+		}
+		return result;
+	  default:
+		printf("Unknown state %d\n", s->state);
+		result = BROTLI_RESULT_ERROR;
 	}
   }
 
-  if (ringbuffer != 0) {
-	if (BrotliWrite(output, ringbuffer, (size_t)(pos & ringbuffer_mask)) < 0) {
-	  ok = 0;
-	}
-	free(ringbuffer);
-  }
-  if (block_type_trees != 0) {
-	free(block_type_trees);
-  }
-  if (block_len_trees != 0) {
-	free(block_len_trees);
-  }
-  return ok;
+  s->pos = pos;
+  s->loop_counter = i;
+  return result;
 }
 
 #if defined(__cplusplus) || defined(c_plusplus)
@@ -26213,22 +27702,7 @@ int BrotliDecompress(BrotliInput input, BrotliOutput output) {
 
 
 //#line 1 "huffman.c"
-/* Copyright 2013 Google Inc. All Rights Reserved.
-
-   Licensed under the Apache License, Version 2.0 (the "License");
-   you may not use this file except in compliance with the License.
-   You may obtain a copy of the License at
-
-   http://www.apache.org/licenses/LICENSE-2.0
-
-   Unless required by applicable law or agreed to in writing, software
-   distributed under the License is distributed on an "AS IS" BASIS,
-   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-   See the License for the specific language governing permissions and
-   limitations under the License.
-
-   Utilities for building Huffman decoding tables.
-*/
+/* Utilities for building Huffman decoding tables. */
 
 #include <assert.h>
 #include <stdlib.h>
@@ -26372,12 +27846,32 @@ int BrotliBuildHuffmanTable(HuffmanCode* root_table,
   return total_size;
 }
 
+void BrotliHuffmanTreeGroupInit(HuffmanTreeGroup* group, int alphabet_size,
+								int ntrees) {
+  group->alphabet_size = alphabet_size;
+  group->num_htrees = ntrees;
+  group->codes = (HuffmanCode*)malloc(
+	  sizeof(HuffmanCode) * (size_t)(ntrees * BROTLI_HUFFMAN_MAX_TABLE_SIZE));
+  group->htrees = (HuffmanCode**)malloc(sizeof(HuffmanCode*) * (size_t)ntrees);
+}
+
+void BrotliHuffmanTreeGroupRelease(HuffmanTreeGroup* group) {
+  if (group->codes) {
+	free(group->codes);
+  }
+  if (group->htrees) {
+	free(group->htrees);
+  }
+}
+
 #if defined(__cplusplus) || defined(c_plusplus)
 }    /* extern "C" */
 #endif
 
 
 //#line 1 "safe_malloc.c"
+/* Size-checked memory allocation. */
+
 #include <stdlib.h>
 
 #if defined(__cplusplus) || defined(c_plusplus)
@@ -26404,7 +27898,82 @@ void* BrotliSafeMalloc(uint64_t nmemb, size_t size) {
 #endif
 
 
+//#line 1 "state.c"
+#include <stdlib.h>
+#include <string.h>
+
+#if defined(__cplusplus) || defined(c_plusplus)
+extern "C" {
+#endif
+
+void BrotliStateInit(BrotliState* s) {
+  int i;
+
+  s->state = BROTLI_STATE_UNINITED;
+  s->sub_state[0] = BROTLI_STATE_SUB_NONE;
+  s->sub_state[1] = BROTLI_STATE_SUB_NONE;
+
+  s->block_type_trees = NULL;
+  s->block_len_trees = NULL;
+  s->ringbuffer = NULL;
+
+  s->context_map = NULL;
+  s->context_modes = NULL;
+  s->dist_context_map = NULL;
+  s->context_map_slice = NULL;
+  s->dist_context_map_slice = NULL;
+
+  for (i = 0; i < 3; ++i) {
+	s->hgroup[i].codes = NULL;
+	s->hgroup[i].htrees = NULL;
+  }
+
+  s->code_lengths = NULL;
+  s->context_map_table = NULL;
+}
+
+void BrotliStateCleanup(BrotliState* s) {
+  int i;
+
+  if (s->context_map_table != 0) {
+	free(s->context_map_table);
+  }
+  if (s->code_lengths != 0) {
+	free(s->code_lengths);
+  }
+
+  if (s->context_modes != 0) {
+	free(s->context_modes);
+  }
+  if (s->context_map != 0) {
+	free(s->context_map);
+  }
+  if (s->dist_context_map != 0) {
+	free(s->dist_context_map);
+  }
+  for (i = 0; i < 3; ++i) {
+	BrotliHuffmanTreeGroupRelease(&s->hgroup[i]);
+  }
+
+  if (s->ringbuffer != 0) {
+	free(s->ringbuffer);
+  }
+  if (s->block_type_trees != 0) {
+	free(s->block_type_trees);
+  }
+  if (s->block_len_trees != 0) {
+	free(s->block_len_trees);
+  }
+}
+
+#if defined(__cplusplus) || defined(c_plusplus)
+} /* extern "C" */
+#endif
+
+
 //#line 1 "streams.c"
+/* Functions for streaming input and output. */
+
 #include <string.h>
 #ifndef _WIN32
 #include <unistd.h>
@@ -26460,6 +28029,7 @@ BrotliOutput BrotliInitMemOutput(uint8_t* buffer, size_t length,
 }
 
 int BrotliStdinInputFunction(void* data, uint8_t* buf, size_t count) {
+  (void) data; /* Shut up LLVM */
 #ifndef _WIN32
   return (int)read(STDIN_FILENO, buf, count);
 #else
@@ -26475,6 +28045,7 @@ BrotliInput BrotliStdinInput() {
 }
 
 int BrotliStdoutOutputFunction(void* data, const uint8_t* buf, size_t count) {
+  (void) data; /* Shut up LLVM */
 #ifndef _WIN32
   return (int)write(STDOUT_FILENO, buf, count);
 #else
@@ -26487,6 +28058,17 @@ BrotliOutput BrotliStdoutOutput() {
   out.cb_ = BrotliStdoutOutputFunction;
   out.data_ = NULL;
   return out;
+}
+
+int BrotliFileInputFunction(void* data, uint8_t* buf, size_t count) {
+  return (int)fread(buf, 1, count, (FILE*)data);
+}
+
+BrotliInput BrotliFileInput(FILE* f) {
+  BrotliInput in;
+  in.cb_ = BrotliFileInputFunction;
+  in.data_ = f;
+  return in;
 }
 
 int BrotliFileOutputFunction(void* data, const uint8_t* buf, size_t count) {
@@ -46509,8 +48091,8 @@ extern "C" void bz_internal_error(int errcode) {
 #undef HASH_LOG
 
 //#line 1 "fse.h"
-#ifndef FSE_HEADER
-#define FSE_HEADER
+#ifndef FSE_H_INCLUDE
+#define FSE_H_INCLUDE
 
 #if defined (__cplusplus)
 extern "C" {
@@ -46901,8 +48483,8 @@ Check also the states. There might be some entropy left there, still able to dec
 #include <stdio.h>      /* printf (debug) */
 
 //#line 1 "fse_static.h"
-#ifndef FSE_STATIC_HEADER
-#define FSE_STATIC_HEADER
+#ifndef FSE_STATIC_H_INCLUDE
+#define FSE_STATIC_H_INCLUDE
 
 #if defined (__cplusplus)
 extern "C" {
@@ -46972,6 +48554,8 @@ unsigned char FSE_decodeSymbolFast(FSE_DState_t* DStatePtr, FSE_DStream_t* bitD)
 #endif
 
 
+#ifndef MEM_ACCESS_MODULE
+#define MEM_ACCESS_MODULE
 /****************************************************************
 *  Basic Types
 *****************************************************************/
@@ -46993,6 +48577,8 @@ typedef   signed int        S32;
 typedef unsigned long long  U64;
 typedef   signed long long  S64;
 #endif
+
+#endif   /* MEM_ACCESS_MODULE */
 
 /****************************************************************
 *  Memory I/O
@@ -47408,70 +48994,6 @@ void  FSE_freeCTable (void* CTable)
 	free(CTable);
 }
 
-/* Emergency distribution strategy (fallback); compression will suffer a lot ; consider increasing table size */
-static void FSE_emergencyDistrib(short* normalizedCounter, int maxSymbolValue, short points)
-{
-	int s=0;
-	while (points)
-	{
-		if (normalizedCounter[s] > 1)
-		{
-			normalizedCounter[s]--;
-			points--;
-		}
-		s++;
-		if (s>maxSymbolValue) s=0;
-	}
-}
-
-/* fallback distribution (corner case); compression will suffer a bit ; consider increasing table size */
-void FSE_distribNpts(short* normalizedCounter, int maxSymbolValue, short points)
-{
-	int s;
-	int rank[5] = {0};
-	int fallback=0;
-
-	/* Sort 4 largest (they'll absorb normalization rounding) */
-	for (s=1; s<=maxSymbolValue; s++)
-	{
-		int i, b=3;
-		if (b>=s) b=s-1;
-		while ((b>=0) && (normalizedCounter[s]>normalizedCounter[rank[b]])) b--;
-		for (i=3; i>b; i--) rank[i+1] = rank[i];
-		rank[b+1]=s;
-	}
-
-	/* Distribute points */
-	s = 0;
-	while (points)
-	{
-		short limit = normalizedCounter[rank[s+1]]+1;
-		if (normalizedCounter[rank[s]] >= limit + points )
-		{
-			normalizedCounter[rank[s]] -= points;
-			break;
-		}
-		points -= normalizedCounter[rank[s]] - limit;
-		normalizedCounter[rank[s]] = limit;
-		s++;
-		if (s==3)
-		{
-			short reduction = points>>2;
-			if (fallback)
-			{
-				FSE_emergencyDistrib(normalizedCounter, maxSymbolValue, points);    /* Fallback mode */
-				return;
-			}
-			if (reduction < 1) reduction=1;
-			if (reduction >= normalizedCounter[rank[3]]) reduction=normalizedCounter[rank[3]]-1;
-			fallback = (reduction==0);
-			normalizedCounter[rank[3]]-=reduction;
-			points-=reduction;
-			s=0;
-		}
-	}
-}
-
 unsigned FSE_optimalTableLog(unsigned maxTableLog, size_t srcSize, unsigned maxSymbolValue)
 {
 	U32 tableLog = maxTableLog;
@@ -47497,9 +49019,10 @@ int FSE_compareRankT(const void* r1, const void* r2)
 	return 2 * (R1->count < R2->count) - 1;
 }
 
-static void FSE_adjustNormSlow(short* norm, int pointsToRemove, const unsigned* count, U32 maxSymbolValue)
+#if 0
+static size_t FSE_adjustNormSlow(short* norm, int pointsToRemove, const unsigned* count, U32 maxSymbolValue)
 {
-	rank_t rank[FSE_MAX_SYMBOL_VALUE+1];
+	rank_t rank[FSE_MAX_SYMBOL_VALUE+2];
 	U32 s;
 
 	/* Init */
@@ -47509,6 +49032,8 @@ static void FSE_adjustNormSlow(short* norm, int pointsToRemove, const unsigned* 
 		rank[s].count = count[s];
 		if (norm[s] <= 1) rank[s].count = 0;
 	}
+	rank[maxSymbolValue+1].id = 0;
+	rank[maxSymbolValue+1].count = 0;   /* ensures comparison ends here in worst case */
 
 	/* Sort according to count */
 	qsort(rank, maxSymbolValue+1, sizeof(rank_t), FSE_compareRankT);
@@ -47516,19 +49041,119 @@ static void FSE_adjustNormSlow(short* norm, int pointsToRemove, const unsigned* 
 	while(pointsToRemove)
 	{
 		int newRank = 1;
+		rank_t savedR;
+		if (norm[rank[0].id] == 1)
+			return (size_t)-FSE_ERROR_GENERIC;
 		norm[rank[0].id]--;
-		rank[0].count = (rank[0].count * 3) >> 2;
-		if (norm[rank[0].id] == 1) rank[0].count = 0;
-		while (rank[newRank].count > rank[newRank-1].count)
+		pointsToRemove--;
+		rank[0].count -= (rank[0].count + 6) >> 3;
+		if (norm[rank[0].id] == 1)
+			rank[0].count=0;
+		savedR = rank[0];
+		while (rank[newRank].count > savedR.count)
 		{
-			rank_t r = rank[newRank-1];
 			rank[newRank-1] = rank[newRank];
-			rank[newRank] = r;
 			newRank++;
 		}
-		pointsToRemove--;
+		rank[newRank-1] = savedR;
 	}
+
+	return 0;
 }
+
+#else
+
+/* Secondary normalization method.
+   To be used when primary method fails. */
+
+static size_t FSE_normalizeM2(short* norm, U32 tableLog, const unsigned* count, size_t total, U32 maxSymbolValue)
+{
+	U32 s;
+	U32 distributed = 0;
+	U32 ToDistribute;
+
+	/* Init */
+	U32 lowThreshold = (U32)(total >> tableLog);
+	U32 lowOne = (U32)((total * 3) >> (tableLog + 1));
+
+	for (s=0; s<=maxSymbolValue; s++)
+	{
+		if (count[s] == 0)
+		{
+			norm[s]=0;
+			continue;
+		}
+		if (count[s] <= lowThreshold)
+		{
+			norm[s] = -1;
+			distributed++;
+			total -= count[s];
+			continue;
+		}
+		if (count[s] <= lowOne)
+		{
+			norm[s] = 1;
+			distributed++;
+			total -= count[s];
+			continue;
+		}
+		norm[s]=-2;
+	}
+	ToDistribute = (1 << tableLog) - distributed;
+
+	if ((total / ToDistribute) > lowOne)
+	{
+		/* risk of rounding to zero */
+		lowOne = (U32)((total * 3) / (ToDistribute * 2));
+		for (s=0; s<=maxSymbolValue; s++)
+		{
+			if ((norm[s] == -2) && (count[s] <= lowOne))
+			{
+				norm[s] = 1;
+				distributed++;
+				total -= count[s];
+				continue;
+			}
+		}
+		ToDistribute = (1 << tableLog) - distributed;
+	}
+
+	if (distributed == maxSymbolValue+1)
+	{
+		/* all values are pretty poor;
+		   probably incompressible data (should have already been detected);
+		   find max, then give all remaining points to max */
+		U32 maxV = 0, maxC =0;
+		for (s=0; s<=maxSymbolValue; s++)
+			if (count[s] > maxC) maxV=s, maxC=count[s];
+		norm[maxV] += ToDistribute;
+		return 0;
+	}
+
+	{
+		U64 const vStepLog = 62 - tableLog;
+		U64 const mid = (1ULL << (vStepLog-1)) - 1;
+		U64 const rStep = ((((U64)1<<vStepLog) * ToDistribute) + mid) / total;   /* scale on remaining */
+		U64 tmpTotal = mid;
+		for (s=0; s<=maxSymbolValue; s++)
+		{
+			if (norm[s]==-2)
+			{
+				U64 end = tmpTotal + (count[s] * rStep);
+				U32 sStart = (U32)(tmpTotal >> vStepLog);
+				U32 sEnd = (U32)(end >> vStepLog);
+				U32 weight = sEnd - sStart;
+				if (weight < 1)
+					return (size_t)-FSE_ERROR_GENERIC;
+				norm[s] = weight;
+				tmpTotal = end;
+			}
+		}
+	}
+
+	return 0;
+}
+#endif
 
 size_t FSE_normalizeCount (short* normalizedCounter, unsigned tableLog,
 						   const unsigned* count, size_t total,
@@ -47569,8 +49194,7 @@ size_t FSE_normalizeCount (short* normalizedCounter, unsigned tableLog,
 				short proba = (short)((count[s]*step) >> scale);
 				if (proba<8)
 				{
-					U64 restToBeat;
-					restToBeat = vStep * rtbTable[proba];
+					U64 restToBeat = vStep * rtbTable[proba];
 					proba += (count[s]*step) - ((U64)proba<<scale) > restToBeat;
 				}
 				if (proba > largestP)
@@ -47582,21 +49206,25 @@ size_t FSE_normalizeCount (short* normalizedCounter, unsigned tableLog,
 				stillToDistribute -= proba;
 			}
 		}
-		//if ((int)normalizedCounter[largest] <= -stillToDistribute+8)
 		if (-stillToDistribute >= (normalizedCounter[largest] >> 1))
 		{
-			/* largest cant accommodate that amount */
-			FSE_adjustNormSlow(normalizedCounter, -stillToDistribute, count, maxSymbolValue);
-			//FSE_distribNpts(normalizedCounter, maxSymbolValue, (short)(-stillToDistribute));   /* Fallback */
+			/* corner case, need another normalization method */
+			size_t errorCode = FSE_normalizeM2(normalizedCounter, tableLog, count, total, maxSymbolValue);
+			if (FSE_isError(errorCode)) return errorCode;
 		}
 		else normalizedCounter[largest] += (short)stillToDistribute;
 	}
 
 #if 0
 	{   /* Print Table (debug) */
-		int s;
+		U32 s;
+		U32 nTotal = 0;
 		for (s=0; s<=maxSymbolValue; s++)
 			printf("%3i: %4i \n", s, normalizedCounter[s]);
+		for (s=0; s<=maxSymbolValue; s++)
+			nTotal += abs(normalizedCounter[s]);
+		if (nTotal != (1U<<tableLog))
+			printf("Warning !!! Total == %u != %u !!!", nTotal, 1U<<tableLog);
 		getchar();
 	}
 #endif
@@ -47785,12 +49413,6 @@ size_t FSE_compress_usingCTable (void* dst, size_t dstSize,
 	return FSE_closeCStream(&bitC);
 }
 
-static size_t FSE_compressRLE (BYTE *out, BYTE symbol)
-{
-	*out=symbol;
-	return 1;
-}
-
 size_t FSE_compressBound(size_t size) { return FSE_COMPRESSBOUND(size); }
 
 size_t FSE_compress2 (void* dst, size_t dstSize, const void* src, size_t srcSize, unsigned maxSymbolValue, unsigned tableLog)
@@ -47816,8 +49438,8 @@ size_t FSE_compress2 (void* dst, size_t dstSize, const void* src, size_t srcSize
 	/* Scan input and build symbol stats */
 	errorCode = FSE_count (count, ip, srcSize, &maxSymbolValue);
 	if (FSE_isError(errorCode)) return errorCode;
-	if (errorCode == srcSize) return FSE_compressRLE (ostart, *istart);
-	if (errorCode < ((srcSize * 7) >> 10)) return 0;   /* Heuristic : not compressible enough */
+	if (errorCode == srcSize) return 1;
+	if (errorCode < (srcSize >> 7)) return 0;   /* Heuristic : not compressible enough */
 
 	tableLog = FSE_optimalTableLog(tableLog, srcSize, maxSymbolValue);
 	errorCode = FSE_normalizeCount (norm, tableLog, count, srcSize, maxSymbolValue);
@@ -47866,7 +49488,7 @@ size_t FSE_decompressRLE(void* dst, size_t originalSize,
 
 size_t FSE_buildDTable_rle (void* DTable, BYTE symbolValue)
 {
-	U32* const base32 = (U32* const)DTable;
+	U32* const base32 = (U32*)DTable;
 	FSE_decode_t* const cell = (FSE_decode_t*)(base32 + 1);
 
 	/* Sanity check */
@@ -47883,7 +49505,7 @@ size_t FSE_buildDTable_rle (void* DTable, BYTE symbolValue)
 
 size_t FSE_buildDTable_raw (void* DTable, unsigned nbBits)
 {
-	U32* const base32 = (U32* const)DTable;
+	U32* const base32 = (U32*)DTable;
 	FSE_decode_t* dinfo = (FSE_decode_t*)(base32 + 1);
 	const unsigned tableSize = 1 << nbBits;
 	const unsigned tableMask = tableSize - 1;
@@ -47999,7 +49621,7 @@ unsigned FSE_reloadDStream(FSE_DStream_t* bitD)
 
 void FSE_initDState(FSE_DState_t* DStatePtr, FSE_DStream_t* bitD, const void* DTable)
 {
-	const U32* const base32 = (const U32* const)DTable;
+	const U32* const base32 = (const U32*)DTable;
 	DStatePtr->state = FSE_readBits(bitD, base32[0]);
 	FSE_reloadDStream(bitD);
 	DStatePtr->table = base32 + 1;
@@ -48115,7 +49737,7 @@ size_t FSE_decompress(void* dst, size_t maxDstSize, const void* cSrc, size_t cSr
 	const BYTE* const istart = (const BYTE*)cSrc;
 	const BYTE* ip = istart;
 	short counting[FSE_MAX_SYMBOL_VALUE+1];
-	FSE_decode_t DTable[FSE_MAX_TABLESIZE];
+	FSE_decode_t DTable[FSE_DTABLE_SIZE_U32(FSE_MAX_TABLELOG)];
 	unsigned maxSymbolValue = FSE_MAX_SYMBOL_VALUE;
 	unsigned tableLog;
 	size_t errorCode, fastMode;
@@ -48359,7 +49981,7 @@ void FSE_FUNCTION_NAME(FSE_freeDTable, FSE_FUNCTION_EXTENSION) (void* DTable)
 size_t FSE_FUNCTION_NAME(FSE_buildDTable, FSE_FUNCTION_EXTENSION)
 (void* DTable, const short* const normalizedCounter, unsigned maxSymbolValue, unsigned tableLog)
 {
-	U32* const base32 = (U32* const)DTable;
+	U32* const base32 = (U32*)DTable;
 	FSE_DECODE_TYPE* const tableDecode = (FSE_DECODE_TYPE*) (base32+1);
 	const U32 tableSize = 1 << tableLog;
 	const U32 tableMask = tableSize-1;
@@ -48422,8 +50044,8 @@ size_t FSE_FUNCTION_NAME(FSE_buildDTable, FSE_FUNCTION_EXTENSION)
 
 
 //#line 1 "zstd.h"
-#ifndef ZSTD_HEADER
-#define ZSTD_HEADER
+#ifndef ZSTD_H_INCLUDE
+#define ZSTD_H_INCLUDE
 
 #if defined (__cplusplus)
 extern "C" {
@@ -48439,7 +50061,7 @@ extern "C" {
 **************************************/
 #define ZSTD_VERSION_MAJOR    0    /* for breaking interface changes  */
 #define ZSTD_VERSION_MINOR    0    /* for new (non-breaking) interface capabilities */
-#define ZSTD_VERSION_RELEASE  1    /* for tweaks, bug-fixes, or development */
+#define ZSTD_VERSION_RELEASE  2    /* for tweaks, bug-fixes, or development */
 #define ZSTD_VERSION_NUMBER (ZSTD_VERSION_MAJOR *100*100 + ZSTD_VERSION_MINOR *100 + ZSTD_VERSION_RELEASE)
 unsigned ZSTD_versionNumber (void);
 
@@ -48519,11 +50141,10 @@ const char* ZSTD_getErrorName(size_t code);    /* provides error code string (us
 #include <stdlib.h>      /* calloc */
 #include <string.h>      /* memcpy, memmove */
 #include <stdio.h>       /* debug : printf */
-#include <immintrin.h>   /* AVX2 intrinsics */
 
 //#line 1 "zstd_static.h"
-#ifndef ZSTD_STATIC_HEADER
-#define ZSTD_STATIC_HEADER
+#ifndef ZSTD_STATIC_H_INCLUDE
+#define ZSTD_STATIC_H_INCLUDE
 
 #if defined (__cplusplus)
 extern "C" {
@@ -48548,8 +50169,16 @@ typedef void* ZSTD_dctx_t;
 ZSTD_dctx_t ZSTD_createDCtx(void);
 size_t      ZSTD_freeDCtx(ZSTD_dctx_t dctx);
 
-size_t ZSTD_getNextcBlockSize(ZSTD_dctx_t dctx);
+size_t ZSTD_nextSrcSizeToDecompress(ZSTD_dctx_t dctx);
 size_t ZSTD_decompressContinue(ZSTD_dctx_t dctx, void* dst, size_t maxDstSize, const void* src, size_t srcSize);
+/*
+  Use above functions alternatively.
+  ZSTD_nextSrcSizeToDecompress() tells how much bytes to provide as input to ZSTD_decompressContinue().
+  This value is expected to be provided, precisely, as 'srcSize'.
+  Otherwise, compression will fail (result is an error code, which can be tested using ZSTD_isError() )
+  ZSTD_decompressContinue() result is the number of bytes regenerated within 'dst'.
+  It can be zero, which is not an error; it just means ZSTD_decompressContinue() has decoded some header.
+*/
 
 /**************************************
 *  Error management
@@ -48624,6 +50253,8 @@ typedef enum { ZSTD_LIST_ERRORS(ZSTD_GENERATE_ENUM) } ZSTD_errorCodes;   /* expo
 #include <string.h>     /* memcpy, memset */
 #include <stdio.h>      /* printf (debug) */
 
+#ifndef MEM_ACCESS_MODULE
+#define MEM_ACCESS_MODULE
 /****************************************************************
 *  Basic Types
 *****************************************************************/
@@ -48645,6 +50276,8 @@ typedef   signed int        S32;
 typedef unsigned long long  U64;
 typedef   signed long long  S64;
 #endif
+
+#endif   /* MEM_ACCESS_MODULE */
 
 /****************************************************************
 *  Memory I/O
@@ -49060,70 +50693,6 @@ void  FSE_freeCTable (void* CTable)
 	free(CTable);
 }
 
-/* Emergency distribution strategy (fallback); compression will suffer a lot ; consider increasing table size */
-static void FSE_emergencyDistrib(short* normalizedCounter, int maxSymbolValue, short points)
-{
-	int s=0;
-	while (points)
-	{
-		if (normalizedCounter[s] > 1)
-		{
-			normalizedCounter[s]--;
-			points--;
-		}
-		s++;
-		if (s>maxSymbolValue) s=0;
-	}
-}
-
-/* fallback distribution (corner case); compression will suffer a bit ; consider increasing table size */
-void FSE_distribNpts(short* normalizedCounter, int maxSymbolValue, short points)
-{
-	int s;
-	int rank[5] = {0};
-	int fallback=0;
-
-	/* Sort 4 largest (they'll absorb normalization rounding) */
-	for (s=1; s<=maxSymbolValue; s++)
-	{
-		int i, b=3;
-		if (b>=s) b=s-1;
-		while ((b>=0) && (normalizedCounter[s]>normalizedCounter[rank[b]])) b--;
-		for (i=3; i>b; i--) rank[i+1] = rank[i];
-		rank[b+1]=s;
-	}
-
-	/* Distribute points */
-	s = 0;
-	while (points)
-	{
-		short limit = normalizedCounter[rank[s+1]]+1;
-		if (normalizedCounter[rank[s]] >= limit + points )
-		{
-			normalizedCounter[rank[s]] -= points;
-			break;
-		}
-		points -= normalizedCounter[rank[s]] - limit;
-		normalizedCounter[rank[s]] = limit;
-		s++;
-		if (s==3)
-		{
-			short reduction = points>>2;
-			if (fallback)
-			{
-				FSE_emergencyDistrib(normalizedCounter, maxSymbolValue, points);    /* Fallback mode */
-				return;
-			}
-			if (reduction < 1) reduction=1;
-			if (reduction >= normalizedCounter[rank[3]]) reduction=normalizedCounter[rank[3]]-1;
-			fallback = (reduction==0);
-			normalizedCounter[rank[3]]-=reduction;
-			points-=reduction;
-			s=0;
-		}
-	}
-}
-
 unsigned FSE_optimalTableLog(unsigned maxTableLog, size_t srcSize, unsigned maxSymbolValue)
 {
 	U32 tableLog = maxTableLog;
@@ -49149,9 +50718,10 @@ int FSE_compareRankT(const void* r1, const void* r2)
 	return 2 * (R1->count < R2->count) - 1;
 }
 
-static void FSE_adjustNormSlow(short* norm, int pointsToRemove, const unsigned* count, U32 maxSymbolValue)
+#if 0
+static size_t FSE_adjustNormSlow(short* norm, int pointsToRemove, const unsigned* count, U32 maxSymbolValue)
 {
-	rank_t rank[FSE_MAX_SYMBOL_VALUE+1];
+	rank_t rank[FSE_MAX_SYMBOL_VALUE+2];
 	U32 s;
 
 	/* Init */
@@ -49161,6 +50731,8 @@ static void FSE_adjustNormSlow(short* norm, int pointsToRemove, const unsigned* 
 		rank[s].count = count[s];
 		if (norm[s] <= 1) rank[s].count = 0;
 	}
+	rank[maxSymbolValue+1].id = 0;
+	rank[maxSymbolValue+1].count = 0;   /* ensures comparison ends here in worst case */
 
 	/* Sort according to count */
 	qsort(rank, maxSymbolValue+1, sizeof(rank_t), FSE_compareRankT);
@@ -49168,19 +50740,119 @@ static void FSE_adjustNormSlow(short* norm, int pointsToRemove, const unsigned* 
 	while(pointsToRemove)
 	{
 		int newRank = 1;
+		rank_t savedR;
+		if (norm[rank[0].id] == 1)
+			return (size_t)-FSE_ERROR_GENERIC;
 		norm[rank[0].id]--;
-		rank[0].count = (rank[0].count * 3) >> 2;
-		if (norm[rank[0].id] == 1) rank[0].count = 0;
-		while (rank[newRank].count > rank[newRank-1].count)
+		pointsToRemove--;
+		rank[0].count -= (rank[0].count + 6) >> 3;
+		if (norm[rank[0].id] == 1)
+			rank[0].count=0;
+		savedR = rank[0];
+		while (rank[newRank].count > savedR.count)
 		{
-			rank_t r = rank[newRank-1];
 			rank[newRank-1] = rank[newRank];
-			rank[newRank] = r;
 			newRank++;
 		}
-		pointsToRemove--;
+		rank[newRank-1] = savedR;
 	}
+
+	return 0;
 }
+
+#else
+
+/* Secondary normalization method.
+   To be used when primary method fails. */
+
+static size_t FSE_normalizeM2(short* norm, U32 tableLog, const unsigned* count, size_t total, U32 maxSymbolValue)
+{
+	U32 s;
+	U32 distributed = 0;
+	U32 ToDistribute;
+
+	/* Init */
+	U32 lowThreshold = (U32)(total >> tableLog);
+	U32 lowOne = (U32)((total * 3) >> (tableLog + 1));
+
+	for (s=0; s<=maxSymbolValue; s++)
+	{
+		if (count[s] == 0)
+		{
+			norm[s]=0;
+			continue;
+		}
+		if (count[s] <= lowThreshold)
+		{
+			norm[s] = -1;
+			distributed++;
+			total -= count[s];
+			continue;
+		}
+		if (count[s] <= lowOne)
+		{
+			norm[s] = 1;
+			distributed++;
+			total -= count[s];
+			continue;
+		}
+		norm[s]=-2;
+	}
+	ToDistribute = (1 << tableLog) - distributed;
+
+	if ((total / ToDistribute) > lowOne)
+	{
+		/* risk of rounding to zero */
+		lowOne = (U32)((total * 3) / (ToDistribute * 2));
+		for (s=0; s<=maxSymbolValue; s++)
+		{
+			if ((norm[s] == -2) && (count[s] <= lowOne))
+			{
+				norm[s] = 1;
+				distributed++;
+				total -= count[s];
+				continue;
+			}
+		}
+		ToDistribute = (1 << tableLog) - distributed;
+	}
+
+	if (distributed == maxSymbolValue+1)
+	{
+		/* all values are pretty poor;
+		   probably incompressible data (should have already been detected);
+		   find max, then give all remaining points to max */
+		U32 maxV = 0, maxC =0;
+		for (s=0; s<=maxSymbolValue; s++)
+			if (count[s] > maxC) maxV=s, maxC=count[s];
+		norm[maxV] += ToDistribute;
+		return 0;
+	}
+
+	{
+		U64 const vStepLog = 62 - tableLog;
+		U64 const mid = (1ULL << (vStepLog-1)) - 1;
+		U64 const rStep = ((((U64)1<<vStepLog) * ToDistribute) + mid) / total;   /* scale on remaining */
+		U64 tmpTotal = mid;
+		for (s=0; s<=maxSymbolValue; s++)
+		{
+			if (norm[s]==-2)
+			{
+				U64 end = tmpTotal + (count[s] * rStep);
+				U32 sStart = (U32)(tmpTotal >> vStepLog);
+				U32 sEnd = (U32)(end >> vStepLog);
+				U32 weight = sEnd - sStart;
+				if (weight < 1)
+					return (size_t)-FSE_ERROR_GENERIC;
+				norm[s] = weight;
+				tmpTotal = end;
+			}
+		}
+	}
+
+	return 0;
+}
+#endif
 
 size_t FSE_normalizeCount (short* normalizedCounter, unsigned tableLog,
 						   const unsigned* count, size_t total,
@@ -49221,8 +50893,7 @@ size_t FSE_normalizeCount (short* normalizedCounter, unsigned tableLog,
 				short proba = (short)((count[s]*step) >> scale);
 				if (proba<8)
 				{
-					U64 restToBeat;
-					restToBeat = vStep * rtbTable[proba];
+					U64 restToBeat = vStep * rtbTable[proba];
 					proba += (count[s]*step) - ((U64)proba<<scale) > restToBeat;
 				}
 				if (proba > largestP)
@@ -49234,21 +50905,25 @@ size_t FSE_normalizeCount (short* normalizedCounter, unsigned tableLog,
 				stillToDistribute -= proba;
 			}
 		}
-		//if ((int)normalizedCounter[largest] <= -stillToDistribute+8)
 		if (-stillToDistribute >= (normalizedCounter[largest] >> 1))
 		{
-			/* largest cant accommodate that amount */
-			FSE_adjustNormSlow(normalizedCounter, -stillToDistribute, count, maxSymbolValue);
-			//FSE_distribNpts(normalizedCounter, maxSymbolValue, (short)(-stillToDistribute));   /* Fallback */
+			/* corner case, need another normalization method */
+			size_t errorCode = FSE_normalizeM2(normalizedCounter, tableLog, count, total, maxSymbolValue);
+			if (FSE_isError(errorCode)) return errorCode;
 		}
 		else normalizedCounter[largest] += (short)stillToDistribute;
 	}
 
 #if 0
 	{   /* Print Table (debug) */
-		int s;
+		U32 s;
+		U32 nTotal = 0;
 		for (s=0; s<=maxSymbolValue; s++)
 			printf("%3i: %4i \n", s, normalizedCounter[s]);
+		for (s=0; s<=maxSymbolValue; s++)
+			nTotal += abs(normalizedCounter[s]);
+		if (nTotal != (1U<<tableLog))
+			printf("Warning !!! Total == %u != %u !!!", nTotal, 1U<<tableLog);
 		getchar();
 	}
 #endif
@@ -49437,12 +51112,6 @@ size_t FSE_compress_usingCTable (void* dst, size_t dstSize,
 	return FSE_closeCStream(&bitC);
 }
 
-static size_t FSE_compressRLE (BYTE *out, BYTE symbol)
-{
-	*out=symbol;
-	return 1;
-}
-
 size_t FSE_compressBound(size_t size) { return FSE_COMPRESSBOUND(size); }
 
 size_t FSE_compress2 (void* dst, size_t dstSize, const void* src, size_t srcSize, unsigned maxSymbolValue, unsigned tableLog)
@@ -49468,8 +51137,8 @@ size_t FSE_compress2 (void* dst, size_t dstSize, const void* src, size_t srcSize
 	/* Scan input and build symbol stats */
 	errorCode = FSE_count (count, ip, srcSize, &maxSymbolValue);
 	if (FSE_isError(errorCode)) return errorCode;
-	if (errorCode == srcSize) return FSE_compressRLE (ostart, *istart);
-	if (errorCode < ((srcSize * 7) >> 10)) return 0;   /* Heuristic : not compressible enough */
+	if (errorCode == srcSize) return 1;
+	if (errorCode < (srcSize >> 7)) return 0;   /* Heuristic : not compressible enough */
 
 	tableLog = FSE_optimalTableLog(tableLog, srcSize, maxSymbolValue);
 	errorCode = FSE_normalizeCount (norm, tableLog, count, srcSize, maxSymbolValue);
@@ -49518,7 +51187,7 @@ size_t FSE_decompressRLE(void* dst, size_t originalSize,
 
 size_t FSE_buildDTable_rle (void* DTable, BYTE symbolValue)
 {
-	U32* const base32 = (U32* const)DTable;
+	U32* const base32 = (U32*)DTable;
 	FSE_decode_t* const cell = (FSE_decode_t*)(base32 + 1);
 
 	/* Sanity check */
@@ -49535,7 +51204,7 @@ size_t FSE_buildDTable_rle (void* DTable, BYTE symbolValue)
 
 size_t FSE_buildDTable_raw (void* DTable, unsigned nbBits)
 {
-	U32* const base32 = (U32* const)DTable;
+	U32* const base32 = (U32*)DTable;
 	FSE_decode_t* dinfo = (FSE_decode_t*)(base32 + 1);
 	const unsigned tableSize = 1 << nbBits;
 	const unsigned tableMask = tableSize - 1;
@@ -49651,7 +51320,7 @@ unsigned FSE_reloadDStream(FSE_DStream_t* bitD)
 
 void FSE_initDState(FSE_DState_t* DStatePtr, FSE_DStream_t* bitD, const void* DTable)
 {
-	const U32* const base32 = (const U32* const)DTable;
+	const U32* const base32 = (const U32*)DTable;
 	DStatePtr->state = FSE_readBits(bitD, base32[0]);
 	FSE_reloadDStream(bitD);
 	DStatePtr->table = base32 + 1;
@@ -49767,7 +51436,7 @@ size_t FSE_decompress(void* dst, size_t maxDstSize, const void* cSrc, size_t cSr
 	const BYTE* const istart = (const BYTE*)cSrc;
 	const BYTE* ip = istart;
 	short counting[FSE_MAX_SYMBOL_VALUE+1];
-	FSE_decode_t DTable[FSE_MAX_TABLESIZE];
+	FSE_decode_t DTable[FSE_DTABLE_SIZE_U32(FSE_MAX_TABLELOG)];
 	unsigned maxSymbolValue = FSE_MAX_SYMBOL_VALUE;
 	unsigned tableLog;
 	size_t errorCode, fastMode;
@@ -50011,7 +51680,7 @@ void FSE_FUNCTION_NAME(FSE_freeDTable, FSE_FUNCTION_EXTENSION) (void* DTable)
 size_t FSE_FUNCTION_NAME(FSE_buildDTable, FSE_FUNCTION_EXTENSION)
 (void* DTable, const short* const normalizedCounter, unsigned maxSymbolValue, unsigned tableLog)
 {
-	U32* const base32 = (U32* const)DTable;
+	U32* const base32 = (U32*)DTable;
 	FSE_DECODE_TYPE* const tableDecode = (FSE_DECODE_TYPE*) (base32+1);
 	const U32 tableSize = 1 << tableLog;
 	const U32 tableMask = tableSize-1;
@@ -50080,6 +51749,10 @@ size_t FSE_FUNCTION_NAME(FSE_buildDTable, FSE_FUNCTION_EXTENSION)
 /********************************************************
 *  Compiler specifics
 *********************************************************/
+#ifdef __AVX2__
+#  include <immintrin.h>   /* AVX2 intrinsics */
+#endif
+
 #ifdef _MSC_VER    /* Visual Studio */
 #  define FORCE_INLINE static __forceinline
 #  include <intrin.h>                    /* For Visual 2005 */
@@ -50094,10 +51767,12 @@ size_t FSE_FUNCTION_NAME(FSE_buildDTable, FSE_FUNCTION_EXTENSION)
 #  endif
 #endif
 
+#ifndef MEM_ACCESS_MODULE
+#define MEM_ACCESS_MODULE
 /********************************************************
 *  Basic Types
 *********************************************************/
-#if defined (__STDC_VERSION__) && __STDC_VERSION__ >= 199901L   // C99
+#if defined (__STDC_VERSION__) && __STDC_VERSION__ >= 199901L   /* C99 */
 # include <stdint.h>
 typedef  uint8_t BYTE;
 typedef uint16_t U16;
@@ -50114,17 +51789,16 @@ typedef   signed int        S32;
 typedef unsigned long long  U64;
 #endif
 
+#endif   /* MEM_ACCESS_MODULE */
+
 /********************************************************
 *  Constants
 *********************************************************/
-static const U32 ZSTD_magicNumber = 0xFD2FB51C;
+static const U32 ZSTD_magicNumber = 0xFD2FB51C;   /* Initial (limited) frame format */
 
 #define HASH_LOG (ZSTD_MEMORY_USAGE - 2)
 #define HASH_TABLESIZE (1 << HASH_LOG)
 #define HASH_MASK (HASH_TABLESIZE - 1)
-
-#define MAXD_LOG 16
-#define MAX_DISTANCE ((1 << MAXD_LOG) - 1)
 
 #define KNUTH 2654435761
 
@@ -50133,12 +51807,13 @@ static const U32 ZSTD_magicNumber = 0xFD2FB51C;
 #define BIT5  32
 #define BIT4  16
 
-#define KB *(1<<10)
-#define MB *(1<<20)
+#define KB *(1 <<10)
+#define MB *(1 <<20)
+#define GB *(1U<<30)
 
-#define BLOCKSIZE (128 KB)                 // define, for static allocation
-static const size_t g_maxBlockSize = 128 KB;   //((size_t)1 << 22) - 1;
-static const U32 g_maxDistance = 512 KB;
+#define BLOCKSIZE (128 KB)                 /* define, for static allocation */
+static const U32 g_maxDistance = 4 * BLOCKSIZE;
+static const U32 g_maxLimit = 1 GB;
 static const U32 g_searchStrength = 8;
 
 #define WORKPLACESIZE (BLOCKSIZE*11/4)
@@ -50172,21 +51847,6 @@ static unsigned ZSTD_isLittleEndian(void)
 	return one.c[0];
 }
 
-static U32 ZSTD_readBE32(const void* memPtr)
-{
-	const BYTE* p = (const BYTE*)memPtr;
-	return (U32)(((U32)p[0]<<24) + ((U32)p[1]<<16) + ((U32)p[2]<<8) + ((U32)p[3]<<0));
-}
-
-static void ZSTD_writeBE32(void* memPtr, U32 value)
-{
-	BYTE* const p = (BYTE* const) memPtr;
-	p[0] = (BYTE)(value>>24);
-	p[1] = (BYTE)(value>>16);
-	p[2] = (BYTE)(value>>8);
-	p[3] = (BYTE)(value>>0);
-}
-
 static U16    ZSTD_read16(const void* p) { return *(U16*)p; }
 
 static U32    ZSTD_read32(const void* p) { return *(U32*)p; }
@@ -50205,6 +51865,48 @@ static void ZSTD_wildcopy(void* dst, const void* src, size_t length)
 	BYTE* op = (BYTE*)dst;
 	BYTE* const oend = op + length;
 	while (op < oend) COPY8(op, ip);
+}
+
+static U32 ZSTD_readLE32(const void* memPtr)
+{
+	if (ZSTD_isLittleEndian())
+		return ZSTD_read32(memPtr);
+	else
+	{
+		const BYTE* p = (const BYTE*)memPtr;
+		return (U32)((U32)p[0] + ((U32)p[1]<<8) + ((U32)p[2]<<16) + ((U32)p[3]<<24));
+	}
+}
+
+static void ZSTD_writeLE32(void* memPtr, U32 val32)
+{
+	if (ZSTD_isLittleEndian())
+	{
+		memcpy(memPtr, &val32, 4);
+	}
+	else
+	{
+		BYTE* p = (BYTE*)memPtr;
+		p[0] = (BYTE)val32;
+		p[1] = (BYTE)(val32>>8);
+		p[2] = (BYTE)(val32>>16);
+		p[3] = (BYTE)(val32>>24);
+	}
+}
+
+static U32 ZSTD_readBE32(const void* memPtr)
+{
+	const BYTE* p = (const BYTE*)memPtr;
+	return (U32)(((U32)p[0]<<24) + ((U32)p[1]<<16) + ((U32)p[2]<<8) + ((U32)p[3]<<0));
+}
+
+static void ZSTD_writeBE32(void* memPtr, U32 value)
+{
+	BYTE* const p = (BYTE* const) memPtr;
+	p[0] = (BYTE)(value>>24);
+	p[1] = (BYTE)(value>>16);
+	p[2] = (BYTE)(value>>8);
+	p[3] = (BYTE)(value>>0);
 }
 
 static size_t ZSTD_writeProgressive(void* ptr, size_t value)
@@ -50251,36 +51953,66 @@ typedef struct
 	U32 origSize;
 } blockProperties_t;
 
+typedef struct {
+	void* buffer;
+	U32*  offsetStart;
+	U32*  offset;
+	BYTE* litStart;
+	BYTE* lit;
+	BYTE* litLengthStart;
+	BYTE* litLength;
+	BYTE* matchLengthStart;
+	BYTE* matchLength;
+	BYTE* dumpsStart;
+	BYTE* dumps;
+} seqStore_t;
+
+void ZSTD_resetSeqStore(seqStore_t* ssPtr)
+{
+	ssPtr->offset = ssPtr->offsetStart;
+	ssPtr->lit = ssPtr->litStart;
+	ssPtr->litLength = ssPtr->litLengthStart;
+	ssPtr->matchLength = ssPtr->matchLengthStart;
+	ssPtr->dumps = ssPtr->dumpsStart;
+}
+
 typedef struct
 {
 	const BYTE* base;
 	U32 current;
-	BYTE* workplace;
-#ifdef _INCLUDED_IMM
-	__m256i justToBeAligned;
+	U32 nextUpdate;
+	seqStore_t seqStore;
+#ifdef __AVX2__
+	__m256i hashTable[HASH_TABLESIZE>>3];
+#else
+	U32 hashTable[HASH_TABLESIZE];
 #endif
-	U32   hashTable[HASH_TABLESIZE];
-} refTables_t;
+} cctxi_t;
 
 ZSTD_cctx_t ZSTD_createCCtx(void)
 {
-	refTables_t* srt = (refTables_t *) malloc( sizeof(refTables_t) );
-	srt->workplace = (BYTE*) malloc(WORKPLACESIZE);
-	return (ZSTD_cctx_t)srt;
+	cctxi_t* ctx = (cctxi_t*) malloc( sizeof(cctxi_t) );
+	ctx->seqStore.buffer = malloc(WORKPLACESIZE);
+	ctx->seqStore.offsetStart = (U32*) (ctx->seqStore.buffer);
+	ctx->seqStore.litStart = (BYTE*) (ctx->seqStore.offsetStart + (BLOCKSIZE>>2));
+	ctx->seqStore.litLengthStart =  ctx->seqStore.litStart + BLOCKSIZE;
+	ctx->seqStore.matchLengthStart = ctx->seqStore.litLengthStart + (BLOCKSIZE>>2);
+	ctx->seqStore.dumpsStart = ctx->seqStore.matchLengthStart + (BLOCKSIZE>>2);
+	return (ZSTD_cctx_t)ctx;
 }
 
-void ZSTD_resetCCtx(ZSTD_cctx_t ctx)
+void ZSTD_resetCCtx(ZSTD_cctx_t cctx)
 {
-	refTables_t* srt = (refTables_t*)ctx;
-	srt->base = NULL;
-	memset(srt->hashTable, 0, HASH_TABLESIZE*4);
+	cctxi_t* ctx = (cctxi_t*)cctx;
+	ctx->base = NULL;
+	memset(ctx->hashTable, 0, HASH_TABLESIZE*4);
 }
 
-size_t ZSTD_freeCCtx(ZSTD_cctx_t ctx)
+size_t ZSTD_freeCCtx(ZSTD_cctx_t cctx)
 {
-	refTables_t *srt = (refTables_t *) (ctx);
-	free(srt->workplace);
-	free(srt);
+	cctxi_t* ctx = (cctxi_t*) (cctx);
+	free(ctx->seqStore.buffer);
+	free(ctx);
 	return 0;
 }
 
@@ -50315,9 +52047,9 @@ static unsigned ZSTD_highbit(U32 val)
 	unsigned long r;
 	_BitScanReverse(&r, val);
 	return (unsigned)r;
-#   elif defined(__GNUC__) && (GCC_VERSION >= 304)   // GCC Intrinsic
+#   elif defined(__GNUC__) && (GCC_VERSION >= 304)   /* GCC Intrinsic */
 	return 31 - __builtin_clz(val);
-#   else   // Software version
+#   else   /* Software version */
 	static const int DeBruijnClz[32] = { 0, 9, 1, 10, 13, 21, 2, 29, 11, 14, 16, 18, 22, 25, 3, 30, 8, 12, 20, 28, 15, 17, 24, 7, 19, 27, 23, 6, 26, 5, 4, 31 };
 	U32 v = val;
 	int r;
@@ -50434,13 +52166,11 @@ static size_t ZSTD_compressRle (void* dst, size_t maxDstSize, const void* src, s
 
 	ostart[ZSTD_blockHeaderSize] = *(BYTE*)src;
 
-	// Build header
-	{
-		ostart[0]  = (BYTE)(srcSize>>16);
-		ostart[1]  = (BYTE)(srcSize>>8);
-		ostart[2]  = (BYTE)srcSize;
-		ostart[0] += (BYTE)(bt_rle<<6);
-	}
+	/* Build header */
+	ostart[0]  = (BYTE)(srcSize>>16);
+	ostart[1]  = (BYTE)(srcSize>>8);
+	ostart[2]  = (BYTE)srcSize;
+	ostart[0] += (BYTE)(bt_rle<<6);
 
 	return ZSTD_blockHeaderSize+1;
 }
@@ -50452,13 +52182,11 @@ static size_t ZSTD_noCompressBlock (void* dst, size_t maxDstSize, const void* sr
 	if (srcSize + ZSTD_blockHeaderSize > maxDstSize) return (size_t)-ZSTD_ERROR_maxDstSize_tooSmall;
 	memcpy(ostart + ZSTD_blockHeaderSize, src, srcSize);
 
-	// Build header
-	{
-		ostart[0] = (BYTE)(srcSize>>16);
-		ostart[1] = (BYTE)(srcSize>>8);
-		ostart[2] = (BYTE)srcSize;
-		ostart[0] += (BYTE)(bt_raw<<6); /* is a raw (uncompressed) block */
-	}
+	/* Build header */
+	ostart[0] = (BYTE)(srcSize>>16);
+	ostart[1] = (BYTE)(srcSize>>8);
+	ostart[2] = (BYTE)srcSize;
+	ostart[0] += (BYTE)(bt_raw<<6);   /* is a raw (uncompressed) block */
 
 	return ZSTD_blockHeaderSize+srcSize;
 }
@@ -50474,7 +52202,7 @@ static size_t ZSTD_compressLiterals_usingCTable(void* dst, size_t dstSize,
 	FSE_CStream_t bitC;
 	FSE_CState_t CState1, CState2;
 
-	// init
+	/* init */
 	(void)dstSize;   // objective : ensure it fits into dstBuffer (Todo)
 	FSE_initCStream(&bitC, dst);
 	FSE_initCState(&CState1, CTable);
@@ -50543,36 +52271,38 @@ static size_t ZSTD_compressLiterals (void* dst, size_t dstSize,
 	size_t errorCode;
 	const size_t minGain = ZSTD_minGain(srcSize);
 
-	// early out
+	/* early out */
 	if (dstSize < FSE_compressBound(srcSize)) return (size_t)-ZSTD_ERROR_maxDstSize_tooSmall;
 
-	// Scan input and build symbol stats
+	/* Scan input and build symbol stats */
 	errorCode = FSE_count (count, ip, srcSize, &maxSymbolValue);
 	if (FSE_isError(errorCode)) return (size_t)-ZSTD_ERROR_GENERIC;
 	if (errorCode == srcSize) return 1;
-	if (errorCode < ((srcSize * 7) >> 10)) return 0;
+	//if (errorCode < ((srcSize * 7) >> 10)) return 0;
+	//if (errorCode < (srcSize >> 7)) return 0;
+	if (errorCode < (srcSize >> 6)) return 0;   /* heuristic : probably not compressible enough */
 
 	tableLog = FSE_optimalTableLog(tableLog, srcSize, maxSymbolValue);
 	errorCode = (int)FSE_normalizeCount (norm, tableLog, count, srcSize, maxSymbolValue);
 	if (FSE_isError(errorCode)) return (size_t)-ZSTD_ERROR_GENERIC;
 
-	// Write table description header
+	/* Write table description header */
 	errorCode = FSE_writeHeader (op, FSE_MAX_HEADERSIZE, norm, maxSymbolValue, tableLog);
 	if (FSE_isError(errorCode)) return (size_t)-ZSTD_ERROR_GENERIC;
 	op += errorCode;
 
-	// Compress
+	/* Compress */
 	errorCode = FSE_buildCTable (&CTable, norm, maxSymbolValue, tableLog);
 	if (FSE_isError(errorCode)) return (size_t)-ZSTD_ERROR_GENERIC;
 	errorCode = ZSTD_compressLiterals_usingCTable(op, oend - op, ip, srcSize, &CTable);
 	if (ZSTD_isError(errorCode)) return errorCode;
 	op += errorCode;
 
-	// check compressibility
+	/* check compressibility */
 	if ( (size_t)(op-ostart) >= srcSize-minGain)
 		return 0;
 
-	// Build header
+	/* Build header */
 	{
 		size_t totalSize;
 		totalSize  = op - ostart - ZSTD_blockHeaderSize;
@@ -50585,14 +52315,9 @@ static size_t ZSTD_compressLiterals (void* dst, size_t dstSize,
 	return op-ostart;
 }
 
-static size_t ZSTD_compressEntropy(BYTE* dst, size_t maxDstSize,
-						const BYTE* op_lit_start, const BYTE* op_lit,
-						const BYTE* op_litLength_start, const BYTE* op_litLength,
-						const BYTE* op_matchLength_start,
-						const U32*  op_offset_start,
-						const BYTE* op_dumps_start, const BYTE* op_dumps,
-						size_t srcSize, size_t lastLLSize
-						)
+static size_t ZSTD_compressSequences(BYTE* dst, size_t maxDstSize,
+									 const seqStore_t* seqStorePtr,
+									 size_t lastLLSize, size_t srcSize)
 {
 	FSE_CStream_t blockStream;
 	U32 count[256];
@@ -50600,14 +52325,18 @@ static size_t ZSTD_compressEntropy(BYTE* dst, size_t maxDstSize,
 	size_t mostFrequent;
 	U32 max = 255;
 	U32 tableLog = 11;
-	const size_t nbSeq = op_litLength - op_litLength_start;
 	U32 CTable_LitLength  [FSE_CTABLE_SIZE_U32(LLFSELog, MaxLL )];
-	U32 CTable_OffsetBits [FSE_CTABLE_SIZE_U32(OffFSELog, MaxOff)];
+	U32 CTable_OffsetBits [FSE_CTABLE_SIZE_U32(OffFSELog,MaxOff)];
 	U32 CTable_MatchLength[FSE_CTABLE_SIZE_U32(MLFSELog, MaxML )];
 	U32 LLtype, Offtype, MLtype;
+	const BYTE* const op_lit_start = seqStorePtr->litStart;
+	const BYTE* op_lit = seqStorePtr->lit;
+	const BYTE* const op_litLength_start = seqStorePtr->litLengthStart;
+	const BYTE* op_litLength = seqStorePtr->litLength;
+	const U32*  op_offset = seqStorePtr->offset;
+	const BYTE* op_matchLength = seqStorePtr->matchLength;
+	const size_t nbSeq = op_litLength - op_litLength_start;
 	BYTE* op;
-	const U32* op_offset = op_offset_start + nbSeq;
-	const BYTE* op_matchLength = op_matchLength_start + nbSeq;
 	BYTE offsetBits_start[BLOCKSIZE / 4];
 	BYTE* offsetBitsPtr = offsetBits_start;
 	const size_t minGain = ZSTD_minGain(srcSize);
@@ -50646,7 +52375,7 @@ static size_t ZSTD_compressEntropy(BYTE* dst, size_t maxDstSize,
 
 	/* dumps */
 	{
-		size_t dumpsLength = op_dumps- op_dumps_start;
+		size_t dumpsLength = seqStorePtr->dumps - seqStorePtr->dumpsStart;
 		if (dumpsLength < 512)
 		{
 			op[0] = (BYTE)(dumpsLength >> 8);
@@ -50660,16 +52389,16 @@ static size_t ZSTD_compressEntropy(BYTE* dst, size_t maxDstSize,
 			op[2] = (BYTE)(dumpsLength);
 			op += 3;
 		}
-		memcpy(op, op_dumps_start, dumpsLength);
+		memcpy(op, seqStorePtr->dumpsStart, dumpsLength);
 		op += dumpsLength;
 	}
 
 	/* Encoding table of Literal Lengths */
 	max = MaxLL;
-	mostFrequent = FSE_countFast(count, op_litLength_start, nbSeq, &max);
+	mostFrequent = FSE_countFast(count, seqStorePtr->litLengthStart, nbSeq, &max);
 	if (mostFrequent == nbSeq)
 	{
-		*op++ = *op_litLength_start;
+		*op++ = *(seqStorePtr->litLengthStart);
 		FSE_buildCTable_rle(CTable_LitLength, (BYTE)max);
 		LLtype = bt_rle;
 	}
@@ -50691,19 +52420,12 @@ static size_t ZSTD_compressEntropy(BYTE* dst, size_t maxDstSize,
 	{
 		/* create OffsetBits */
 		size_t i;
+		const U32* const op_offset_start = seqStorePtr->offsetStart;
 		max = MaxOff;
 		for (i=0; i<nbSeq; i++)
 		{
-#if 1
 			offsetBits_start[i] = (BYTE)ZSTD_highbit(op_offset_start[i]) + 1;
 			if (op_offset_start[i]==0) offsetBits_start[i]=0;
-#else
-			U32 offset = op_offset_start[i];
-			U32 r;
-			r = ZSTD_highbit(offset) + 1;
-			if (offset==0) r = 0;
-			offsetBits_start[i] = (BYTE)r;
-#endif
 		}
 		offsetBitsPtr += nbSeq;
 		mostFrequent = FSE_countFast(count, offsetBits_start, nbSeq, &max);
@@ -50730,10 +52452,10 @@ static size_t ZSTD_compressEntropy(BYTE* dst, size_t maxDstSize,
 
 	/* Encoding Table of MatchLengths */
 	max = MaxML;
-	mostFrequent = FSE_countFast(count, op_matchLength_start, nbSeq, &max);
+	mostFrequent = FSE_countFast(count, seqStorePtr->matchLengthStart, nbSeq, &max);
 	if (mostFrequent == nbSeq)
 	{
-		*op++ = *op_matchLength_start;
+		*op++ = *seqStorePtr->matchLengthStart;
 		FSE_buildCTable_rle(CTable_MatchLength, (BYTE)max);
 		MLtype = bt_rle;
 	}
@@ -50753,7 +52475,7 @@ static size_t ZSTD_compressEntropy(BYTE* dst, size_t maxDstSize,
 
 	seqHead[0] += (BYTE)((LLtype<<6) + (Offtype<<4) + (MLtype<<2));
 
-	// Encoding
+	/* Encoding */
 	{
 		FSE_CState_t stateMatchLength;
 		FSE_CState_t stateOffsetBits;
@@ -50793,54 +52515,52 @@ static size_t ZSTD_compressEntropy(BYTE* dst, size_t maxDstSize,
 	return op - dst;
 }
 
-static size_t ZSTD_encode(BYTE* op_lit, BYTE* op_ll, U32* op_offset, BYTE* op_ml, BYTE* op_dumps,
-						 size_t litLength, const BYTE* srcLit, size_t offset, size_t matchLength)
+static void ZSTD_storeSeq(seqStore_t* seqStorePtr, size_t litLength, const BYTE* literals, size_t offset, size_t matchLength)
 {
-	const BYTE* const dumpStart = op_dumps;
-	const BYTE* const l_end = op_lit + litLength;
+	BYTE* op_lit = seqStorePtr->lit;
+	BYTE* const l_end = op_lit + litLength;
 
 	/* copy Literals */
-	while (op_lit<l_end) COPY8(op_lit, srcLit);
+	while (op_lit<l_end) COPY8(op_lit, literals);
+	seqStorePtr->lit += litLength;
 
 	/* literal Length */
 	if (litLength >= MaxLL)
 	{
-		*op_ll++ = MaxLL;
+		*(seqStorePtr->litLength++) = MaxLL;
 		if (litLength<255 + MaxLL)
-			*op_dumps++ = (BYTE)(litLength - MaxLL);
+			*(seqStorePtr->dumps++) = (BYTE)(litLength - MaxLL);
 		else
 		{
-			*op_dumps++ = 255;
-			*(U32*)op_dumps = (U32)litLength; op_dumps += 3;   /* store direct result */
+			*(seqStorePtr->dumps++) = 255;
+			ZSTD_writeLE32(seqStorePtr->dumps, (U32)litLength); seqStorePtr->dumps += 3;
 		}
 	}
-	else *op_ll = (BYTE)litLength;
+	else *(seqStorePtr->litLength++) = (BYTE)litLength;
 
-	/*  match offset */
-	*op_offset = (U32)offset;
+	/* match offset */
+	*(seqStorePtr->offset++) = (U32)offset;
 
 	/* match Length */
 	if (matchLength >= MaxML)
 	{
-		*op_ml++ = MaxML;
-		if (matchLength<255 + MaxML)
-			*op_dumps++ = (BYTE)(matchLength - MaxML);
+		*(seqStorePtr->matchLength++) = MaxML;
+		if (matchLength < 255+MaxML)
+			*(seqStorePtr->dumps++) = (BYTE)(matchLength - MaxML);
 		else
 		{
-			*op_dumps++ = 255;
-			*(U32*)op_dumps = (U32)matchLength; op_dumps += 3;   /* store direct result */
+			*(seqStorePtr->dumps++) = 255;
+			ZSTD_writeLE32(seqStorePtr->dumps, (U32)matchLength); seqStorePtr->dumps+=3;
 		}
 	}
-	else *op_ml = (BYTE)matchLength;
-
-	return op_dumps - dumpStart;
+	else *(seqStorePtr->matchLength++) = (BYTE)matchLength;
 }
 
-static const U32 hashMask = (1<<HASH_LOG)-1;
-static const U64 prime5bytes =         889523592379ULL;
-static const U64 prime6bytes =      227718039650203ULL;
+//static const U32 hashMask = (1<<HASH_LOG)-1;
+//static const U64 prime5bytes =         889523592379ULL;
+//static const U64 prime6bytes =      227718039650203ULL;
 static const U64 prime7bytes =    58295818150454627ULL;
-static const U64 prime8bytes = 14923729446516375013ULL;
+//static const U64 prime8bytes = 14923729446516375013ULL;
 
 //static U32   ZSTD_hashPtr(const void* p) { return (U32) _bextr_u64(*(U64*)p * prime7bytes, (56-HASH_LOG), HASH_LOG); }
 //static U32   ZSTD_hashPtr(const void* p) { return ( (*(U64*)p * prime7bytes) << 8 >> (64-HASH_LOG)); }
@@ -50867,16 +52587,15 @@ static const BYTE* ZSTD_updateMatch(U32* table, const BYTE* p, const BYTE* start
 
 static int ZSTD_checkMatch(const BYTE* match, const BYTE* ip)
 {
-	return *(U32*)match == *(U32*)ip;
+	return ZSTD_read32(match) == ZSTD_read32(ip);
 }
 
-static size_t ZSTD_compressBlock(void* ctx, void* dst, size_t maxDstSize, const void* src, size_t srcSize)
+static size_t ZSTD_compressBlock(void* cctx, void* dst, size_t maxDstSize, const void* src, size_t srcSize)
 {
-	// Local Variables
-	refTables_t* srt = (refTables_t*) ctx;
-	U32*  HashTable = srt->hashTable;
-	BYTE* workplace = srt->workplace;
-	const BYTE* const base = srt->base;
+	cctxi_t* ctx = (cctxi_t*) cctx;
+	U32*  HashTable = (U32*)(ctx->hashTable);
+	seqStore_t* seqStorePtr = &(ctx->seqStore);
+	const BYTE* const base = ctx->base;
 
 	const BYTE* const istart = (const BYTE*)src;
 	const BYTE* ip = istart + 1;
@@ -50884,13 +52603,11 @@ static size_t ZSTD_compressBlock(void* ctx, void* dst, size_t maxDstSize, const 
 	const BYTE* const iend = istart + srcSize;
 	const BYTE* const ilimit = iend - 16;
 
-	BYTE *op_l = workplace, *op_l_start = op_l;
-	BYTE *op_rl = op_l + srcSize + 4, *op_rl_start = op_rl;
-	BYTE *op_ml = op_rl + (srcSize >> 2) + 4, *op_ml_start = op_ml;
-	U32  *op_offset = (U32*)(op_ml + (srcSize >> 2) + 4), *op_offset_start = op_offset;
-	BYTE *op_dumps = (BYTE*)(op_offset + (srcSize >> 2) + 4), *op_dumps_start = op_dumps;
 	size_t prevOffset=0, offset=0;
 	size_t lastLLSize;
+
+	/* init */
+	ZSTD_resetSeqStore(seqStorePtr);
 
 	/* Main Search Loop */
 	while (ip < ilimit)
@@ -50911,8 +52628,7 @@ static size_t ZSTD_compressBlock(void* ctx, void* dst, size_t maxDstSize, const 
 			if (offsetCode == prevOffset) offsetCode = 0;
 			prevOffset = offset;
 			offset = ip-match;
-			op_dumps += ZSTD_encode(op_l, op_rl++, op_offset++, op_ml++, op_dumps, litLength, anchor, offsetCode, matchLength);
-			op_l += litLength;
+			ZSTD_storeSeq(seqStorePtr, litLength, anchor, offsetCode, matchLength);
 
 			/* Fill Table */
 			ZSTD_addPtr(HashTable, ip+1, base);
@@ -50924,65 +52640,107 @@ static size_t ZSTD_compressBlock(void* ctx, void* dst, size_t maxDstSize, const 
 
 	/* Last Literals */
 	lastLLSize = iend - anchor;
-	memcpy(op_l, anchor, lastLLSize);
-	op_l += lastLLSize;
+	memcpy(seqStorePtr->lit, anchor, lastLLSize);
+	seqStorePtr->lit += lastLLSize;
 
 	/* Finale compression stage */
-	return ZSTD_compressEntropy((BYTE*)dst, maxDstSize,
-		op_l_start, op_l, op_rl_start, op_rl, op_ml_start, op_offset_start, op_dumps_start, op_dumps,
-		srcSize, lastLLSize);
-}
-
-/* this should be auto-vectorized by compiler */
-void ZSTD_limitCtx(void* ctx, const U32 limit)
-{
-	refTables_t* srt = (refTables_t*) ctx;
-	U32* h = srt->hashTable;
-	int i;
-
-#ifdef _INCLUDED_IMM   /* <immintrin.h> */
-	/* AVX2 version */
-	const __m256i limit8 = _mm256_set1_epi32(limit);
-	for (i=0; i<HASH_TABLESIZE; i+=8)
-	{
-		__m256i src =_mm256_loadu_si256((const __m256i*)(h+i));
-				src = _mm256_max_epu32(src, limit8);
-		_mm256_storeu_si256((__m256i*)(h+i), src);
-	}
-#else
-	for (i=0; i<HASH_TABLESIZE; ++i)
-	{
-		h[i] = h[i] > limit ? h[i] : limit;
-	}
-#endif
+	return ZSTD_compressSequences((BYTE*)dst, maxDstSize,
+								  seqStorePtr, lastLLSize, srcSize);
 }
 
 size_t ZSTD_compressBegin(ZSTD_cctx_t ctx, void* dst, size_t maxDstSize)
 {
-	// Sanity check
-	if (maxDstSize < 4) return (size_t)-ZSTD_ERROR_maxDstSize_tooSmall;
+	/* Sanity check */
+	if (maxDstSize < ZSTD_frameHeaderSize) return (size_t)-ZSTD_ERROR_maxDstSize_tooSmall;
 
-	// Init
+	/* Init */
 	ZSTD_resetCCtx(ctx);
 
-	// Header
+	/* Write Header */
 	ZSTD_writeBE32(dst, ZSTD_magicNumber);
 
-	return 4;
+	return ZSTD_frameHeaderSize;
+}
+
+/* this should be auto-vectorized by compiler */
+static void ZSTD_scaleDownCtx(void* cctx, const U32 limit)
+{
+	cctxi_t* ctx = (cctxi_t*) cctx;
+	int i;
+
+#if defined(__AVX2__)   /* <immintrin.h> */
+	/* AVX2 version */
+	__m256i* h = ctx->hashTable;
+	const __m256i limit8 = _mm256_set1_epi32(limit);
+	for (i=0; i<(HASH_TABLESIZE>>3); i++)
+	{
+		__m256i src =_mm256_loadu_si256((const __m256i*)(h+i));
+  const __m256i dec = _mm256_min_epu32(src, limit8);
+				src = _mm256_sub_epi32(src, dec);
+		_mm256_storeu_si256((__m256i*)(h+i), src);
+	}
+#else
+	U32* h = ctx->hashTable;
+	for (i=0; i<HASH_TABLESIZE; ++i)
+	{
+		U32 dec;
+		if (h[i] > limit) dec = limit; else dec = h[i];
+		h[i] -= dec;
+	}
+#endif
+}
+
+/* this should be auto-vectorized by compiler */
+static void ZSTD_limitCtx(void* cctx, const U32 limit)
+{
+	cctxi_t* ctx = (cctxi_t*) cctx;
+	int i;
+
+	if (limit > g_maxLimit)
+	{
+		ZSTD_scaleDownCtx(cctx, limit);
+		ctx->base += limit;
+		ctx->current -= limit;
+		ctx->nextUpdate -= limit;
+		return;
+	}
+
+#if defined(__AVX2__)   /* <immintrin.h> */
+	/* AVX2 version */
+	{
+		__m256i* h = ctx->hashTable;
+		const __m256i limit8 = _mm256_set1_epi32(limit);
+		//printf("Address h : %0X\n", (U32)h);    // address test
+		for (i=0; i<(HASH_TABLESIZE>>3); i++)
+		{
+			__m256i src =_mm256_loadu_si256((const __m256i*)(h+i));   // Unfortunately, clang doesn't guarantee 32-bytes alignment
+					src = _mm256_max_epu32(src, limit8);
+			_mm256_storeu_si256((__m256i*)(h+i), src);
+		}
+	}
+#else
+	{
+		U32* h = (U32*)(ctx->hashTable);
+		for (i=0; i<HASH_TABLESIZE; ++i)
+		{
+			if (h[i] < limit) h[i] = limit;
+		}
+	}
+#endif
 }
 
 size_t ZSTD_compressContinue(ZSTD_cctx_t cctx, void* dst, size_t maxDstSize, const void* src, size_t srcSize)
 {
-	refTables_t* ctx = (refTables_t*) cctx;
+	cctxi_t* ctx = (cctxi_t*) cctx;
 	const BYTE* const istart = (const BYTE* const)src;
 	const BYTE* ip = istart;
 	BYTE* const ostart = (BYTE* const)dst;
 	BYTE* op = ostart;
-	//U32 limit = 4 * BLOCKSIZE;
-	//const U32 updateRate = 2 * BLOCKSIZE;
+	const U32 updateRate = 2 * BLOCKSIZE;
 
 	/*  Init */
-	if (ctx->base==NULL) ctx->base = (const BYTE*)src, ctx->current=0;
+	if (ctx->base==NULL)
+		ctx->base = (const BYTE*)src, ctx->current=0, ctx->nextUpdate = g_maxDistance;
 	if (src != ctx->base + ctx->current)   /* not contiguous */
 	{
 			ZSTD_resetCCtx(ctx);
@@ -50997,20 +52755,18 @@ size_t ZSTD_compressContinue(ZSTD_cctx_t cctx, void* dst, size_t maxDstSize, con
 		size_t blockSize = BLOCKSIZE;
 		if (blockSize > srcSize) blockSize = srcSize;
 
-		/*
-		// update hash table
-		if (g_maxDistance <= BLOCKSIZE)   // static test
+		/* update hash table */
+		if (g_maxDistance <= BLOCKSIZE)   /* static test => all blocks are independent */
 		{
 			ZSTD_resetCCtx(ctx);
 			ctx->base = ip;
 			ctx->current=0;
 		}
-		else if (ip >= istart + limit)
+		else if (ip >= ctx->base + ctx->nextUpdate)
 		{
-			limit += updateRate;
-			ZSTD_limitCtx(ctx, limit - g_maxDistance);
+			ctx->nextUpdate += updateRate;
+			ZSTD_limitCtx(ctx, ctx->nextUpdate - g_maxDistance);
 		}
-		*/
 
 		/* compress */
 		if (maxDstSize < ZSTD_blockHeaderSize) return (size_t)-ZSTD_ERROR_maxDstSize_tooSmall;
@@ -51042,11 +52798,11 @@ size_t ZSTD_compressEnd(ZSTD_cctx_t ctx, void* dst, size_t maxDstSize)
 {
 	BYTE* op = (BYTE*)dst;
 
-	// Sanity check
+	/* Sanity check */
 	(void)ctx;
 	if (maxDstSize < ZSTD_blockHeaderSize) return (size_t)-ZSTD_ERROR_maxDstSize_tooSmall;
 
-	// End of frame
+	/* End of frame */
 	op[0] = (BYTE)(bt_end << 6);
 	op[1] = 0;
 	op[2] = 0;
@@ -51147,17 +52903,17 @@ FORCE_INLINE size_t ZSTD_decompressLiterals_usingDTable_generic(
 	FSE_initDState(&state2, &bitD, DTable);
 	op = oend;
 
-	// 2 symbols per loop
+	/* 2-4 symbols per loop */
 	while (!FSE_reloadDStream(&bitD) && (op>olimit+3))
 	{
 		*--op = fast ? FSE_decodeSymbolFast(&state1, &bitD) : FSE_decodeSymbol(&state1, &bitD);
 
-		if (LitFSELog*2+7 > sizeof(size_t)*8)    // This test must be static
+		if (LitFSELog*2+7 > sizeof(size_t)*8)    /* This test must be static */
 			FSE_reloadDStream(&bitD);
 
 		*--op = fast ? FSE_decodeSymbolFast(&state2, &bitD) : FSE_decodeSymbol(&state2, &bitD);
 
-		if (LitFSELog*4+7 < sizeof(size_t)*8)    // This test must be static
+		if (LitFSELog*4+7 < sizeof(size_t)*8)    /* This test must be static */
 		{
 			*--op = fast ? FSE_decodeSymbolFast(&state1, &bitD) : FSE_decodeSymbol(&state1, &bitD);
 			*--op = fast ? FSE_decodeSymbolFast(&state2, &bitD) : FSE_decodeSymbol(&state2, &bitD);
@@ -51208,7 +52964,7 @@ static size_t ZSTD_decompressLiterals(void* ctx, void* dst, size_t maxDstSize,
 	U32 fastMode;
 	size_t errorCode;
 
-	if (srcSize < 2) return (size_t)-ZSTD_ERROR_wrongLBlockSize;   // too small input size
+	if (srcSize < 2) return (size_t)-ZSTD_ERROR_wrongLBlockSize;   /* too small input size */
 
 	errorCode = FSE_readHeader (norm, &maxSymbolValue, &tableLog, ip, srcSize);
 	if (FSE_isError(errorCode)) return (size_t)-ZSTD_ERROR_GENERIC;
@@ -51298,7 +53054,7 @@ size_t ZSTD_decodeSeqHeaders(size_t* lastLLPtr, const BYTE** dumpsPtr,
 	/* sequences */
 	{
 		S16 norm[MaxML+1];    /* assumption : MaxML >= MaxLL and MaxOff */
-		size_t errorCode;
+		size_t headerSize;
 
 		/* Build DTables */
 		switch(LLtype)
@@ -51312,9 +53068,9 @@ size_t ZSTD_decodeSeqHeaders(size_t* lastLLPtr, const BYTE** dumpsPtr,
 			FSE_buildDTable_raw(DTableLL, LLbits); break;
 		default :
 			max = MaxLL;
-			errorCode = FSE_readHeader(norm, &max, &LLlog, ip, iend-ip);
-			if (FSE_isError(errorCode)) return (size_t)-ZSTD_ERROR_GENERIC;
-			ip += errorCode;
+			headerSize = FSE_readHeader(norm, &max, &LLlog, ip, iend-ip);
+			if (FSE_isError(headerSize)) return (size_t)-ZSTD_ERROR_GENERIC;
+			ip += headerSize;
 			FSE_buildDTable(DTableLL, norm, max, LLlog);
 		}
 
@@ -51329,9 +53085,9 @@ size_t ZSTD_decodeSeqHeaders(size_t* lastLLPtr, const BYTE** dumpsPtr,
 			FSE_buildDTable_raw(DTableOffb, Offbits); break;
 		default :
 			max = MaxOff;
-			errorCode = FSE_readHeader(norm, &max, &Offlog, ip, iend-ip);
-			if (FSE_isError(errorCode)) return (size_t)-ZSTD_ERROR_GENERIC;
-			ip += errorCode;
+			headerSize = FSE_readHeader(norm, &max, &Offlog, ip, iend-ip);
+			if (FSE_isError(headerSize)) return (size_t)-ZSTD_ERROR_GENERIC;
+			ip += headerSize;
 			FSE_buildDTable(DTableOffb, norm, max, Offlog);
 		}
 
@@ -51346,9 +53102,9 @@ size_t ZSTD_decodeSeqHeaders(size_t* lastLLPtr, const BYTE** dumpsPtr,
 			FSE_buildDTable_raw(DTableML, MLbits); break;
 		default :
 			max = MaxML;
-			errorCode = FSE_readHeader(norm, &max, &MLlog, ip, iend-ip);
-			if (FSE_isError(errorCode)) return (size_t)-ZSTD_ERROR_GENERIC;
-			ip += errorCode;
+			headerSize = FSE_readHeader(norm, &max, &MLlog, ip, iend-ip);
+			if (FSE_isError(headerSize)) return (size_t)-ZSTD_ERROR_GENERIC;
+			ip += headerSize;
 			FSE_buildDTable(DTableML, norm, max, MLlog);
 		}
 	}
@@ -51427,7 +53183,8 @@ _another_round:
 				if (add < 255) litLength += add;
 				else
 				{
-					litLength = (*(U32*)dumps) & 0xFFFFFF;
+					//litLength = (*(U32*)dumps) & 0xFFFFFF;
+					litLength = ZSTD_readLE32(dumps) & 0xFFFFFF;
 					dumps += 3;
 				}
 			}
@@ -51459,7 +53216,7 @@ _another_round:
 				if (add < 255) matchLength += add;
 				else
 				{
-					matchLength = (*(U32*)dumps) & 0xFFFFFF;
+					matchLength = ZSTD_readLE32(dumps) & 0xFFFFFF;
 					dumps += 3;
 				}
 			}
@@ -51586,23 +53343,23 @@ size_t ZSTD_decompress(void* dst, size_t maxDstSize, const void* src, size_t src
 	return ZSTD_decompressDCtx(ctx, dst, maxDstSize, src, srcSize);
 }
 
-/******************************
+/*******************************
 *  Streaming Decompression API
-******************************/
+*******************************/
 
 typedef struct
 {
 	U32 ctx[FSE_DTABLE_SIZE_U32(LLFSELog) + FSE_DTABLE_SIZE_U32(OffFSELog) + FSE_DTABLE_SIZE_U32(MLFSELog)];
 	size_t expected;
 	blockType_t bType;
-	U32 started;
+	U32 phase;
 } dctx_t;
 
 ZSTD_dctx_t ZSTD_createDCtx(void)
 {
 	dctx_t* dctx = (dctx_t*)malloc(sizeof(dctx_t));
-	dctx->expected = 4 + ZSTD_blockHeaderSize;   // Frame Header + Block Header
-	dctx->started = 0;
+	dctx->expected = ZSTD_frameHeaderSize;
+	dctx->phase = 0;
 	return (ZSTD_dctx_t)dctx;
 }
 
@@ -51612,7 +53369,7 @@ size_t ZSTD_freeDCtx(ZSTD_dctx_t dctx)
 	return 0;
 }
 
-size_t ZSTD_getNextcBlockSize(ZSTD_dctx_t dctx)
+size_t ZSTD_nextSrcSizeToDecompress(ZSTD_dctx_t dctx)
 {
 	return ((dctx_t*)dctx)->expected;
 }
@@ -51620,63 +53377,67 @@ size_t ZSTD_getNextcBlockSize(ZSTD_dctx_t dctx)
 size_t ZSTD_decompressContinue(ZSTD_dctx_t dctx, void* dst, size_t maxDstSize, const void* src, size_t srcSize)
 {
 	dctx_t* ctx = (dctx_t*)dctx;
-	size_t cSize = srcSize - ZSTD_blockHeaderSize;
-	size_t rSize;
 
-	// Sanity check
+	/* Sanity check */
 	if (srcSize != ctx->expected) return (size_t)-ZSTD_ERROR_wrongSrcSize;
 
-	// Decompress
-	if (!ctx->started)
+	/* Decompress : frame header */
+	if (ctx->phase == 0)
 	{
-		// Just check correct magic header
+		/* Check frame magic header */
 		U32 magicNumber = ZSTD_readBE32(src);
 		if (magicNumber != ZSTD_magicNumber) return (size_t)-ZSTD_ERROR_wrongMagicNumber;
-		rSize = 0;
+		ctx->phase = 1;
+		ctx->expected = ZSTD_blockHeaderSize;
+		return 0;
 	}
-	else
+
+	/* Decompress : block header */
+	if (ctx->phase == 1)
 	{
+		blockProperties_t bp;
+		size_t blockSize = ZSTD_getcBlockSize(src, ZSTD_blockHeaderSize, &bp);
+		if (ZSTD_isError(blockSize)) return blockSize;
+		if (bp.blockType == bt_end)
+		{
+			ctx->expected = 0;
+			ctx->phase = 0;
+		}
+		else
+		{
+			ctx->expected = blockSize;
+			ctx->bType = bp.blockType;
+			ctx->phase = 2;
+		}
+
+		return 0;
+	}
+
+	/* Decompress : block content */
+	{
+		size_t rSize;
 		switch(ctx->bType)
 		{
 		case bt_compressed:
-			rSize = ZSTD_decompressBlock(ctx, dst, maxDstSize, src, cSize);
+			rSize = ZSTD_decompressBlock(ctx, dst, maxDstSize, src, srcSize);
 			break;
 		case bt_raw :
-			rSize = ZSTD_copyUncompressedBlock(dst, maxDstSize, src, cSize);
+			rSize = ZSTD_copyUncompressedBlock(dst, maxDstSize, src, srcSize);
 			break;
 		case bt_rle :
 			return (size_t)-ZSTD_ERROR_GENERIC;   /* not yet handled */
 			break;
-		case bt_end :
+		case bt_end :   /* should never happen (filtered at phase 1) */
 			rSize = 0;
 			break;
 		default:
 			return (size_t)-ZSTD_ERROR_GENERIC;
 		}
+		ctx->phase = 1;
+		ctx->expected = ZSTD_blockHeaderSize;
+		return rSize;
 	}
 
-	// Prepare next block
-	{
-		const BYTE* header = (const BYTE*)src;
-		blockProperties_t bp;
-		size_t blockSize;
-		header += cSize;
-		blockSize = ZSTD_getcBlockSize(header, ZSTD_blockHeaderSize, &bp);
-		if (ZSTD_isError(blockSize)) return blockSize;
-		if (bp.blockType == bt_end)
-		{
-			ctx->expected = 0;
-			ctx->started = 0;
-		}
-		else
-		{
-			ctx->expected = blockSize + ZSTD_blockHeaderSize;
-			ctx->bType = bp.blockType;
-			ctx->started = 1;
-		}
-	}
-
-	return rSize;
 }
 
 // bundle
@@ -51684,25 +53445,10 @@ size_t ZSTD_decompressContinue(ZSTD_dctx_t dctx, void* dst, size_t maxDstSize, c
 //#line 1 "bundle.cpp"
 /*
  * Simple compression interface.
- * Copyright (c) 2013, 2014, Mario 'rlyeh' Rodriguez
-
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
+ * Copyright (c) 2013, 2014, 2015, Mario 'rlyeh' Rodriguez
  *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
+ * Distributed under the Boost Software License, Version 1.0.
+ * (See license copy at http://www.boost.org/LICENSE_1_0.txt)
 
  * - rlyeh ~~ listening to Boris / Missing Pieces
  */
@@ -52033,7 +53779,7 @@ namespace
 namespace libzpaq {
 	// Implement error handler
 	void error(const char* msg) {
-		fprintf( stderr, "<bundle/bunle.cpp> says: ZPAQ fatal error! %s\n", msg );
+		fprintf( stderr, "<bundle/bundle.cpp> says: ZPAQ fatal error! %s\n", msg );
 		exit(1);
 	}
 }
@@ -52079,7 +53825,8 @@ namespace bundle {
 			break; case MINIZ: return "MINIZ";
 			break; case SHOCO: return "SHOCO";
 			break; case LZIP: return "LZIP";
-			break; case LZMASDK: return "LZMA";
+			break; case LZMA20: return "LZMA20";
+			break; case LZMA25: return "LZMA25";
 			break; case ZPAQ: return "ZPAQ";
 			break; case LZ4HC: return "LZ4HC";
 			break; case BROTLI: return "BROTLI";
@@ -52110,7 +53857,8 @@ namespace bundle {
 			break; case MINIZ: return "zip";
 			break; case SHOCO: return "shoco";
 			break; case LZIP: return "lz";
-			break; case LZMASDK: return "lzma";
+			break; case LZMA20: return "lzma";
+			break; case LZMA25: return "lzma";
 			break; case ZPAQ: return "zpaq";
 			break; case LZ4HC: return "lz4";
 			break; case BROTLI: return "brotli";
@@ -52182,7 +53930,7 @@ namespace bundle {
 				break; case LZ4HC: outlen = LZ4_compressHC2( (const char *)in, (char *)out, inlen, 16 );
 				break; case MINIZ: case AUTO: outlen = tdefl_compress_mem_to_mem( out, outlen, in, inlen, TDEFL_MAX_PROBES_MASK ); // TDEFL_DEFAULT_MAX_PROBES );
 				break; case SHOCO: outlen = shoco_compress( (const char *)in, inlen, (char *)out, outlen );
-				break; case LZMASDK: { //outlen = lzma_compress<0>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen );
+				break; case LZMA20: case LZMA25: { //outlen = lzma_compress<0>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen );
 						unsigned propsSize = LZMA_PROPS_SIZE;
 						outlen = outlen - LZMA_PROPS_SIZE - 8;
 #if 0
@@ -52194,14 +53942,14 @@ namespace bundle {
 #else
 						CLzmaEncProps props;
 						LzmaEncProps_Init(&props);
-						props.level = 9;                 /* 0 <= level <= 9, default = 5 */
-						props.dictSize = 1 << 20;        /* default = (1 << 24) */
-						props.lc = 3;                    /* 0 <= lc <= 8, default = 3  */
-						props.lp = 0;                    /* 0 <= lp <= 4, default = 0  */
-						props.pb = 2;                    /* 0 <= pb <= 4, default = 2  */
-						props.fb = 32;                   /* 5 <= fb <= 273, default = 32 */
-						props.numThreads = 1;            /* 1 or 2, default = 2 */
-						props.writeEndMark = 1;          /* 0 or 1, default = 0 */
+						props.level = 9;                                      /* 0 <= level <= 9, default = 5 */
+						props.dictSize = 1 << (q == LZMA25 ? 25 : 20);        /* default = (1 << 24) */
+						props.lc = 3;                                         /* 0 <= lc <= 8, default = 3  */
+						props.lp = 0;                                         /* 0 <= lp <= 4, default = 0  */
+						props.pb = 2;                                         /* 0 <= pb <= 4, default = 2  */
+						props.fb = 32;                                        /* 5 <= fb <= 273, default = 32 */
+						props.numThreads = 1;                                 /* 1 or 2, default = 2 */
+						props.writeEndMark = 1;                               /* 0 or 1, default = 0 */
 
 						ok = (SZ_OK == LzmaEncode(
 						&((unsigned char *)out)[LZMA_PROPS_SIZE + 8], &outlen,
@@ -52268,7 +54016,7 @@ namespace bundle {
 			if( outlen2 = outlen, unpack(LZ4, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
 			if( outlen2 = outlen, unpack(MINIZ, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
 			if( outlen2 = outlen, unpack(BROTLI, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
-			if( outlen2 = outlen, unpack(LZMASDK, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
+			if( outlen2 = outlen, unpack(LZMA20, in, inlen, out, outlen2 ) ) return outlen = outlen2, true; // LZMA25 enters here too
 			if( outlen2 = outlen, unpack(LZIP, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
 			if( outlen2 = outlen, unpack(SHOCO, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
 			if( outlen2 = outlen, unpack(ZSTD, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
@@ -52284,7 +54032,7 @@ namespace bundle {
 				break; case LZ4: case LZ4HC: if( LZ4_decompress_safe( (const char *)in, (char *)out, inlen, outlen ) >= 0 ) bytes_read = inlen; // faster: bytes_read = LZ4_uncompress( (const char *)in, (char *)out, outlen );
 				break; case MINIZ: if( TINFL_DECOMPRESS_MEM_TO_MEM_FAILED != tinfl_decompress_mem_to_mem( out, outlen, in, inlen, TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF ) ) bytes_read = inlen;
 				break; case SHOCO: bytes_read = shoco_decompress( (const char *)in, inlen, (char *)out, outlen ) == outlen ? inlen : 0;
-				break; case LZMASDK: {
+				break; case LZMA20: case LZMA25: {
 						size_t inlen2 = inlen - LZMA_PROPS_SIZE - 8;
 						if( SZ_OK == LzmaUncompress((unsigned char *)out, &outlen, (unsigned char *)in + LZMA_PROPS_SIZE + 8, &inlen2, (unsigned char *)in, LZMA_PROPS_SIZE) ) {
 							bytes_read = inlen;
@@ -52403,10 +54151,10 @@ namespace bundle
 
 				result.push_back( file() );
 
-				result.back()["filename"] = file_stat.m_filename;
-				result.back()["comment"] = file_stat.m_comment;
+				result.back()["/**/"] = file_stat.m_comment;
+				result.back()["name"] = file_stat.m_filename;
 				result.back()["size"] = (unsigned int)file_stat.m_uncomp_size;
-				result.back()["size_z"] = (unsigned int)file_stat.m_comp_size;
+				result.back()["zlen"] = (unsigned int)file_stat.m_comp_size;
 				//result.back()["modify_time"] = ze.mtime;
 				//result.back()["access_time"] = ze.atime;
 				//result.back()["create_time"] = ze.ctime;
@@ -52435,8 +54183,8 @@ namespace bundle
 					}
 					*/
 
-					result.back()["content"].resize( uncomp_size );
-					memcpy( (void *)result.back()["content"].data(), p, uncomp_size );
+					result.back()["data"].resize( uncomp_size );
+					memcpy( (void *)result.back()["data"].data(), p, uncomp_size );
 
 					free(p);
 				}
@@ -52473,15 +54221,15 @@ namespace bundle
 			}
 
 			for( const_iterator it = this->begin(), end = this->end(); it != end; ++it ) {
-				std::map< std::string, bundle::string >::const_iterator filename = it->find("filename");
-				std::map< std::string, bundle::string >::const_iterator content = it->find("content");
-				std::map< std::string, bundle::string >::const_iterator comment = it->find("comment");
+				std::map< std::string, bundle::string >::const_iterator filename = it->find("name");
+				std::map< std::string, bundle::string >::const_iterator content = it->find("data");
+				std::map< std::string, bundle::string >::const_iterator comment = it->find("/**/");
 				if( filename != it->end() && content != it->end() ) {
 					const size_t bufsize = content->second.size();
 
 					int quality = q;
-					if( it->find("compression") != it->end() ) {
-						std::stringstream ss( it->find("compression")->second );
+					if( it->find("comp") != it->end() ) {
+						std::stringstream ss( it->find("comp")->second );
 						if( !(ss >> quality) ) quality = q;
 					}
 					switch( quality ) {

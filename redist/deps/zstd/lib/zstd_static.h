@@ -30,8 +30,8 @@
     - zstd source repository : https://github.com/Cyan4973/zstd
     - ztsd public forum : https://groups.google.com/forum/#!forum/lz4c
 */
-#ifndef ZSTD_STATIC_HEADER
-#define ZSTD_STATIC_HEADER
+#ifndef ZSTD_STATIC_H_INCLUDE
+#define ZSTD_STATIC_H_INCLUDE
 
 #if defined (__cplusplus)
 extern "C" {
@@ -58,9 +58,16 @@ typedef void* ZSTD_dctx_t;
 ZSTD_dctx_t ZSTD_createDCtx(void);
 size_t      ZSTD_freeDCtx(ZSTD_dctx_t dctx);
 
-size_t ZSTD_getNextcBlockSize(ZSTD_dctx_t dctx);
+size_t ZSTD_nextSrcSizeToDecompress(ZSTD_dctx_t dctx);
 size_t ZSTD_decompressContinue(ZSTD_dctx_t dctx, void* dst, size_t maxDstSize, const void* src, size_t srcSize);
-
+/*
+  Use above functions alternatively.
+  ZSTD_nextSrcSizeToDecompress() tells how much bytes to provide as input to ZSTD_decompressContinue().
+  This value is expected to be provided, precisely, as 'srcSize'.
+  Otherwise, compression will fail (result is an error code, which can be tested using ZSTD_isError() )
+  ZSTD_decompressContinue() result is the number of bytes regenerated within 'dst'.
+  It can be zero, which is not an error; it just means ZSTD_decompressContinue() has decoded some header.
+*/
 
 /**************************************
 *  Error management

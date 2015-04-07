@@ -27,14 +27,37 @@
 
 namespace brotli {
 
+static const int kMaxWindowBits = 24;
+static const int kMinWindowBits = 16;
+static const int kMinInputBlockBits = 16;
+static const int kMaxInputBlockBits = 24;
+
 struct BrotliParams {
+  BrotliParams()
+      : mode(MODE_TEXT),
+        quality(11),
+        lgwin(22),
+        lgblock(0),
+        enable_transforms(false),
+        greedy_block_split(false) {}
+
   enum Mode {
     MODE_TEXT = 0,
     MODE_FONT = 1,
   };
   Mode mode;
 
-  BrotliParams() : mode(MODE_TEXT) {}
+  // Controls the compression-speed vs compression-density tradeoffs. The higher
+  // the quality, the slower the compression. Range is 0 to 11.
+  int quality;
+  // Base 2 logarithm of the sliding window size. Range is 16 to 24.
+  int lgwin;
+  // Base 2 logarithm of the maximum input block size. Range is 16 to 24.
+  // If set to 0, the value will be set based on the quality.
+  int lgblock;
+
+  bool enable_transforms;
+  bool greedy_block_split;
 };
 
 class BrotliCompressor {
@@ -42,39 +65,47 @@ class BrotliCompressor {
   explicit BrotliCompressor(BrotliParams params);
   ~BrotliCompressor();
 
-  // Writes the stream header into the internal output buffer.
-  void WriteStreamHeader();
+  // The maximum input size that can be processed at once.
+  size_t input_block_size() const { return 1 << params_.lgblock; }
 
   // Encodes the data in input_buffer as a meta-block and writes it to
-  // encoded_buffer and sets *encoded_size to the number of bytes that was
-  // written.
-  void WriteMetaBlock(const size_t input_size,
+  // encoded_buffer (*encoded_size should be set to the size of
+  // encoded_buffer) and sets *encoded_size to the number of bytes that
+  // was written. Returns 0 if there was an error and 1 otherwise.
+  bool WriteMetaBlock(const size_t input_size,
                       const uint8_t* input_buffer,
                       const bool is_last,
                       size_t* encoded_size,
                       uint8_t* encoded_buffer);
 
   // Writes a zero-length meta-block with end-of-input bit set to the
-  // internal output buffer and copies the output buffer to encoded_buffer and
-  // sets *encoded_size to the number of bytes written.
-  void FinishStream(size_t* encoded_size, uint8_t* encoded_buffer);
+  // internal output buffer and copies the output buffer to encoded_buffer
+  // (*encoded_size should be set to the size of encoded_buffer) and sets
+  // *encoded_size to the number of bytes written. Returns false if there was
+  // an error and true otherwise.
+  bool FinishStream(size_t* encoded_size, uint8_t* encoded_buffer);
 
+  // No-op, but we keep it here for API backward-compatibility.
+  void WriteStreamHeader() {}
 
  private:
   // Initializes the hasher with the hashes of dictionary words.
-  void StoreDictionaryWordHashes();
+  void StoreDictionaryWordHashes(bool enable_transforms);
+
+  uint8_t* GetBrotliStorage(size_t size);
 
   BrotliParams params_;
-  int window_bits_;
+  int max_backward_distance_;
   std::unique_ptr<Hashers> hashers_;
-  Hashers::Type hash_type_;
-  int dist_ringbuffer_[4];
-  size_t dist_ringbuffer_idx_;
+  int hash_type_;
   size_t input_pos_;
-  RingBuffer ringbuffer_;
+  std::unique_ptr<RingBuffer> ringbuffer_;
   std::vector<float> literal_cost_;
-  int storage_ix_;
-  uint8_t* storage_;
+  int dist_cache_[4];
+  uint8_t last_byte_;
+  uint8_t last_byte_bits_;
+  int storage_size_;
+  std::unique_ptr<uint8_t[]> storage_;
   static StaticDictionary *static_dictionary_;
 };
 
@@ -86,7 +117,6 @@ int BrotliCompressBuffer(BrotliParams params,
                          const uint8_t* input_buffer,
                          size_t* encoded_size,
                          uint8_t* encoded_buffer);
-
 
 }  // namespace brotli
 
