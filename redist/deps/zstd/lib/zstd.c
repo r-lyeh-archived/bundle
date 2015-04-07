@@ -67,7 +67,7 @@
 #include <string.h>      /* memcpy, memmove */
 #include <stdio.h>       /* debug : printf */
 #include "zstd_static.h"
-#if defined(__clang__) || defined(__GNUC__)
+#if 0 //defined(__clang__) || defined(__GNUC__)
 #  include "fse.c"       /* due to GCC/Clang inlining limitations, including *.c runs noticeably faster */
 #else
 #  include "fse_static.h"

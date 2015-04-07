@@ -31600,7 +31600,7 @@ void *tdefl_write_image_to_png_file_in_memory(const void *pImage, int w, int h, 
   #include <stdio.h>
   #include <sys/stat.h>
 
-  #if defined(_MSC_VER) || defined(__MINGW64__)
+  #if defined(_MSC_VER) //|| defined(__MINGW64__)
 	static FILE *mz_fopen(const char *pFilename, const char *pMode)
 	{
 	  FILE* pFile = NULL;
@@ -50200,7 +50200,7 @@ typedef enum { ZSTD_LIST_ERRORS(ZSTD_GENERATE_ENUM) } ZSTD_errorCodes;   /* expo
 #endif
 
 
-#if defined(__clang__) || defined(__GNUC__)
+#if 0 //defined(__clang__) || defined(__GNUC__)
 
 //#line 1 "fse.c"
 #ifndef FSE_COMMONDEFS_ONLY
@@ -53493,7 +53493,7 @@ namespace giant
 	|| defined(__amd64__) || defined(_M_AMD64) \
 	|| defined(__x86_64) || defined(__x86_64__) \
 	|| defined(_M_X64)
-	enum { type = 'xinu', is_little = 1, is_big = 0 };
+	enum { xinu_type = 0, unix_type = 1, nuxi_type = 2, type = xinu_type, is_little = 1, is_big = 0 };
 #elif defined(_BIG_ENDIAN) \
 	|| ( defined(BYTE_ORDER) && defined(BIG_ENDIAN) && BYTE_ORDER == BIG_ENDIAN ) \
 	|| ( defined(_BYTE_ORDER) && defined(_BIG_ENDIAN) && _BYTE_ORDER == _BIG_ENDIAN ) \
@@ -53503,19 +53503,19 @@ namespace giant
 	|| defined(__ppc__) || defined(__hpux) \
 	|| defined(_MIPSEB) || defined(_POWER) \
 	|| defined(__s390__)
-	enum { type = 'unix', is_little = 0, is_big = 1 };
+	enum { xinu_type = 0, unix_type = 1, nuxi_type = 2, type = unix_type, is_little = 0, is_big = 1 };
 #else
 #   error <giant/giant.hpp> says: Middle endian/NUXI order is not supported
-	enum { type = 'nuxi', is_little = 0, is_big = 0 };
+	enum { xinu_type = 0, unix_type = 1, nuxi_type = 2, type = nuxi_type, is_little = 0, is_big = 0 };
 #endif
 
 	template<typename T>
 	T swap( T out )
 	{
 		static union autodetect {
-			int word = 1;
+			int word;
 			char byte[ sizeof(int) ];
-			autodetect() {
+			autodetect() : word(1) {
 				assert(( "<giant/giant.hpp> says: wrong endianness detected!", (!byte[0] && is_big) || (byte[0] && is_little) ));
 			}
 		} _;
@@ -53576,20 +53576,20 @@ namespace giant
 
 	template<typename T>
 	T letoh( const T &in ) {
-		return type == 'xinu' ? in : swap( in );
+		return type == xinu_type ? in : swap( in );
 	}
 	template<typename T>
 	T htole( const T &in ) {
-		return type == 'xinu' ? in : swap( in );
+		return type == xinu_type ? in : swap( in );
 	}
 
 	template<typename T>
 	T betoh( const T &in ) {
-		return type == 'unix' ? in : swap( in );
+		return type == unix_type ? in : swap( in );
 	}
 	template<typename T>
 	T htobe( const T &in ) {
-		return type == 'unix' ? in : swap( in );
+		return type == unix_type ? in : swap( in );
 	}
 }
 
@@ -53931,7 +53931,7 @@ namespace bundle {
 				break; case MINIZ: case AUTO: outlen = tdefl_compress_mem_to_mem( out, outlen, in, inlen, TDEFL_MAX_PROBES_MASK ); // TDEFL_DEFAULT_MAX_PROBES );
 				break; case SHOCO: outlen = shoco_compress( (const char *)in, inlen, (char *)out, outlen );
 				break; case LZMA20: case LZMA25: { //outlen = lzma_compress<0>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen );
-						unsigned propsSize = LZMA_PROPS_SIZE;
+						SizeT propsSize = LZMA_PROPS_SIZE;
 						outlen = outlen - LZMA_PROPS_SIZE - 8;
 #if 0
 						ok = ( SZ_OK == LzmaCompress(
@@ -53954,7 +53954,7 @@ namespace bundle {
 						ok = (SZ_OK == LzmaEncode(
 						&((unsigned char *)out)[LZMA_PROPS_SIZE + 8], &outlen,
 						(const unsigned char *)in, inlen,
-						&props, &((unsigned char *)out)[0], &propsSize, props.writeEndMark,
+						&props, &((unsigned char *)out)[0], (SizeT*)&propsSize, props.writeEndMark,
 						NULL, &g_Alloc, &g_Alloc));
 						ok = ok && (propsSize == LZMA_PROPS_SIZE);
 #endif

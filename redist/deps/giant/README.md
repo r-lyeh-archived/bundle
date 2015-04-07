@@ -1,4 +1,4 @@
-giant
+giant <a href="https://travis-ci.org/r-lyeh/giant"><img src="https://api.travis-ci.org/r-lyeh/giant.svg?branch=master" align="right" /></a>
 =====
 
 - Giant is a tiny C++11 library to handle little/big endianness.
