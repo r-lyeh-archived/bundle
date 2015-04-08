@@ -206,9 +206,10 @@ struct init_blosc {
 } _;
 #endif
 
-#if 0
+#if 1
 // bsc
 #pragma comment(lib, "Advapi32.lib")
+//#define LIBBSC_SORT_TRANSFORM_SUPPORT 1
 #include "deps/libbsc/libbsc/libbsc.h"
 #include "deps/libbsc/libbsc/libbsc/libbsc.cpp"
 #include "deps/libbsc/libbsc/lzp/lzp.cpp"

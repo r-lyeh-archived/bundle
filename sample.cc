@@ -8,7 +8,7 @@ int main() {
 
     // pack, unpack & verify
     using namespace bundle;
-    std::vector<unsigned> libs { RAW, LZ4, LZ4HC, SHOCO, MINIZ, LZMA20, LZIP, LZMA25, ZPAQ, BROTLI, ZSTD };
+    std::vector<unsigned> libs { RAW, LZ4, LZ4HC, SHOCO, MINIZ, LZMA20, LZIP, LZMA25, ZPAQ, BROTLI, ZSTD, BSC };
     for( auto &use : libs ) {
         std::string packed = pack(use, original);
         std::string unpacked = unpack(packed);

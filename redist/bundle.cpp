@@ -263,11 +263,11 @@ namespace bundle {
             break; case BROTLI: return "BROTLI";
             break; case AUTO: return "AUTO";
             break; case ZSTD: return "ZSTD";
+            break; case BSC: return "BSC";
 #if 0
             // for archival purposes
             break; case BZIP2: return "BZIP2";
             break; case BLOSC: return "BLOSC";
-            break; case BSC: return "BSC";
             break; case FSE: return "FSE";
             break; case LZFX: return "LZFX";
             break; case LZHAM: return "LZHAM";
@@ -295,11 +295,11 @@ namespace bundle {
             break; case BROTLI: return "brotli";
             break; case AUTO: return "auto";
             break; case ZSTD: return "zstd";
+            break; case BSC: return "bsc";
 #if 0
             // for archival purposes
             break; case BZIP2: return "bz2";
             break; case BLOSC: return "blosc";
-            break; case BSC: return "bsc";
             break; case FSE: return "fse";
             break; case LZFX: return "lzfx";
             break; case LZHAM: return "lzham";
@@ -403,6 +403,7 @@ namespace bundle {
                         ok = (1 == brotli::BrotliCompressBuffer( bp, inlen, (const uint8_t *)in, &outlen, (uint8_t *)out ));
                 }
                 break; case ZSTD: outlen = ZSTD_compress( out, outlen, in, inlen ); if( ZSTD_isError(outlen) ) outlen = 0;
+                break; case BSC: outlen = bsc_compress((const unsigned char *)in, (unsigned char *)out, inlen, LIBBSC_DEFAULT_LZPHASHSIZE, LIBBSC_DEFAULT_LZPMINLEN, LIBBSC_DEFAULT_BLOCKSORTER, LIBBSC_CODER_QLFC_ADAPTIVE, LIBBSC_FEATURE_FASTMODE | 0);
 #if 0
                 // for archival purposes:
                 break; case YAPPY: outlen = Yappy_Compress( (const unsigned char *)in, (unsigned char *)out, inlen ) - out;
@@ -410,7 +411,6 @@ namespace bundle {
                 break; case BLOSC: { int clevel = 9, doshuffle = 0, typesize = 1;
                     int r = blosc_compress( clevel, doshuffle, typesize, inlen, in, out, outlen);
                     if( r <= 0 ) outlen = 0; else outlen = r; }
-                break; case BSC: outlen = bsc_compress((const unsigned char *)in, (unsigned char *)out, inlen, LIBBSC_DEFAULT_LZPHASHSIZE, LIBBSC_DEFAULT_LZPMINLEN, LIBBSC_DEFAULT_BLOCKSORTER, LIBBSC_CODER_QLFC_ADAPTIVE, LIBBSC_FEATURE_FASTMODE | 0);
                 break; case FSE: outlen = FSE_compress( out, (const unsigned char *)in, inlen ); if( outlen < 0 ) outlen = 0;
                 break; case LZFX: if( lzfx_compress( in, inlen, out, &outlen ) < 0 ) outlen = 0;
                 break; case LZP1: outlen = lzp_compress( (const uint8_t *)in, inlen, (uint8_t *)out, outlen );
@@ -473,13 +473,13 @@ namespace bundle {
                 break; case ZPAQ: if( zpaq_decompress( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen ) ) bytes_read = inlen;
                 break; case BROTLI: if( 1 == BrotliDecompressBuffer(inlen, (const uint8_t *)in, &outlen, (uint8_t *)out ) ) bytes_read = inlen;
                 break; case ZSTD: bytes_read = ZSTD_decompress( out, outlen, in, inlen ); if( !ZSTD_isError(bytes_read) ) bytes_read = inlen;
+                break; case BSC: bsc_decompress((const unsigned char *)in, inlen, (unsigned char *)out, outlen, /*LIBBSC_FEATURE_FASTMODE | */0); bytes_read = inlen;
 #if 0
                 // for archival purposes:
                 break; case EASYLZMA: if( lzma_decompress<0>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen ) ) bytes_read = inlen;
                 break; case YAPPY: Yappy_UnCompress( (const unsigned char *)in, ((const unsigned char *)in) + inlen, (unsigned char *)out ); bytes_read = inlen;
                 break; case BZIP2: { unsigned int o(outlen); if( BZ_OK == BZ2_bzBuffToBuffDecompress( (char *)out, &o, (char *)in, inlen, 0 /*fast*/, 0 /*verbosity*/ ) ) { bytes_read = inlen; outlen = o; }}
                 break; case BLOSC: if( blosc_decompress( in, out, outlen ) > 0 ) bytes_read = inlen;
-                break; case BSC: bsc_decompress((const unsigned char *)in, inlen, (unsigned char *)out, outlen, /*LIBBSC_FEATURE_FASTMODE | */0); bytes_read = inlen;
                 break; case FSE: { int r = FSE_decompress( (unsigned char*)out, outlen, (const void *)in ); if( r >= 0 ) bytes_read = r; }
                 break; case LZFX: if( lzfx_decompress( in, inlen, out, &outlen ) >= 0 ) bytes_read = inlen;
                 break; case LZP1: lzp_decompress( (const uint8_t *)in, inlen, (uint8_t *)out, outlen ); bytes_read = inlen;

@@ -39,7 +39,7 @@
 namespace bundle
 {
     // libraries and/or encoders
-    enum { RAW, SHOCO, LZ4, MINIZ, LZIP, LZMA20, ZPAQ, LZ4HC, BROTLI, ZSTD, LZMA25 }; /* archival: BZIP2, LZFX, LZHAM, LZP1, FSE, BLOSC, YAPPY */
+    enum { RAW, SHOCO, LZ4, MINIZ, LZIP, LZMA20, ZPAQ, LZ4HC, BROTLI, ZSTD, LZMA25, BSC }; /* archival: BZIP2, LZFX, LZHAM, LZP1, FSE, BLOSC, YAPPY */
     // some algorithm aliases
     enum { UNDEFINED = RAW, ASCII = SHOCO, BINARY = MINIZ, LZ77 = LZ4HC, DEFLATE = MINIZ, LZMA = LZMA20, CM = ZPAQ }; /* archival: BWT = BZIP2 */
     // speed/ratio aliases
@@ -161,7 +161,7 @@ namespace bundle
         return output;
     }
 
-    static inline std::vector<unsigned> encodings() {
+    static inline std::vector<unsigned> fast_encodings() {
         static std::vector<unsigned> all;
         if( all.empty() ) {
             all.push_back( NONE );
@@ -171,21 +171,29 @@ namespace bundle
             all.push_back( LZIP );
             all.push_back( LZMA20 );
             all.push_back( LZMA25 );
-            all.push_back( ZPAQ );
             all.push_back( LZ4HC );
-            all.push_back( BROTLI );
             all.push_back( ZSTD ); 
+            all.push_back( BSC );
 #if 0
             // for archival purposes
             all.push_back( BZIP2 );
             all.push_back( LZFX );
-            all.push_back( BSC );
             all.push_back( LZHAM );
             all.push_back( LZP1 );
             all.push_back( FSE );
             all.push_back( BLOSC );
             all.push_back( YAPPY );
 #endif
+        }
+        return all;
+    }
+
+    static inline std::vector<unsigned> encodings() {
+        static std::vector<unsigned> all;
+        if( all.empty() ) {
+            all = fast_encodings();
+            all.push_back( ZPAQ );
+            all.push_back( BROTLI );
         }
         return all;
     }
