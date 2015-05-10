@@ -63720,8 +63720,7 @@ size_t ZSTD_decompressContinue(ZSTD_dctx_t dctx, void* dst, size_t maxDstSize, c
  * Simple compression interface.
  * Copyright (c) 2013, 2014, 2015, Mario 'rlyeh' Rodriguez
  *
- * Distributed under the Boost Software License, Version 1.0.
- * (See license copy at http://www.boost.org/LICENSE_1_0.txt)
+ * Distributed under the zlib/libpng license
 
  * - rlyeh ~~ listening to Boris / Missing Pieces
  */

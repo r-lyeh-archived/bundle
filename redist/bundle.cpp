@@ -2,8 +2,7 @@
  * Simple compression interface.
  * Copyright (c) 2013, 2014, 2015, Mario 'rlyeh' Rodriguez
  *
- * Distributed under the Boost Software License, Version 1.0.
- * (See license copy at http://www.boost.org/LICENSE_1_0.txt)
+ * Distributed under the zlib/libpng license
 
  * - rlyeh ~~ listening to Boris / Missing Pieces
  */
@@ -59,8 +58,8 @@ namespace {
                 len = size - pos;
             }
             memcpy( buf, &data[ pos ], len );
-            pos += len; 
-            return len; 
+            pos += len;
+            return len;
         }
     };
 
@@ -369,7 +368,7 @@ namespace bundle {
                         &((unsigned char *)out)[LZMA_PROPS_SIZE + 8], &outlen,
                         (const unsigned char *)in, inlen,
                         &((unsigned char *)out)[0], &propsSize,
-                        level, dictSize, lc, lp, pb, fb, numThreads ) ); 
+                        level, dictSize, lc, lp, pb, fb, numThreads ) );
 #else
                         CLzmaEncProps props;
                         LzmaEncProps_Init(&props);

@@ -2,12 +2,11 @@
  * Simple compression interface.
  * Copyright (c) 2013, 2014, 2015, Mario 'rlyeh' Rodriguez
  *
- * Distributed under the Boost Software License, Version 1.0.
- * (See license copy at http://www.boost.org/LICENSE_1_0.txt)
+ * Distributed under the zlib/libpng license
 
  * - rlyeh ~~ listening to Boris / Missing Pieces
  */
- 
+
 #ifndef BUNDLE_HPP
 #define BUNDLE_HPP
 
@@ -172,7 +171,7 @@ namespace bundle
             all.push_back( LZMA20 );
             all.push_back( LZMA25 );
             all.push_back( LZ4HC );
-            all.push_back( ZSTD ); 
+            all.push_back( ZSTD );
             all.push_back( BSC );
 #if 0
             // for archival purposes

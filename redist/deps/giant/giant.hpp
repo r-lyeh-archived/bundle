@@ -1,10 +1,5 @@
-/*
- * A tiny library to handle little/big endianness.
-
- * Copyright (c) 2011-2014 Mario 'rlyeh' Rodriguez
- *
- * Distributed under the Boost Software License, Version 1.0.
- * (See license copy at http://www.boost.org/LICENSE_1_0.txt)
+/* A tiny library to handle little/big endianness.
+ * Copyright (c) 2011-2014 Mario 'rlyeh' Rodriguez, zlib/libpng licensed.
 
  * To do:
  * - Get autodetect out of template, so it does not get instanced once per type.
@@ -24,7 +19,7 @@
 
 namespace giant
 {
-    
+
 #if defined(_LITTLE_ENDIAN) \
     || ( defined(BYTE_ORDER) && defined(LITTLE_ENDIAN) && BYTE_ORDER == LITTLE_ENDIAN ) \
     || ( defined(_BYTE_ORDER) && defined(_LITTLE_ENDIAN) && _BYTE_ORDER == _LITTLE_ENDIAN ) \

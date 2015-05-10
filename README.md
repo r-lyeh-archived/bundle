@@ -5,9 +5,9 @@ bundle <a href="https://travis-ci.org/r-lyeh/bundle"><img src="https://api.travi
 - Bundle is optimized for highest compression ratios on each compressor, where possible.
 - Bundle is optimized for fastest decompression times on each decompressor, where possible.
 - Bundle is easy to integrate, comes in an amalgamated distribution.
-- Bundle is tiny. Header and source files. Self-contained, dependencies included. 
+- Bundle is tiny. Header and source files. Self-contained, dependencies included.
 - Bundle is cross-platform.
-- Bundle is BOOST licensed.
+- Bundle is zlib/libpng licensed.
 
 ### bundle stream format
 ```c++
@@ -32,7 +32,7 @@ bundle <a href="https://travis-ci.org/r-lyeh/bundle"><img src="https://api.travi
 - Note: you can mix streams of different algorithms into the very same ZIP archive.
 ```
 
-### sample 
+### sample
 ```c++
 #include <cassert>
 #include "bundle.hpp"
@@ -74,11 +74,11 @@ All ok.
 ```
 
 ### on picking up compressors (on regular basis)
-- sorted by compression ratio 
+- sorted by compression ratio
   - `zpaq < lzma25 / bsc < lzip < lzma20 < brotli < zstd < miniz < lz4hc < lz4`
-- sorted by compression time 
+- sorted by compression time
   - `lz4 < lz4hc < zstd < miniz < lzma20 < lzip < lzma25 / bsc << zpaq <<< brotli`
-- sorted by decompression time 
+- sorted by decompression time
   - `lz4hc < lz4 < zstd < miniz < brotli < lzma20 / lzma25 < lzip < bsc << zpaq`
 - sorted by memory overhead
   - `lz4 < lz4hc < zstd < miniz < brotli < lzma20 < lzip < lzma25 / bsc < zpaq`
@@ -122,10 +122,10 @@ struct archive : vector<file>    { // ~sequence of files
 ```
 
 ### licenses
-- [bundle](https://github.com/r-lyeh/bundle), BOOST license.
+- [bundle](https://github.com/r-lyeh/bundle), zlib/libpng license.
 - [brotli](https://github.com/google/brotli) by Jyrki Alakuijala and Zoltan Szabadka, Apache 2.0 license.
 - [easylzma](https://github.com/lloyd/easylzma) by Igor Pavlov and Lloyd Hilaiel, public domain.
-- [giant](https://githhub.com/r-lyeh/giant), BOOST license.
+- [giant](https://githhub.com/r-lyeh/giant), zlib/libpng license.
 - [libzpaq](https://github.com/zpaq/zpaq) by Matt Mahoney, public domain.
 - [libbsc](https://github.com/IlyaGrebnov/libbsc) by Ilya Grebnov, Apache 2.0 license.
 - [lz4](https://github.com/Cyan4973/lz4) by Yann Collet, BSD license.

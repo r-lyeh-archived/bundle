@@ -6,7 +6,7 @@ giant <a href="https://travis-ci.org/r-lyeh/giant"><img src="https://api.travis-
 - Giant is tiny. Header-only library.
 - Giant is cross-platform. Compiles under MSVC/GCC. Works on Windows/Linux.
 - Giant has no dependencies.
-- Giant is BOOST licensed.
+- Giant is zlib/libpng licensed.
 
 ### API
 - `const bool giant::is_little`
