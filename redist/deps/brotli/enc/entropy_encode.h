@@ -37,18 +37,17 @@ namespace brotli {
 void CreateHuffmanTree(const int *data,
                        const int length,
                        const int tree_limit,
-                       const int quality,
                        uint8_t *depth);
 
 // Change the population counts in a way that the consequent
-// Hufmann tree compression, especially its rle-part will be more
+// Huffman tree compression, especially its rle-part will be more
 // likely to compress this data more efficiently.
 //
 // length contains the size of the histogram.
 // counts contains the population counts.
 int OptimizeHuffmanCountsForRle(int length, int* counts);
 
-// Write a huffman tree from bit depths into the bitstream representation
+// Write a Huffman tree from bit depths into the bitstream representation
 // of a Huffman tree. The generated Huffman tree is to be compressed once
 // more using a Huffman tree
 void WriteHuffmanTree(const uint8_t* depth,

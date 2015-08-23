@@ -36,10 +36,10 @@ class RingBuffer {
         mask_((1 << window_bits) - 1),
         tail_size_(1 << tail_bits),
         pos_(0) {
-    static const int kSlackForFourByteHashingEverywhere = 3;
+    static const int kSlackForEightByteHashingEverywhere = 7;
     const int buflen = (1 << window_bits_) + tail_size_;
-    buffer_ = new uint8_t[buflen + kSlackForFourByteHashingEverywhere];
-    for (int i = 0; i < kSlackForFourByteHashingEverywhere; ++i) {
+    buffer_ = new uint8_t[buflen + kSlackForEightByteHashingEverywhere];
+    for (int i = 0; i < kSlackForEightByteHashingEverywhere; ++i) {
       buffer_[buflen + i] = 0;
     }
   }
@@ -61,7 +61,7 @@ class RingBuffer {
       // Copy into the end of the buffer, including the tail buffer.
       memcpy(&buffer_[masked_pos], bytes,
              std::min(n, ((1 << window_bits_) + tail_size_) - masked_pos));
-      // Copy into the begining of the buffer
+      // Copy into the beginning of the buffer
       memcpy(&buffer_[0], bytes + ((1 << window_bits_) - masked_pos),
              n - ((1 << window_bits_) - masked_pos));
     }

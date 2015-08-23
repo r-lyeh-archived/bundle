@@ -1,7 +1,37 @@
+import distutils
 from distutils.core import setup, Extension
 from distutils.command.build_ext import build_ext
 from distutils.cmd import Command
 import platform
+import os
+import re
+
+
+CURR_DIR = os.path.abspath(os.path.dirname(os.path.realpath(__file__)))
+
+# when compiling for Windows Python 2.7, force distutils to use Visual Studio
+# 2010 instead of 2008, as the latter doesn't support c++0x
+if platform.system() == 'Windows':
+    try:
+        import distutils.msvc9compiler
+    except distutils.errors.DistutilsPlatformError:
+        pass  # importing msvc9compiler raises when running under MinGW
+    else:
+        orig_find_vcvarsall = distutils.msvc9compiler.find_vcvarsall
+        def patched_find_vcvarsall(version):
+            return orig_find_vcvarsall(version if version != 9.0 else 10.0)
+        distutils.msvc9compiler.find_vcvarsall = patched_find_vcvarsall
+
+
+def get_version():
+    """ Return BROTLI_VERSION string as defined in 'brotlimodule.cc' file. """
+    brotlimodule = os.path.join(CURR_DIR, 'python', 'brotlimodule.cc')
+    with open(brotlimodule, 'r') as f:
+        for line in f:
+            m = re.match(r'#define\sBROTLI_VERSION\s"(.*)"', line)
+            if m:
+                return m.group(1)
+    return ""
 
 
 class TestCommand(Command):
@@ -18,10 +48,9 @@ class TestCommand(Command):
         pass
 
     def run(self):
-        import sys, os, subprocess, glob
+        import sys, subprocess, glob
 
-        curr_dir = os.path.abspath(os.path.dirname(os.path.realpath(__file__)))
-        test_dir = os.path.join(curr_dir, 'python', 'tests')
+        test_dir = os.path.join(CURR_DIR, 'python', 'tests')
         os.chdir(test_dir)
 
         for test in glob.glob("*_test.py"):
@@ -51,6 +80,8 @@ class BuildExt(build_ext):
         objects = []
         for lang, sources in (("c", c_sources), ("c++", cxx_sources)):
             if lang == "c++": 
+                if platform.system() == "Darwin":
+                    extra_args.extend(["-stdlib=libc++", "-mmacosx-version-min=10.7"])
                 if self.compiler.compiler_type in ["unix", "cygwin", "mingw32"]:
                     extra_args.append("-std=c++0x")
                 elif self.compiler.compiler_type == "msvc":
@@ -59,6 +90,11 @@ class BuildExt(build_ext):
             macros = ext.define_macros[:]
             if platform.system() == "Darwin":
                 macros.append(("OS_MACOSX", "1"))
+            elif self.compiler.compiler_type == "mingw32":
+                # On Windows Python 2.7, pyconfig.h defines "hypot" as "_hypot",
+                # This clashes with GCC's cmath, and causes compilation errors when
+                # building under MinGW: http://bugs.python.org/issue11566
+                macros.append(("_hypot", "hypot"))
             for undef in ext.undef_macros:
                 macros.append((undef,))
 
@@ -75,6 +111,10 @@ class BuildExt(build_ext):
         if ext.extra_objects:
             objects.extend(ext.extra_objects)
         extra_args = ext.extra_link_args or []
+        # when using GCC on Windows, we statically link libgcc and libstdc++,
+        # so that we don't need to package extra DLLs
+        if self.compiler.compiler_type == "mingw32":
+            extra_args.extend(['-static-libgcc', '-static-libstdc++'])
 
         ext_path = self.get_ext_fullpath(ext.name)
         # Detect target language, if not provided
@@ -102,10 +142,11 @@ brotli = Extension("brotli",
                         "enc/histogram.cc",
                         "enc/literal_cost.cc",
                         "enc/metablock.cc",
+                        "enc/static_dict.cc",
+                        "enc/streams.cc",
                         "dec/bit_reader.c",
                         "dec/decode.c",
                         "dec/huffman.c",
-                        "dec/safe_malloc.c",
                         "dec/streams.c",
                         "dec/state.c",
                     ],
@@ -118,6 +159,7 @@ brotli = Extension("brotli",
                         "enc/command.h",
                         "enc/context.h",
                         "enc/dictionary.h",
+                        "enc/dictionary_hash.h",
                         "enc/encode.h",
                         "enc/entropy_encode.h",
                         "enc/fast_log.h",
@@ -130,6 +172,8 @@ brotli = Extension("brotli",
                         "enc/prefix.h",
                         "enc/ringbuffer.h",
                         "enc/static_dict.h",
+                        "enc/static_dict_lut.h",
+                        "enc/streams.h",
                         "enc/transform.h",
                         "enc/write_bits.h",
                         "dec/bit_reader.h",
@@ -138,7 +182,7 @@ brotli = Extension("brotli",
                         "dec/dictionary.h",
                         "dec/huffman.h",
                         "dec/prefix.h",
-                        "dec/safe_malloc.h",
+                        "dec/port.h",
                         "dec/streams.h",
                         "dec/transform.h",
                         "dec/types.h",
@@ -149,7 +193,7 @@ brotli = Extension("brotli",
 
 setup(
     name="Brotli",
-    version="0.1",
+    version=get_version(),
     url="https://github.com/google/brotli",
     description="Python binding of the Brotli compression library",
     author="Khaled Hosny",

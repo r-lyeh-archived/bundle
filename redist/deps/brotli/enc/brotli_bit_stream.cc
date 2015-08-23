@@ -36,7 +36,7 @@ namespace brotli {
 bool EncodeMlen(size_t length, int* bits, int* numbits, int* nibblesbits) {
   length--;  // MLEN - 1 is encoded
   int lg = length == 0 ? 1 : Log2Floor(length) + 1;
-  if (lg > 28) return false;
+  if (lg > 24) return false;
   int mnibbles = (lg < 16 ? 16 : (lg + 3)) / 4;
   *nibblesbits = mnibbles - 4;
   *numbits = mnibbles * 4;
@@ -220,7 +220,6 @@ void StoreSimpleHuffmanTree(const uint8_t* depths,
 // num = alphabet size
 // depths = symbol depths
 void StoreHuffmanTree(const uint8_t* depths, size_t num,
-                      int quality,
                       int *storage_ix, uint8_t *storage) {
   // Write the Huffman tree into the brotli-representation.
   std::vector<uint8_t> huffman_tree;
@@ -256,7 +255,7 @@ void StoreHuffmanTree(const uint8_t* depths, size_t num,
   uint8_t code_length_bitdepth[kCodeLengthCodes] = { 0 };
   std::vector<uint16_t> code_length_bitdepth_symbols(kCodeLengthCodes);
   CreateHuffmanTree(&huffman_tree_histogram[0], kCodeLengthCodes,
-                    5, quality, &code_length_bitdepth[0]);
+                    5, &code_length_bitdepth[0]);
   ConvertBitDepthsToSymbols(code_length_bitdepth, kCodeLengthCodes,
                             code_length_bitdepth_symbols.data());
 
@@ -278,7 +277,6 @@ void StoreHuffmanTree(const uint8_t* depths, size_t num,
 
 void BuildAndStoreHuffmanTree(const int *histogram,
                               const int length,
-                              const int quality,
                               uint8_t* depth,
                               uint16_t* bits,
                               int* storage_ix,
@@ -289,7 +287,7 @@ void BuildAndStoreHuffmanTree(const int *histogram,
     if (histogram[i]) {
       if (count < 4) {
         s4[count] = i;
-      } else if (quality < 3 && count > 4) {
+      } else if (count > 4) {
         break;
       }
       count++;
@@ -309,20 +307,13 @@ void BuildAndStoreHuffmanTree(const int *histogram,
     return;
   }
 
-  if (length >= 50 && count >= 16 && quality >= 3) {
-    std::vector<int> counts(length);
-    memcpy(&counts[0], histogram, sizeof(counts[0]) * length);
-    OptimizeHuffmanCountsForRle(length, &counts[0]);
-    CreateHuffmanTree(&counts[0], length, 15, quality, depth);
-  } else {
-    CreateHuffmanTree(histogram, length, 15, quality, depth);
-  }
+  CreateHuffmanTree(histogram, length, 15, depth);
   ConvertBitDepthsToSymbols(depth, length, bits);
 
   if (count <= 4) {
     StoreSimpleHuffmanTree(depth, s4, count, max_bits, storage_ix, storage);
   } else {
-    StoreHuffmanTree(depth, length, quality, storage_ix, storage);
+    StoreHuffmanTree(depth, length, storage_ix, storage);
   }
 }
 
@@ -402,37 +393,6 @@ void RunLengthCodeZeros(const std::vector<int>& v_in,
   }
 }
 
-// Returns a maximum zero-run-length-prefix value such that run-length coding
-// zeros in v with this maximum prefix value and then encoding the resulting
-// histogram and entropy-coding v produces the least amount of bits.
-int BestMaxZeroRunLengthPrefix(const std::vector<int>& v) {
-  int min_cost = std::numeric_limits<int>::max();
-  int best_max_prefix = 0;
-  for (int max_prefix = 0; max_prefix <= 16; ++max_prefix) {
-    std::vector<int> rle_symbols;
-    std::vector<int> extra_bits;
-    int max_run_length_prefix = max_prefix;
-    RunLengthCodeZeros(v, &max_run_length_prefix, &rle_symbols, &extra_bits);
-    if (max_run_length_prefix < max_prefix) break;
-    HistogramContextMap histogram;
-    for (int i = 0; i < rle_symbols.size(); ++i) {
-      histogram.Add(rle_symbols[i]);
-    }
-    int bit_cost = PopulationCost(histogram);
-    if (max_prefix > 0) {
-      bit_cost += 4;
-    }
-    for (int i = 1; i <= max_prefix; ++i) {
-      bit_cost += histogram.data_[i] * i;  // extra bits
-    }
-    if (bit_cost < min_cost) {
-      min_cost = bit_cost;
-      best_max_prefix = max_prefix;
-    }
-  }
-  return best_max_prefix;
-}
-
 void EncodeContextMap(const std::vector<int>& context_map,
                       int num_clusters,
                       int* storage_ix, uint8_t* storage) {
@@ -445,7 +405,7 @@ void EncodeContextMap(const std::vector<int>& context_map,
   std::vector<int> transformed_symbols = MoveToFrontTransform(context_map);
   std::vector<int> rle_symbols;
   std::vector<int> extra_bits;
-  int max_run_length_prefix = BestMaxZeroRunLengthPrefix(transformed_symbols);
+  int max_run_length_prefix = 6;
   RunLengthCodeZeros(transformed_symbols, &max_run_length_prefix,
                      &rle_symbols, &extra_bits);
   HistogramContextMap symbol_histogram;
@@ -462,7 +422,6 @@ void EncodeContextMap(const std::vector<int>& context_map,
   memset(symbol_code.bits_, 0, sizeof(symbol_code.bits_));
   BuildAndStoreHuffmanTree(symbol_histogram.data_,
                            num_clusters + max_run_length_prefix,
-                           9,  // quality
                            symbol_code.depth_, symbol_code.bits_,
                            storage_ix, storage);
   for (int i = 0; i < rle_symbols.size(); ++i) {
@@ -495,7 +454,6 @@ void StoreBlockSwitch(const BlockSplitCode& code,
 void BuildAndStoreBlockSplitCode(const std::vector<int>& types,
                                  const std::vector<int>& lengths,
                                  const int num_types,
-                                 const int quality,
                                  BlockSplitCode* code,
                                  int* storage_ix,
                                  uint8_t* storage) {
@@ -529,10 +487,10 @@ void BuildAndStoreBlockSplitCode(const std::vector<int>& types,
   }
   StoreVarLenUint8(num_types - 1, storage_ix, storage);
   if (num_types > 1) {
-    BuildAndStoreHuffmanTree(&type_histo[0], num_types + 2, quality,
+    BuildAndStoreHuffmanTree(&type_histo[0], num_types + 2,
                              &code->type_depths[0], &code->type_bits[0],
                              storage_ix, storage);
-    BuildAndStoreHuffmanTree(&length_histo[0], 26, quality,
+    BuildAndStoreHuffmanTree(&length_histo[0], 26,
                              &code->length_depths[0], &code->length_bits[0],
                              storage_ix, storage);
     StoreBlockSwitch(*code, 0, storage_ix, storage);
@@ -559,7 +517,7 @@ void StoreTrivialContextMap(int num_types,
     for (int i = context_bits; i < alphabet_size; ++i) {
       histogram[i] = 1;
     }
-    BuildAndStoreHuffmanTree(&histogram[0], alphabet_size, 1,
+    BuildAndStoreHuffmanTree(&histogram[0], alphabet_size,
                              &depths[0], &bits[0],
                              storage_ix, storage);
     for (int i = 0; i < num_types; ++i) {
@@ -590,11 +548,10 @@ class BlockEncoder {
 
   // Creates entropy codes of block lengths and block types and stores them
   // to the bit stream.
-  void BuildAndStoreBlockSwitchEntropyCodes(int quality,
-                                            int* storage_ix, uint8_t* storage) {
+  void BuildAndStoreBlockSwitchEntropyCodes(int* storage_ix, uint8_t* storage) {
     BuildAndStoreBlockSplitCode(
         block_types_, block_lengths_, num_block_types_,
-        quality, &block_split_code_, storage_ix, storage);
+        &block_split_code_, storage_ix, storage);
   }
 
   // Creates entropy codes for all block types and stores them to the bit
@@ -602,14 +559,12 @@ class BlockEncoder {
   template<int kSize>
   void BuildAndStoreEntropyCodes(
       const std::vector<Histogram<kSize> >& histograms,
-      int quality,
       int* storage_ix, uint8_t* storage) {
     depths_.resize(histograms.size() * alphabet_size_);
     bits_.resize(histograms.size() * alphabet_size_);
     for (int i = 0; i < histograms.size(); ++i) {
       int ix = i * alphabet_size_;
       BuildAndStoreHuffmanTree(&histograms[i].data_[0], alphabet_size_,
-                               quality,
                                &depths_[ix], &bits_[ix],
                                storage_ix, storage);
     }
@@ -670,8 +625,9 @@ bool StoreMetaBlock(const uint8_t* input,
                     size_t start_pos,
                     size_t length,
                     size_t mask,
+                    uint8_t prev_byte,
+                    uint8_t prev_byte2,
                     bool is_last,
-                    int quality,
                     int num_direct_distance_codes,
                     int distance_postfix_bits,
                     int literal_context_mode,
@@ -707,12 +663,9 @@ bool StoreMetaBlock(const uint8_t* input,
                             mb.distance_split.types,
                             mb.distance_split.lengths);
 
-  literal_enc.BuildAndStoreBlockSwitchEntropyCodes(
-      quality, storage_ix, storage);
-  command_enc.BuildAndStoreBlockSwitchEntropyCodes(
-      quality, storage_ix, storage);
-  distance_enc.BuildAndStoreBlockSwitchEntropyCodes(
-      quality, storage_ix, storage);
+  literal_enc.BuildAndStoreBlockSwitchEntropyCodes(storage_ix, storage);
+  command_enc.BuildAndStoreBlockSwitchEntropyCodes(storage_ix, storage);
+  distance_enc.BuildAndStoreBlockSwitchEntropyCodes(storage_ix, storage);
 
   WriteBits(2, distance_postfix_bits, storage_ix, storage);
   WriteBits(4, num_direct_distance_codes >> distance_postfix_bits,
@@ -737,11 +690,11 @@ bool StoreMetaBlock(const uint8_t* input,
                      storage_ix, storage);
   }
 
-  literal_enc.BuildAndStoreEntropyCodes(mb.literal_histograms, quality,
+  literal_enc.BuildAndStoreEntropyCodes(mb.literal_histograms,
                                         storage_ix, storage);
-  command_enc.BuildAndStoreEntropyCodes(mb.command_histograms, quality,
+  command_enc.BuildAndStoreEntropyCodes(mb.command_histograms,
                                         storage_ix, storage);
-  distance_enc.BuildAndStoreEntropyCodes(mb.distance_histograms, quality,
+  distance_enc.BuildAndStoreEntropyCodes(mb.distance_histograms,
                                          storage_ix, storage);
 
   size_t pos = start_pos;
@@ -759,30 +712,119 @@ bool StoreMetaBlock(const uint8_t* input,
       }
     } else {
       for (int j = 0; j < cmd.insert_len_; ++j) {
-        uint8_t prev_byte = pos > 0 ? input[(pos - 1) & mask] : 0;
-        uint8_t prev_byte2 = pos > 1 ? input[(pos - 2) & mask] : 0;
         int context = Context(prev_byte, prev_byte2,
                               literal_context_mode);
         int literal = input[pos & mask];
         literal_enc.StoreSymbolWithContext<kLiteralContextBits>(
             literal, context, mb.literal_context_map, storage_ix, storage);
+        prev_byte2 = prev_byte;
+        prev_byte = literal;
         ++pos;
       }
     }
-    if (cmd.copy_len_ > 0 && cmd.cmd_prefix_ >= 128) {
-      int dist_code = cmd.dist_prefix_;
-      int distnumextra = cmd.dist_extra_ >> 24;
-      int distextra = cmd.dist_extra_ & 0xffffff;
-      if (mb.distance_context_map.empty()) {
-        distance_enc.StoreSymbol(dist_code, storage_ix, storage);
-      } else {
-        int context = cmd.DistanceContext();
-        distance_enc.StoreSymbolWithContext<kDistanceContextBits>(
-            dist_code, context, mb.distance_context_map, storage_ix, storage);
+    pos += cmd.copy_len_;
+    if (cmd.copy_len_ > 0) {
+      prev_byte2 = input[(pos - 2) & mask];
+      prev_byte = input[(pos - 1) & mask];
+      if (cmd.cmd_prefix_ >= 128) {
+        int dist_code = cmd.dist_prefix_;
+        int distnumextra = cmd.dist_extra_ >> 24;
+        int distextra = cmd.dist_extra_ & 0xffffff;
+        if (mb.distance_context_map.empty()) {
+          distance_enc.StoreSymbol(dist_code, storage_ix, storage);
+        } else {
+          int context = cmd.DistanceContext();
+          distance_enc.StoreSymbolWithContext<kDistanceContextBits>(
+              dist_code, context, mb.distance_context_map, storage_ix, storage);
+        }
+        brotli::WriteBits(distnumextra, distextra, storage_ix, storage);
       }
-      brotli::WriteBits(distnumextra, distextra, storage_ix, storage);
+    }
+  }
+  if (is_last) {
+    JumpToByteBoundary(storage_ix, storage);
+  }
+  return true;
+}
+
+bool StoreMetaBlockTrivial(const uint8_t* input,
+                           size_t start_pos,
+                           size_t length,
+                           size_t mask,
+                           bool is_last,
+                           const brotli::Command *commands,
+                           size_t n_commands,
+                           int *storage_ix,
+                           uint8_t *storage) {
+  if (!StoreCompressedMetaBlockHeader(is_last, length, storage_ix, storage)) {
+    return false;
+  }
+
+  if (length == 0) {
+    // Only the last meta-block can be empty, so jump to next byte.
+    JumpToByteBoundary(storage_ix, storage);
+    return true;
+  }
+
+  HistogramLiteral lit_histo;
+  HistogramCommand cmd_histo;
+  HistogramDistance dist_histo;
+
+  size_t pos = start_pos;
+  for (int i = 0; i < n_commands; ++i) {
+    const Command cmd = commands[i];
+    cmd_histo.Add(cmd.cmd_prefix_);
+    for (int j = 0; j < cmd.insert_len_; ++j) {
+      lit_histo.Add(input[pos & mask]);
+      ++pos;
     }
     pos += cmd.copy_len_;
+    if (cmd.copy_len_ > 0 && cmd.cmd_prefix_ >= 128) {
+      dist_histo.Add(cmd.dist_prefix_);
+    }
+  }
+
+  WriteBits(13, 0, storage_ix, storage);
+
+  std::vector<uint8_t> lit_depth(256);
+  std::vector<uint16_t> lit_bits(256);
+  std::vector<uint8_t> cmd_depth(kNumCommandPrefixes);
+  std::vector<uint16_t> cmd_bits(kNumCommandPrefixes);
+  std::vector<uint8_t> dist_depth(64);
+  std::vector<uint16_t> dist_bits(64);
+
+  BuildAndStoreHuffmanTree(&lit_histo.data_[0], 256,
+                           &lit_depth[0], &lit_bits[0],
+                           storage_ix, storage);
+  BuildAndStoreHuffmanTree(&cmd_histo.data_[0], kNumCommandPrefixes,
+                           &cmd_depth[0], &cmd_bits[0],
+                           storage_ix, storage);
+  BuildAndStoreHuffmanTree(&dist_histo.data_[0], 64,
+                           &dist_depth[0], &dist_bits[0],
+                           storage_ix, storage);
+
+  pos = start_pos;
+  for (int i = 0; i < n_commands; ++i) {
+    const Command cmd = commands[i];
+    const int cmd_code = cmd.cmd_prefix_;
+    const int lennumextra = cmd.cmd_extra_ >> 48;
+    const uint64_t lenextra = cmd.cmd_extra_ & 0xffffffffffffULL;
+    WriteBits(cmd_depth[cmd_code], cmd_bits[cmd_code], storage_ix, storage);
+    WriteBits(lennumextra, lenextra, storage_ix, storage);
+    for (int j = 0; j < cmd.insert_len_; j++) {
+      const uint8_t literal = input[pos & mask];
+      WriteBits(lit_depth[literal], lit_bits[literal], storage_ix, storage);
+      ++pos;
+    }
+    pos += cmd.copy_len_;
+    if (cmd.copy_len_ > 0 && cmd.cmd_prefix_ >= 128) {
+      const int dist_code = cmd.dist_prefix_;
+      const int distnumextra = cmd.dist_extra_ >> 24;
+      const int distextra = cmd.dist_extra_ & 0xffffff;
+      WriteBits(dist_depth[dist_code], dist_bits[dist_code],
+                storage_ix, storage);
+      WriteBits(distnumextra, distextra, storage_ix, storage);
+    }
   }
   if (is_last) {
     JumpToByteBoundary(storage_ix, storage);
@@ -818,14 +860,25 @@ bool StoreUncompressedMetaBlock(bool final_block,
   // compatible with WriteBits.
   brotli::WriteBitsPrepareStorage(*storage_ix, storage);
 
-  // Since the uncomressed block itself may not be the final block, add an empty
-  // one after this.
+  // Since the uncompressed block itself may not be the final block, add an
+  // empty one after this.
   if (final_block) {
     brotli::WriteBits(1, 1, storage_ix, storage);  // islast
     brotli::WriteBits(1, 1, storage_ix, storage);  // isempty
     JumpToByteBoundary(storage_ix, storage);
   }
   return true;
+}
+
+void StoreSyncMetaBlock(int * __restrict storage_ix,
+                        uint8_t * __restrict storage) {
+  // Empty metadata meta-block bit pattern:
+  //   1 bit:  is_last (0)
+  //   2 bits: num nibbles (3)
+  //   1 bit:  reserved (0)
+  //   2 bits: metadata length bytes (0)
+  WriteBits(6, 6, storage_ix, storage);
+  JumpToByteBoundary(storage_ix, storage);
 }
 
 }  // namespace brotli

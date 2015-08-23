@@ -23,7 +23,7 @@ namespace brotli {
 
 // Second-order context lookup table for UTF8 byte streams.
 //
-// If p1 and p2 are the previous two bytes, we calcualte the context as
+// If p1 and p2 are the previous two bytes, we calculate the context as
 //
 //   context = kUTF8ContextLookup[p1] | kUTF8ContextLookup[p2 + 256].
 //
@@ -139,7 +139,7 @@ static const uint8_t kUTF8ContextLookup[512] = {
 };
 
 // Context lookup table for small signed integers.
-static const int kSigned3BitContextLookup[] = {
+static const uint8_t kSigned3BitContextLookup[] = {
   0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
   2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
   2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,

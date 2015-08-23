@@ -14,6 +14,8 @@
 #include "deps/brotli/enc/histogram.cc"
 #include "deps/brotli/enc/literal_cost.cc"
 #include "deps/brotli/enc/metablock.cc"
+#include "deps/brotli/enc/static_dict.cc"
+#include "deps/brotli/enc/streams.cc"
 #define kBrotliDictionary                 kBrotliDictionary2
 #define kBrotliDictionaryOffsetsByLength  kBrotliDictionaryOffsetsByLength2
 #define kBrotliDictionarySizeBitsByLength kBrotliDictionarySizeBitsByLength2
@@ -22,7 +24,6 @@
 #include "deps/brotli/dec/bit_reader.c"
 #include "deps/brotli/dec/decode.c"
 #include "deps/brotli/dec/huffman.c"
-#include "deps/brotli/dec/safe_malloc.c"
 #include "deps/brotli/dec/state.c"
 #include "deps/brotli/dec/streams.c"
 

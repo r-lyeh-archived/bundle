@@ -44,22 +44,44 @@ struct MetaBlockSplit {
   std::vector<HistogramDistance> distance_histograms;
 };
 
+// Uses the slow shortest-path block splitter and does context clustering.
 void BuildMetaBlock(const uint8_t* ringbuffer,
                     const size_t pos,
                     const size_t mask,
-                    const std::vector<Command>& cmds,
-                    int num_direct_distance_codes,
-                    int distance_postfix_bits,
+                    uint8_t prev_byte,
+                    uint8_t prev_byte2,
+                    const Command* cmds,
+                    size_t num_commands,
                     int literal_context_mode,
                     MetaBlockSplit* mb);
 
+// Uses a fast greedy block splitter that tries to merge current block with the
+// last or the second last block and does not do any context modeling.
 void BuildMetaBlockGreedy(const uint8_t* ringbuffer,
                           size_t pos,
                           size_t mask,
                           const Command *commands,
                           size_t n_commands,
-                          int quality,
                           MetaBlockSplit* mb);
+
+// Uses a fast greedy block splitter that tries to merge current block with the
+// last or the second last block and uses a static context clustering which
+// is the same for all block types.
+void BuildMetaBlockGreedyWithContexts(const uint8_t* ringbuffer,
+                                      size_t pos,
+                                      size_t mask,
+                                      uint8_t prev_byte,
+                                      uint8_t prev_byte2,
+                                      int literal_context_mode,
+                                      int num_contexts,
+                                      const int* static_context_map,
+                                      const Command *commands,
+                                      size_t n_commands,
+                                      MetaBlockSplit* mb);
+
+void OptimizeHistograms(int num_direct_distance_codes,
+                        int distance_postfix_bits,
+                        MetaBlockSplit* mb);
 
 }  // namespace brotli
 

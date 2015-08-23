@@ -16,6 +16,26 @@
 #define BUNDLE_CXX11 0
 #endif
 
+#define BUNDLE_VERSION "0.9.2" /* (2015/09/22) Pump up Brotli; split BROTLI enum into BROTLI9/11 pair
+#define BUNDLE_VERSION "0.9.1" // (2015/05/10) Switch to ZLIB/LibPNG license
+#define BUNDLE_VERSION "0.9.0" // (2015/04/08) BSC support
+#define BUNDLE_VERSION "0.8.1" // (2015/04/07) Pump up Brotli+ZSTD, LZMA20/25 dict, unify FOURCCs
+#define BUNDLE_VERSION "0.8.0" // (2015/01/27) ZSTD support, reorder enums, simplify API
+#define BUNDLE_VERSION "0.7.1" // (2015/01/26) Fix LZMA, verify DEFLATEs, new AUTO enum
+#define BUNDLE_VERSION "0.7.0" // (2014/10/22) Brotli support, pump up LZ4
+#define BUNDLE_VERSION "0.6.3" // (2014/09/27) Switch to BOOST license
+#define BUNDLE_VERSION "0.6.2" // (2014/09/02) Fix 0-byte streams, deflate alignment
+#define BUNDLE_VERSION "0.6.1" // (2014/06/30) Safer lz4 decompression, pump up lz4+zpaq
+#define BUNDLE_VERSION "0.6.0" // (2014/06/26) LZ4HC support, optimize in-place decompression
+#define BUNDLE_VERSION "0.5.0" // (2014/06/09) ZPAQ support, UBER encoding, fixes
+#define BUNDLE_VERSION "0.4.1" // (2014/06/05) Switch to lzmasdk
+#define BUNDLE_VERSION "0.4.0" // (2014/05/30) Maximize compression (lzma)
+#define BUNDLE_VERSION "0.3.0" // (2014/05/28) Fix alignment (deflate), change stream header
+#define BUNDLE_VERSION "0.2.1" // (2014/05/23) Fix overflow bug
+#define BUNDLE_VERSION "0.2.0" // (2014/05/14) Add VLE header, fix vs201x compilation errors
+#define BUNDLE_VERSION "0.1.0" // (2014/05/13) Add high-level API, iOS support
+#define BUNDLE_VERSION "0.0.0" // (2014/05/09) Initial commit */
+
 #include <cassert>
 #include <cstdio>
 #include <cstring>
@@ -38,7 +58,7 @@
 namespace bundle
 {
     // libraries and/or encoders
-    enum { RAW, SHOCO, LZ4, MINIZ, LZIP, LZMA20, ZPAQ, LZ4HC, BROTLI, ZSTD, LZMA25, BSC }; /* archival: BZIP2, LZFX, LZHAM, LZP1, FSE, BLOSC, YAPPY */
+    enum { RAW, SHOCO, LZ4, MINIZ, LZIP, LZMA20, ZPAQ, LZ4HC, BROTLI9, ZSTD, LZMA25, BSC, BROTLI11 }; /* archival: BZIP2, LZFX, LZHAM, LZP1, FSE, BLOSC, YAPPY */
     // some algorithm aliases
     enum { UNDEFINED = RAW, ASCII = SHOCO, BINARY = MINIZ, LZ77 = LZ4HC, DEFLATE = MINIZ, LZMA = LZMA20, CM = ZPAQ }; /* archival: BWT = BZIP2 */
     // speed/ratio aliases
@@ -173,6 +193,7 @@ namespace bundle
             all.push_back( LZ4HC );
             all.push_back( ZSTD );
             all.push_back( BSC );
+            all.push_back( BROTLI9 );
 #if 0
             // for archival purposes
             all.push_back( BZIP2 );
@@ -191,8 +212,8 @@ namespace bundle
         static std::vector<unsigned> all;
         if( all.empty() ) {
             all = fast_encodings();
+            all.push_back( BROTLI11 );
             all.push_back( ZPAQ );
-            all.push_back( BROTLI );
         }
         return all;
     }
@@ -208,7 +229,7 @@ namespace bundle
         double dectime = 0;
         double memusage = 0;
         bool pass = 0;
-        T packed, unpacked;
+        T packed /*, unpacked */;
         std::string str() const {
             std::stringstream ss;
             ss << ( pass ? "[ OK ] " : "[FAIL] ") << name_of(q) << ": ratio=" << ratio << "% enctime=" << int(enctime) << "us dectime=" << int(dectime) << "us (zlen=" << packed.size() << " bytes)";
@@ -221,6 +242,7 @@ namespace bundle
         std::vector< measure<T> > results;
 
         for( auto encoding : use_encodings ) {
+            //std::cout << name_of(encoding) << std::endl;
             results.push_back( measure<T>() );
             auto &r = results.back();
             r.q = encoding;
@@ -246,17 +268,17 @@ namespace bundle
             if( r.pass && do_dec ) {
 #ifdef BUNDLE_USE_OMP_TIMER
                 auto start = omp_get_wtime();
-                r.unpacked = unpack( r.packed );
+                std::string unpacked = unpack( r.packed );
                 auto end = omp_get_wtime();
                 r.dectime = ( end - start ) * 1000000;
 #else
                 auto start = std::chrono::steady_clock::now();
-                r.unpacked = unpack( r.packed );
+                std::string unpacked = unpack( r.packed );
                 auto end = std::chrono::steady_clock::now();
                 r.dectime = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
 #endif
                 if( encoding != NONE )
-                r.pass = r.pass && (do_verify ? original == r.unpacked : r.pass);
+                r.pass = r.pass && (do_verify ? original == unpacked : r.pass);
             }
 
             if( !r.pass ) {

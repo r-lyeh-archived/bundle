@@ -25,6 +25,10 @@
 
 namespace brotli {
 
+// "commands" points to the next output command to write to, "*num_commands" is
+// initially the total amount of commands output by previous
+// CreateBackwardReferences calls, and must be incremented by the amount written
+// by this call.
 void CreateBackwardReferences(size_t num_bytes,
                               size_t position,
                               const uint8_t* ringbuffer,
@@ -32,14 +36,14 @@ void CreateBackwardReferences(size_t num_bytes,
                               const float* literal_cost,
                               size_t literal_cost_mask,
                               const size_t max_backward_limit,
-                              const double base_min_score,
                               const int quality,
                               Hashers* hashers,
                               int hash_type,
                               int* dist_cache,
                               int* last_insert_len,
                               Command* commands,
-                              int* num_commands);
+                              int* num_commands,
+                              int* num_literals);
 
 }  // namespace brotli
 

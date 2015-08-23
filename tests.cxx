@@ -65,7 +65,7 @@ int main( int argc, char **argv )
         std::cout << "benchmarking compression of " << original.size() << " bytes..." << std::endl;
 
         // some benchmarks
-        auto data = measures( original );
+        auto data = measures( original ); // , fast_encodings() );
         for( auto &in : data ) {
             std::cout << in.str() << std::endl;
         }

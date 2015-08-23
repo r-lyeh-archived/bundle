@@ -259,7 +259,8 @@ namespace bundle {
             break; case LZMA25: return "LZMA25";
             break; case ZPAQ: return "ZPAQ";
             break; case LZ4HC: return "LZ4HC";
-            break; case BROTLI: return "BROTLI";
+            break; case BROTLI9: return "BROTLI9";
+            break; case BROTLI11: return "BROTLI11";
             break; case AUTO: return "AUTO";
             break; case ZSTD: return "ZSTD";
             break; case BSC: return "BSC";
@@ -291,7 +292,8 @@ namespace bundle {
             break; case LZMA25: return "lzma";
             break; case ZPAQ: return "zpaq";
             break; case LZ4HC: return "lz4";
-            break; case BROTLI: return "brotli";
+            break; case BROTLI9: return "brotli";
+            break; case BROTLI11: return "brotli";
             break; case AUTO: return "auto";
             break; case ZSTD: return "zstd";
             break; case BSC: return "bsc";
@@ -397,8 +399,21 @@ namespace bundle {
                 }
                 break; case LZIP: outlen = lzma_compress<1>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen );
                 break; case ZPAQ: outlen = zpaq_compress( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen );
-                break; case BROTLI: {
-                        brotli::BrotliParams bp; bp.mode = brotli::BrotliParams::MODE_TEXT;
+                break; case BROTLI9: case BROTLI11: {
+                        brotli::BrotliParams bp;
+                        // Default compression mode. The compressor does not know anything in
+                        // advance about the properties of the input. MODE_GENERIC
+                        // Compression mode for UTF-8 format text input. MODE_TEXT
+                        // Compression mode used in WOFF 2.0. MODE_FONT
+                        bp.mode = brotli::BrotliParams::MODE_GENERIC;
+                        // Controls the compression-speed vs compression-density tradeoffs. The higher
+                        // the quality, the slower the compression. Range is 0 to 11.
+                        bp.quality = BROTLI9 == q ? 9 : 11; 
+                        // Base 2 logarithm of the sliding window size. Range is 10 to 24.
+                        bp.lgwin = 24; 
+                        // Base 2 logarithm of the maximum input block size. Range is 16 to 24.
+                        // If set to 0, the value will be set based on the quality.
+                        bp.lgblock = 0;
                         ok = (1 == brotli::BrotliCompressBuffer( bp, inlen, (const uint8_t *)in, &outlen, (uint8_t *)out ));
                 }
                 break; case ZSTD: outlen = ZSTD_compress( out, outlen, in, inlen ); if( ZSTD_isError(outlen) ) outlen = 0;
@@ -445,7 +460,7 @@ namespace bundle {
             size_t outlen2;
             if( outlen2 = outlen, unpack(LZ4, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
             if( outlen2 = outlen, unpack(MINIZ, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
-            if( outlen2 = outlen, unpack(BROTLI, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
+            if( outlen2 = outlen, unpack(BROTLI9, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
             if( outlen2 = outlen, unpack(LZMA20, in, inlen, out, outlen2 ) ) return outlen = outlen2, true; // LZMA25 enters here too
             if( outlen2 = outlen, unpack(LZIP, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
             if( outlen2 = outlen, unpack(SHOCO, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
@@ -470,7 +485,7 @@ namespace bundle {
                 }
                 break; case LZIP: if( lzma_decompress<1>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen ) ) bytes_read = inlen;
                 break; case ZPAQ: if( zpaq_decompress( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen ) ) bytes_read = inlen;
-                break; case BROTLI: if( 1 == BrotliDecompressBuffer(inlen, (const uint8_t *)in, &outlen, (uint8_t *)out ) ) bytes_read = inlen;
+                break; case BROTLI9: case BROTLI11: if( 1 == BrotliDecompressBuffer(inlen, (const uint8_t *)in, &outlen, (uint8_t *)out ) ) bytes_read = inlen;
                 break; case ZSTD: bytes_read = ZSTD_decompress( out, outlen, in, inlen ); if( !ZSTD_isError(bytes_read) ) bytes_read = inlen;
                 break; case BSC: bsc_decompress((const unsigned char *)in, inlen, (unsigned char *)out, outlen, /*LIBBSC_FEATURE_FASTMODE | */0); bytes_read = inlen;
 #if 0

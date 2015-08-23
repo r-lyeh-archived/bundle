@@ -45,12 +45,15 @@ static const int kMinLengthForBlockSplitting = 128;
 static const int kIterMulForRefining = 2;
 static const int kMinItersForRefining = 100;
 
-void CopyLiteralsToByteArray(const std::vector<Command>& cmds,
+void CopyLiteralsToByteArray(const Command* cmds,
+                             const size_t num_commands,
                              const uint8_t* data,
+                             const size_t offset,
+                             const size_t mask,
                              std::vector<uint8_t>* literals) {
   // Count how many we have.
   size_t total_length = 0;
-  for (int i = 0; i < cmds.size(); ++i) {
+  for (int i = 0; i < num_commands; ++i) {
     total_length += cmds[i].insert_len_;
   }
   if (total_length == 0) {
@@ -62,18 +65,29 @@ void CopyLiteralsToByteArray(const std::vector<Command>& cmds,
 
   // Loop again, and copy this time.
   size_t pos = 0;
-  size_t from_pos = 0;
-  for (int i = 0; i < cmds.size() && pos < total_length; ++i) {
-    memcpy(&(*literals)[pos], data + from_pos, cmds[i].insert_len_);
-    pos += cmds[i].insert_len_;
-    from_pos += cmds[i].insert_len_ + cmds[i].copy_len_;
+  size_t from_pos = offset & mask;
+  for (int i = 0; i < num_commands && pos < total_length; ++i) {
+    size_t insert_len = cmds[i].insert_len_;
+    if (from_pos + insert_len > mask) {
+      size_t head_size = mask + 1 - from_pos;
+      memcpy(&(*literals)[pos], data + from_pos, head_size);
+      from_pos = 0;
+      pos += head_size;
+      insert_len -= head_size;
+    }
+    if (insert_len > 0) {
+      memcpy(&(*literals)[pos], data + from_pos, insert_len);
+      pos += insert_len;
+    }
+    from_pos = (from_pos + insert_len + cmds[i].copy_len_) & mask;
   }
 }
 
-void CopyCommandsToByteArray(const std::vector<Command>& cmds,
+void CopyCommandsToByteArray(const Command* cmds,
+                             const size_t num_commands,
                              std::vector<uint16_t>* insert_and_copy_codes,
-                             std::vector<uint8_t>* distance_prefixes) {
-  for (int i = 0; i < cmds.size(); ++i) {
+                             std::vector<uint16_t>* distance_prefixes) {
+  for (int i = 0; i < num_commands; ++i) {
     const Command& cmd = cmds[i];
     insert_and_copy_codes->push_back(cmd.cmd_prefix_);
     if (cmd.copy_len_ > 0 && cmd.cmd_prefix_ >= 128) {
@@ -148,8 +162,8 @@ void RefineEntropyCodes(const DataType* data, size_t length,
   }
 }
 
-inline static float BitCost(int total, int count) {
-  return count == 0 ? FastLog2(total) + 2 : FastLog2(total) - FastLog2(count);
+inline static float BitCost(int count) {
+  return count == 0 ? -2 : FastLog2(count);
 }
 
 template<typename DataType, int kSize>
@@ -166,10 +180,12 @@ void FindBlocks(const DataType* data, const size_t length,
   int vecsize = vec.size();
   double* insert_cost = new double[kSize * vecsize];
   memset(insert_cost, 0, sizeof(insert_cost[0]) * kSize * vecsize);
-  for (int i = 0; i < kSize; ++i) {
+  for (int j = 0; j < vecsize; ++j) {
+    insert_cost[j] = FastLog2(vec[j].total_count_);
+  }
+  for (int i = kSize - 1; i >= 0; --i) {
     for (int j = 0; j < vecsize; ++j) {
-      insert_cost[i * vecsize + j] =
-          BitCost(vec[j].total_count_, vec[j].data_[i]);
+      insert_cost[i * vecsize + j] = insert_cost[j] - BitCost(vec[j].data_[i]);
     }
   }
   double *cost = new double[vecsize];
@@ -340,19 +356,22 @@ void SplitByteVector(const std::vector<DataType>& data,
   BuildBlockSplit(block_ids, split);
 }
 
-void SplitBlock(const std::vector<Command>& cmds,
+void SplitBlock(const Command* cmds,
+                const size_t num_commands,
                 const uint8_t* data,
+                const size_t pos,
+                const size_t mask,
                 BlockSplit* literal_split,
                 BlockSplit* insert_and_copy_split,
                 BlockSplit* dist_split) {
   // Create a continuous array of literals.
   std::vector<uint8_t> literals;
-  CopyLiteralsToByteArray(cmds, data, &literals);
+  CopyLiteralsToByteArray(cmds, num_commands, data, pos, mask, &literals);
 
   // Compute prefix codes for commands.
   std::vector<uint16_t> insert_and_copy_codes;
-  std::vector<uint8_t> distance_prefixes;
-  CopyCommandsToByteArray(cmds,
+  std::vector<uint16_t> distance_prefixes;
+  CopyCommandsToByteArray(cmds, num_commands,
                           &insert_and_copy_codes,
                           &distance_prefixes);
 
@@ -373,7 +392,8 @@ void SplitBlock(const std::vector<Command>& cmds,
       dist_split);
 }
 
-void SplitBlockByTotalLength(const std::vector<Command>& all_commands,
+void SplitBlockByTotalLength(const Command* all_commands,
+                             const size_t num_commands,
                              int input_size,
                              int target_length,
                              std::vector<std::vector<Command> >* blocks) {
@@ -381,7 +401,7 @@ void SplitBlockByTotalLength(const std::vector<Command>& all_commands,
   int length_limit = input_size / num_blocks + 1;
   int total_length = 0;
   std::vector<Command> cur_block;
-  for (int i = 0; i < all_commands.size(); ++i) {
+  for (int i = 0; i < num_commands; ++i) {
     const Command& cmd = all_commands[i];
     int cmd_length = cmd.insert_len_ + cmd.copy_len_;
     if (total_length > length_limit) {

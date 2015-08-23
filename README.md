@@ -11,7 +11,7 @@
 ### bundle stream format
 ```c++
 [b000000000111xxxx]  Header (12 bits). De/compression algorithm (4 bits)
-                     { NONE, SHOCO, LZ4, DEFLATE, LZIP, LZMA20, ZPAQ, LZ4HC, BROTLI, ZSTD, LZMA25, BSC }.
+                     { NONE,SHOCO,LZ4,DEFLATE,LZIP,LZMA20,ZPAQ,LZ4HC,BROTLI9,ZSTD,LZMA25,BSC,BROTLI11 }.
 [vle_unpacked_size]  Unpacked size of the stream (N bytes). Data is stored in a variable
                      length encoding value, where bytes are just shifted and added into a
                      big accumulator until MSB is found.
@@ -41,9 +41,9 @@ int main() {
     std::string original( "There's a lady who's sure all that glitters is gold" );
     for (int i = 0; i < 20; ++i) original += original + std::string( i + 1, 32 + i );
 
-    // pack, unpack & verify
+    // pack, unpack & verify a few encoders
     using namespace bundle;
-    std::vector<unsigned> libs { RAW, LZ4, LZ4HC, SHOCO, MINIZ, LZMA20, LZIP, LZMA25, ZPAQ, BROTLI, ZSTD, BSC };
+    std::vector<unsigned> libs { RAW, LZ4, LZ4HC, SHOCO, MINIZ, LZMA20, LZIP, LZMA25, BROTLI9, BROTLI11, ZSTD, BSC };
     for( auto &use : libs ) {
         std::string packed = pack(use, original);
         std::string unpacked = unpack(packed);
@@ -57,54 +57,57 @@ int main() {
 
 ### possible output
 ```
-[ OK ] NONE: ratio=0% enctime=29002us dectime=15001us (zlen=55574506 bytes)
-[ OK ] LZ4: ratio=96.2244% enctime=29002us dectime=20002us (zlen=2098285 bytes)
-[ OK ] LZ4HC: ratio=99.5944% enctime=235023us dectime=17001us (zlen=225409 bytes)
-[ OK ] SHOCO: ratio=26.4155% enctime=374037us dectime=266026us (zlen=40894196 bytes)
-[ OK ] MINIZ: ratio=99.4327% enctime=228022us dectime=20002us (zlen=315271 bytes)
-[ OK ] LZMA20: ratio=99.9346% enctime=2917291us dectime=51005us (zlen=36355 bytes)
-[ OK ] LZIP: ratio=99.9574% enctime=3091306us dectime=184018us (zlen=23651 bytes)
-[ OK ] LZMA25: ratio=99.9667% enctime=3030303us dectime=50005us (zlen=18513 bytes)
-[ OK ] ZPAQ: ratio=99.9969% enctime=100332432us dectime=101158165us (zlen=1743 bytes)
-[ OK ] BROTLI: ratio=99.9982% enctime=3673829us dectime=114723us (zlen=1019 bytes)
-[ OK ] ZSTD: ratio=99.8687% enctime=25002us dectime=18001us (zlen=72969 bytes)
-[ OK ] BSC: ratio=99.9991% enctime=53005us dectime=63006us (zlen=524 bytes)
+[ OK ] NONE: ratio=0% enctime=80619us dectime=38367us (zlen=55574506 bytes)
+[ OK ] LZ4: ratio=96.2244% enctime=55946us dectime=44934us (zlen=2098285 bytes)
+[ OK ] SHOCO: ratio=26.4155% enctime=640547us dectime=296934us (zlen=40894196 bytes)
+[ OK ] MINIZ: ratio=99.4327% enctime=329166us dectime=42940us (zlen=315271 bytes)
+[ OK ] LZIP: ratio=99.9574% enctime=5209819us dectime=203620us (zlen=23651 bytes)
+[ OK ] LZMA20: ratio=99.9346% enctime=4957873us dectime=69628us (zlen=36355 bytes)
+[ OK ] LZMA25: ratio=99.9667% enctime=5287068us dectime=82368us (zlen=18513 bytes)
+[ OK ] LZ4HC: ratio=99.5944% enctime=479542us dectime=43869us (zlen=225409 bytes)
+[ OK ] ZSTD: ratio=99.8687% enctime=53503us dectime=41654us (zlen=72969 bytes)
+[ OK ] BSC: ratio=99.9991% enctime=98170us dectime=91463us (zlen=524 bytes)
+[ OK ] BROTLI9: ratio=99.998% enctime=857999us dectime=77870us (zlen=1086 bytes)
+[ OK ] BROTLI11: ratio=99.9984% enctime=15111576us dectime=82196us (zlen=864 bytes)
+[ OK ] ZPAQ: ratio=99.9969% enctime=144051595us dectime=140961629us (zlen=1743 bytes)
 All ok.
 ```
 
 ### on picking up compressors (on regular basis)
 - sorted by compression ratio
-  - `zpaq < lzma25 / bsc < lzip < lzma20 < brotli < zstd < miniz < lz4hc < lz4`
+  - `zpaq < lzma25 / bsc < brotli11 < lzip < lzma20 < brotli9 < zstd < miniz < lz4hc < lz4`
 - sorted by compression time
-  - `lz4 < lz4hc < zstd < miniz < lzma20 < lzip < lzma25 / bsc << zpaq <<< brotli`
+  - `lz4 < lz4hc < zstd < miniz < lzma20 < lzip < lzma25 / bsc < brotli9 << brotli11 <<< zpaq`
 - sorted by decompression time
-  - `lz4hc < lz4 < zstd < miniz < brotli < lzma20 / lzma25 < lzip < bsc << zpaq`
+  - `lz4hc < lz4 < zstd < miniz < brotli9 < brotli11 < lzma20 / lzma25 < lzip < bsc << zpaq`
 - sorted by memory overhead
-  - `lz4 < lz4hc < zstd < miniz < brotli < lzma20 < lzip < lzma25 / bsc < zpaq`
+  - `lz4 < lz4hc < zstd < miniz < brotli9 < lzma20 < lzip < lzma25 / bsc < brotli11 << zpaq`
 - and maybe use SHOCO for plain text ascii IDs (SHOCO is an entropy text-compressor)
 
 ### functional api
 ```c++
-- bool is_packed( T )
-- bool is_unpacked( T )
-- T pack( unsigned q, T )
-- bool pack( unsigned q, T out, U in )
-- bool pack( unsigned q, const char *in, size_t len, char *out, size_t &zlen )
-- T unpack( T )
-- bool unpack( unsigned q, T out, U in )
-- bool unpack( unsigned q, const char *in, size_t len, char *out, size_t &zlen )
-- unsigned type_of( string )
-- string name_of( string )
-- string version_of( string )
-- string ext_of( string )
-- size_t length( string )
-- size_t zlength( string )
-- void *zptr( string )
-- size_t bound( unsigned q, size_t len )
-- const char *const name_of( unsigned q )
-- const char *const version( unsigned q )
-- const char *const ext_of( unsigned q )
-- unsigned type_of( const void *mem, size_t size )
+namespace bundle {
+bool is_packed( T );
+bool is_unpacked( T );
+T pack( unsigned q, T );
+bool pack( unsigned q, T out, U in );
+bool pack( unsigned q, const char *in, size_t len, char *out, size_t &zlen );
+T unpack( T );
+bool unpack( unsigned q, T out, U in );
+bool unpack( unsigned q, const char *in, size_t len, char *out, size_t &zlen );
+unsigned type_of( string );
+string name_of( string );
+string version_of( string );
+string ext_of( string );
+size_t length( string );
+size_t zlength( string );
+void *zptr( string );
+size_t bound( unsigned q, size_t len );
+const char *const name_of( unsigned q );
+const char *const version( unsigned q );
+const char *const ext_of( unsigned q );
+unsigned type_of( const void *mem, size_t size );
+}
 ```
 
 ### archival api
@@ -119,6 +122,62 @@ struct archive : vector<file>    { // ~sequence of files
   string toc() const;              // debug
 };
 ```
+
+### Changelog
+- v0.9.2 (2015/09/22)
+  - Pump up Brotli
+  - split BROTLI enum into BROTLI9/11 pair
+- v0.9.1 (2015/05/10)
+  - Switch to ZLIB/LibPNG license
+- v0.9.0 (2015/04/08)
+  - BSC support
+- v0.8.1 (2015/04/07)
+  - Pump up Brotli+ZSTD
+  - LZMA20/25 dict
+  - Unify FOURCCs
+- v0.8.0 (2015/01/27)
+  - ZSTD support
+  - Reorder enums
+  - Simplify API
+- v0.7.1 (2015/01/26)
+  - Fix LZMA
+  - Verify DEFLATEs
+  - New AUTO enum
+- v0.7.0 (2014/10/22)
+  - Brotli support
+  - Pump up LZ4
+- v0.6.3 (2014/09/27)
+  - Switch to BOOST license
+- v0.6.2 (2014/09/02)
+  - Fix 0-byte streams
+  - Deflate alignment
+- v0.6.1 (2014/06/30)
+  - Safer lz4 decompression
+  - Pump up lz4+zpaq
+- v0.6.0 (2014/06/26)
+  - LZ4HC support
+  - Optimize in-place decompression
+- v0.5.0 (2014/06/09)
+  - ZPAQ support
+  - UBER encoding
+  - Fixes
+- v0.4.1 (2014/06/05)
+  - Switch to lzmasdk
+- v0.4.0 (2014/05/30)
+  - Maximize compression (lzma)
+- v0.3.0 (2014/05/28)
+  - Fix alignment (deflate)
+  - Change stream header
+- v0.2.1 (2014/05/23)
+  - Fix overflow bug
+- v0.2.0 (2014/05/14)
+  - Add VLE header
+  - Fix vs201x compilation errors
+- v0.1.0 (2014/05/13)
+  - Add high-level API
+  - iOS support
+- v0.0.0 (2014/05/09)
+  - Initial commit
 
 ### licenses
 - [bundle](https://github.com/r-lyeh/bundle), zlib/libpng license.

@@ -59,13 +59,6 @@ struct Histogram {
       data_[i] += v.data_[i];
     }
   }
-  double EntropyBitCost() const {
-    double retval = total_count_ * FastLog2(total_count_);
-    for (int i = 0; i < kDataSize; ++i) {
-      retval -= data_[i] * FastLog2(data_[i]);
-    }
-    return retval;
-  }
 
   int data_[kDataSize];
   int total_count_;
@@ -87,27 +80,20 @@ static const int kLiteralContextBits = 6;
 static const int kDistanceContextBits = 2;
 
 void BuildHistograms(
-    const std::vector<Command>& cmds,
+    const Command* cmds,
+    const size_t num_commands,
     const BlockSplit& literal_split,
     const BlockSplit& insert_and_copy_split,
     const BlockSplit& dist_split,
     const uint8_t* ringbuffer,
     size_t pos,
     size_t mask,
+    uint8_t prev_byte,
+    uint8_t prev_byte2,
     const std::vector<int>& context_modes,
     std::vector<HistogramLiteral>* literal_histograms,
     std::vector<HistogramCommand>* insert_and_copy_histograms,
     std::vector<HistogramDistance>* copy_dist_histograms);
-
-void BuildLiteralHistogramsForBlockType(
-    const std::vector<Command>& cmds,
-    const BlockSplit& literal_split,
-    const uint8_t* ringbuffer,
-    size_t pos,
-    size_t mask,
-    int block_type,
-    int context_mode,
-    std::vector<HistogramLiteral>* histograms);
 
 }  // namespace brotli
 
