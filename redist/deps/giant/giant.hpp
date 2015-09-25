@@ -7,7 +7,8 @@
  * - rlyeh // listening to White Orange ~~ Where
  */
 
-#pragma once
+#ifndef GIANT_HPP_HEADER
+#define GIANT_HPP_HEADER
 
 #include <cassert>
 #include <algorithm>
@@ -130,3 +131,5 @@ namespace giant
         return type == unix_type ? in : swap( in );
     }
 }
+
+#endif

@@ -16,6 +16,7 @@
 #define BUNDLE_CXX11 0
 #endif
 
+#define BUNDLE_VERSION "0.9.4" /* (2015/09/26) Add CSC20 + Shrinker support; rename enums LZ4->LZ4F/LZ4HC->LZ4
 #define BUNDLE_VERSION "0.9.3" /* (2015/09/25) Add a few missing API calls
 #define BUNDLE_VERSION "0.9.2" // (2015/09/22) Pump up Brotli; split BROTLI enum into BROTLI9/11 pair
 #define BUNDLE_VERSION "0.9.1" // (2015/05/10) Switch to ZLIB/LibPNG license
@@ -59,11 +60,11 @@
 namespace bundle
 {
     // libraries and/or encoders
-    enum { RAW, SHOCO, LZ4, MINIZ, LZIP, LZMA20, ZPAQ, LZ4HC, BROTLI9, ZSTD, LZMA25, BSC, BROTLI11 }; /* archival: BZIP2, LZFX, LZHAM, LZP1, FSE, BLOSC, YAPPY */
+    enum { RAW, SHOCO, LZ4F, MINIZ, LZIP, LZMA20, ZPAQ, LZ4, BROTLI9, ZSTD, LZMA25, BSC, BROTLI11, SHRINKER, CSC20 }; /* archival: BZIP2, LZFX, LZHAM, LZP1, FSE, BLOSC, YAPPY */
     // some algorithm aliases
-    enum { UNDEFINED = RAW, ASCII = SHOCO, BINARY = MINIZ, LZ77 = LZ4HC, DEFLATE = MINIZ, LZMA = LZMA20, CM = ZPAQ }; /* archival: BWT = BZIP2 */
+    enum { UNDEFINED = RAW, ASCII = SHOCO, BINARY = MINIZ, LZ77 = LZ4, DEFLATE = MINIZ, LZMA = LZMA20, CM = ZPAQ }; /* archival: BWT = BZIP2 */
     // speed/ratio aliases
-    enum { NONE = RAW, UNCOMPRESSED = RAW, VERY_FAST = LZ4, FAST = LZ4HC, DEFAULT = MINIZ, OVER = LZMA20, EXTRA = LZMA25, UBER = ZPAQ, AUTO = ~0u };
+    enum { NONE = RAW, UNCOMPRESSED = RAW, VERY_FAST = LZ4F, FAST = LZ4, DEFAULT = MINIZ, OVER = LZMA20, EXTRA = LZMA25, UBER = ZPAQ, AUTO = ~0u };
 
     // algorithm properties
     const char *const name_of( unsigned q );
@@ -204,16 +205,18 @@ namespace bundle
         static std::vector<unsigned> all;
         if( all.empty() ) {
             all.push_back( NONE );
-            all.push_back( LZ4 );
+            all.push_back( LZ4F );
             all.push_back( SHOCO );
             all.push_back( MINIZ );
             all.push_back( LZIP );
             all.push_back( LZMA20 );
             all.push_back( LZMA25 );
-            all.push_back( LZ4HC );
+            all.push_back( LZ4 );
             all.push_back( ZSTD );
             all.push_back( BSC );
             all.push_back( BROTLI9 );
+            all.push_back( SHRINKER );
+            all.push_back( CSC20 );
 #if 0
             // for archival purposes
             all.push_back( BZIP2 );

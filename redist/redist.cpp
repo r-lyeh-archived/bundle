@@ -268,6 +268,43 @@ extern "C" void bz_internal_error(int errcode) {
 #include "deps/zstd/lib/zstd.h"
 #include "deps/zstd/lib/zstd.c"
 
+#include "deps/shrinker/shrinker.h"
+#include "deps/shrinker/shrinker.c"
+
+#undef MIN
+#undef MAX
+#undef KB
+#undef MB
+#define KB KB2
+#define MB MB2
+#define _7Z_TYPES
+#include "deps/libcsc/Types.h"
+#include "deps/libcsc/csc_analyzer.h"
+#include "deps/libcsc/csc_coder.h"
+#include "deps/libcsc/csc_common.h"
+#include "deps/libcsc/csc_dec.h"
+#include "deps/libcsc/csc_enc.h"
+#include "deps/libcsc/csc_encoder_main.h"
+#include "deps/libcsc/csc_filters.h"
+#include "deps/libcsc/csc_lz.h"
+#include "deps/libcsc/csc_memio.h"
+#include "deps/libcsc/csc_mf.h"
+#include "deps/libcsc/csc_model.h"
+#include "deps/libcsc/csc_profiler.h"
+#include "deps/libcsc/csc_typedef.h"
+#include "deps/libcsc/csc_analyzer.cpp"
+#include "deps/libcsc/csc_coder.cpp"
+#include "deps/libcsc/csc_dec.cpp"
+#include "deps/libcsc/csc_filters.cpp"
+#include "deps/libcsc/csc_lz.cpp"
+#include "deps/libcsc/csc_memio.cpp"
+#include "deps/libcsc/csc_mf.cpp"
+#include "deps/libcsc/csc_model.cpp"
+#include "deps/libcsc/csc_profiler.cpp"
+#define CSCInstance CSCInstance2
+#include "deps/libcsc/csc_enc.cpp"
+#include "deps/libcsc/csc_encoder_main.cpp"
+
 // bundle
 #include "bundle.cpp"
 

@@ -8,7 +8,7 @@ int main() {
 
     // pack, unpack & verify a few encoders
     using namespace bundle;
-    std::vector<unsigned> libs { RAW, LZ4, LZ4HC, SHOCO, MINIZ, LZMA20, LZIP, LZMA25, BROTLI9, BROTLI11, ZSTD, BSC };
+    std::vector<unsigned> libs { RAW, LZ4F, LZ4, SHOCO, MINIZ, LZMA20, LZIP, LZMA25, BROTLI9, BROTLI11, ZSTD, BSC, SHRINKER, CSC20 };
     for( auto &use : libs ) {
         std::string packed = pack(use, original);
         std::string unpacked = unpack(packed);

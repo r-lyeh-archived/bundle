@@ -1,6 +1,6 @@
 # bundle :package: <a href="https://travis-ci.org/r-lyeh/bundle"><img src="https://api.travis-ci.org/r-lyeh/bundle.svg?branch=master" align="right" /></a>
 
-- Bundle is an embeddable compression library that supports ZIP, LZMA, LZIP, ZPAQ, LZ4, ZSTD, BROTLI, BSC and SHOCO (C++03)(C++11).
+- Bundle is an embeddable compression library that supports ZIP, LZMA, LZIP, ZPAQ, LZ4, ZSTD, BROTLI, BSC, CSC, SHRINKER and SHOCO (C++03)(C++11).
 - Bundle is optimized for highest compression ratios on each compressor, where possible.
 - Bundle is optimized for fastest decompression times on each decompressor, where possible.
 - Bundle is easy to integrate, comes in an amalgamated distribution.
@@ -11,7 +11,7 @@
 ### bundle stream format
 ```c++
 [b000000000111xxxx]  Header (12 bits). De/compression algorithm (4 bits)
-                     { NONE,SHOCO,LZ4,DEFLATE,LZIP,LZMA20,ZPAQ,LZ4HC,BROTLI9,ZSTD,LZMA25,BSC,BROTLI11 }.
+                     { NONE,SHOCO,LZ4,DEFLATE,LZIP,LZMA20,ZPAQ,LZ4HC,BROTLI9,ZSTD,LZMA25,BSC,BROTLI11,SHRINKER,CSC20 }.
 [vle_unpacked_size]  Unpacked size of the stream (N bytes). Data is stored in a variable
                      length encoding value, where bytes are just shifted and added into a
                      big accumulator until MSB is found.
@@ -43,7 +43,7 @@ int main() {
 
     // pack, unpack & verify a few encoders
     using namespace bundle;
-    std::vector<unsigned> libs { RAW, LZ4, LZ4HC, SHOCO, MINIZ, LZMA20, LZIP, LZMA25, BROTLI9, BROTLI11, ZSTD, BSC };
+    std::vector<unsigned> libs { RAW, LZ4, LZ4HC, SHOCO, MINIZ, LZMA20, LZIP, LZMA25, BROTLI9, BROTLI11, ZSTD, BSC, SHRINKER, CSC20 };
     for( auto &use : libs ) {
         std::string packed = pack(use, original);
         std::string unpacked = unpack(packed);
@@ -57,32 +57,44 @@ int main() {
 
 ### Possible output
 ```
-[ OK ] NONE: ratio=0% enctime=80619us dectime=38367us (zlen=55574506 bytes)
-[ OK ] LZ4: ratio=96.2244% enctime=55946us dectime=44934us (zlen=2098285 bytes)
-[ OK ] SHOCO: ratio=26.4155% enctime=640547us dectime=296934us (zlen=40894196 bytes)
-[ OK ] MINIZ: ratio=99.4327% enctime=329166us dectime=42940us (zlen=315271 bytes)
-[ OK ] LZIP: ratio=99.9574% enctime=5209819us dectime=203620us (zlen=23651 bytes)
-[ OK ] LZMA20: ratio=99.9346% enctime=4957873us dectime=69628us (zlen=36355 bytes)
-[ OK ] LZMA25: ratio=99.9667% enctime=5287068us dectime=82368us (zlen=18513 bytes)
-[ OK ] LZ4HC: ratio=99.5944% enctime=479542us dectime=43869us (zlen=225409 bytes)
-[ OK ] ZSTD: ratio=99.8687% enctime=53503us dectime=41654us (zlen=72969 bytes)
-[ OK ] BSC: ratio=99.9991% enctime=98170us dectime=91463us (zlen=524 bytes)
-[ OK ] BROTLI9: ratio=99.998% enctime=857999us dectime=77870us (zlen=1086 bytes)
-[ OK ] BROTLI11: ratio=99.9984% enctime=15111576us dectime=82196us (zlen=864 bytes)
-[ OK ] ZPAQ: ratio=99.9969% enctime=144051595us dectime=140961629us (zlen=1743 bytes)
+[ OK ] NONE: ratio=0% enctime=78452us dectime=48559us (zlen=55574506 bytes)
+[ OK ] LZ4F: ratio=96.2244% enctime=59468us dectime=54583us (zlen=2098285 bytes)
+[ OK ] SHOCO: ratio=26.4155% enctime=641602us dectime=292279us (zlen=40894196 bytes)
+[ OK ] MINIZ: ratio=99.4327% enctime=323871us dectime=55654us (zlen=315271 bytes)
+[ OK ] LZIP: ratio=99.9574% enctime=5345118us dectime=214263us (zlen=23651 bytes)
+[ OK ] LZMA20: ratio=99.9346% enctime=5181916us dectime=79593us (zlen=36355 bytes)
+[ OK ] LZMA25: ratio=99.9667% enctime=5527585us dectime=83422us (zlen=18513 bytes)
+[ OK ] LZ4: ratio=99.5944% enctime=476480us dectime=40808us (zlen=225409 bytes)
+[ OK ] ZSTD: ratio=99.8687% enctime=69955us dectime=79821us (zlen=72969 bytes)
+[ OK ] BSC: ratio=99.9991% enctime=110453us dectime=143885us (zlen=524 bytes)
+[ OK ] BROTLI9: ratio=99.998% enctime=915402us dectime=93187us (zlen=1086 bytes)
+[ OK ] SHRINKER: ratio=99.4873% enctime=83200us dectime=55524us (zlen=284912 bytes)
+[ OK ] CSC20: ratio=99.9696% enctime=1105565us dectime=272270us (zlen=16897 bytes)
+[ OK ] BROTLI11: ratio=99.9984% enctime=15051465us dectime=76943us (zlen=864 bytes)
+[ OK ] ZPAQ: ratio=99.9969% enctime=150045662us dectime=147353064us (zlen=1743 bytes)
 All ok.
 ```
 
 ### On picking up compressors (as regular basis)
 - sorted by compression ratio:
-- `zpaq < lzma25 / bsc < brotli11 < lzip < lzma20 < brotli9 < zstd < miniz < lz4hc < lz4`
+- `shoco < lz4f < miniz < shrinker < lz4 < zstd < brotli9 / lzma20 / lzip < brotli11 / lzma25 / bsc < zpaq`
 - sorted by compression time:
-- `lz4 < lz4hc < zstd < miniz < lzma20 < lzip < lzma25 / bsc < brotli9 << brotli11 <<< zpaq`
+- `lz4f < zstd < shrinker < lz4 / miniz < shoco < brotli9 < csc20 < lzma20 / lzip / lzma25 < bsc << brotli11 <<< zpaq`
 - sorted by decompression time:
-- `lz4hc < lz4 < zstd < miniz < brotli9 < brotli11 < lzma20 / lzma25 < lzip < bsc << zpaq`
+- `lz4 < lz4f < shrinker / miniz < brotli11 / zstd < lzma20 / lzma25 / brotli9 < bsc < lzip < csc20 < shoco <<< zpaq`
 - sorted by memory overhead:
-- `lz4 < lz4hc < zstd < miniz < brotli9 < lzma20 < lzip < lzma25 / bsc < brotli11 << zpaq`
-- and maybe use SHOCO for plain text ascii IDs (SHOCO is an entropy text-compressor)
+- `lz4f < lz4 < zstd < miniz < brotli9 < lzma20 < lzip < lzma25 / bsc << zpaq <<< brotli11`
+- Note: SHOCO is a text compressor intended to be used for plain ascii IDs only.
+
+### Charts
+
+[@mavam](https://github.com/mavam) has an awesome R script that plots some fancy graphics in [his compbench repository](https://github.com/mavam/compbench)
+The following examples are a few of his own showing an invocation for a 10,000 packet PCAP trace:
+
+![Compression Ratio](https://raw.githubusercontent.com/mavam/compbench/master/screenshots/ratio.png)
+![Speed Scatterplot](https://raw.githubusercontent.com/mavam/compbench/master/screenshots/speed-scatter.png)
+![Speed Barplot](https://raw.githubusercontent.com/mavam/compbench/master/screenshots/speed-bar.png)
+![Tradeoff](https://raw.githubusercontent.com/mavam/compbench/master/screenshots/tradeoff.png)
 
 ### API - data
 ```c++
@@ -128,7 +140,27 @@ struct archive : vector<file>    { // ~sequence of files
 };
 ```
 
+### Licenses
+- [bundle](https://github.com/r-lyeh/bundle), ZLIB/LibPNG license.
+- [brotli](https://github.com/google/brotli) by Jyrki Alakuijala and Zoltan Szabadka, Apache 2.0 license.
+- [easylzma](https://github.com/lloyd/easylzma) by Igor Pavlov and Lloyd Hilaiel, public domain.
+- [giant](https://githhub.com/r-lyeh/giant), ZLIB/LibPNG license.
+- [libzpaq](https://github.com/zpaq/zpaq) by Matt Mahoney, public domain.
+- [libbsc](https://github.com/IlyaGrebnov/libbsc) by Ilya Grebnov, Apache 2.0 license.
+- [lz4](https://github.com/Cyan4973/lz4) by Yann Collet, BSD-2 license.
+- [miniz](https://code.google.com/p/miniz/) by Rich Geldreich, public domain.
+- [shoco](https://github.com/Ed-von-Schleck/shoco) by Christian Schramm, MIT license.
+- [zstd](https://github.com/Cyan4973/zstd) by Yann Collet, BSD-2 license.
+- [shrinker](https://code.google.com/p/data-shrinker/) by Siyuan Fu, BSD-3 license.
+- [csc](https://github.com/fusiyuan2010/CSC) by Siyuan Fu, public domain.
+
+### Evaluated alternatives
+[FastLZ](http://fastlz.org/), [FLZP](http://cs.fit.edu/~mmahoney/compression/#flzp), [LibLZF](http://freshmeat.net/projects/liblzf), [LZFX](https://code.google.com/p/lzfx/), [LZHAM](https://code.google.com/p/lzham/), [LZJB](http://en.wikipedia.org/wiki/LZJB), [LZLIB](http://www.nongnu.org/lzip/lzlib.html), [LZO](http://www.oberhumer.com/opensource/lzo/), [LZP](http://www.cbloom.com/src/index_lz.html), [SMAZ](https://github.com/antirez/smaz), [Snappy](https://code.google.com/p/snappy/), [ZLIB](http://www.zlib.net/), [bzip2](http://www.bzip2.org/), Yappy
+
 ### Changelog
+- v0.9.4 (2015/09/26)
+  - Add CSC20 + Shrinker support
+  - Rename enums LZ4->LZ4F/LZ4HC->LZ4
 - v0.9.3 (2015/09/25)
   - Add a few missing API calls
 - v0.9.2 (2015/09/22)
@@ -159,8 +191,8 @@ struct archive : vector<file>    { // ~sequence of files
   - Fix 0-byte streams
   - Deflate alignment
 - v0.6.1 (2014/06/30)
-  - Safer lz4 decompression
-  - Pump up lz4+zpaq
+  - Safer LZ4 decompression
+  - Pump up LZ4 + ZPAQ
 - v0.6.0 (2014/06/26)
   - LZ4HC support
   - Optimize in-place decompression
@@ -182,21 +214,6 @@ struct archive : vector<file>    { // ~sequence of files
   - Fix vs201x compilation errors
 - v0.1.0 (2014/05/13)
   - Add high-level API
-  - iOS support
+  - Add iOS support
 - v0.0.0 (2014/05/09)
   - Initial commit
-
-### Licenses
-- [bundle](https://github.com/r-lyeh/bundle), zlib/libpng license.
-- [brotli](https://github.com/google/brotli) by Jyrki Alakuijala and Zoltan Szabadka, Apache 2.0 license.
-- [easylzma](https://github.com/lloyd/easylzma) by Igor Pavlov and Lloyd Hilaiel, public domain.
-- [giant](https://githhub.com/r-lyeh/giant), zlib/libpng license.
-- [libzpaq](https://github.com/zpaq/zpaq) by Matt Mahoney, public domain.
-- [libbsc](https://github.com/IlyaGrebnov/libbsc) by Ilya Grebnov, Apache 2.0 license.
-- [lz4](https://github.com/Cyan4973/lz4) by Yann Collet, BSD license.
-- [miniz](https://code.google.com/p/miniz/) by Rich Geldreich, public domain.
-- [shoco](https://github.com/Ed-von-Schleck/shoco) by Christian Schramm, MIT license.
-- [zstd](https://github.com/Cyan4973/zstd) by Yann Collet, BSD license.
-
-### Evaluated alternatives
-[FastLZ](http://fastlz.org/), [FLZP](http://cs.fit.edu/~mmahoney/compression/#flzp), [LibLZF](http://freshmeat.net/projects/liblzf), [LZFX](https://code.google.com/p/lzfx/), [LZHAM](https://code.google.com/p/lzham/), [LZJB](http://en.wikipedia.org/wiki/LZJB), [LZLIB](http://www.nongnu.org/lzip/lzlib.html), [LZO](http://www.oberhumer.com/opensource/lzo/), [LZP](http://www.cbloom.com/src/index_lz.html), [SMAZ](https://github.com/antirez/smaz), [Snappy](https://code.google.com/p/snappy/), [ZLIB](http://www.zlib.net/), [bzip2](http://www.bzip2.org/), Yappy
