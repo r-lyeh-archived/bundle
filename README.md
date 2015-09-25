@@ -22,7 +22,7 @@
                      If possible, header-less bitstreams are preferred.
 ```
 
-### bundle archive format
+### Bundle archive format
 ```c++
 - Files/datas are packed into streams by using any compression method (see above)
 - Streams are archived into a standard ZIP file:
@@ -31,7 +31,7 @@
 - Note: you can mix streams of different algorithms into the very same ZIP archive.
 ```
 
-### sample
+### Showcase
 ```c++
 #include <cassert>
 #include "bundle.hpp"
@@ -55,7 +55,7 @@ int main() {
 }
 ```
 
-### possible output
+### Possible output
 ```
 [ OK ] NONE: ratio=0% enctime=80619us dectime=38367us (zlen=55574506 bytes)
 [ OK ] LZ4: ratio=96.2244% enctime=55946us dectime=44934us (zlen=2098285 bytes)
@@ -74,43 +74,48 @@ All ok.
 ```
 
 ### on picking up compressors (on regular basis)
-- sorted by compression ratio
-  - `zpaq < lzma25 / bsc < brotli11 < lzip < lzma20 < brotli9 < zstd < miniz < lz4hc < lz4`
-- sorted by compression time
-  - `lz4 < lz4hc < zstd < miniz < lzma20 < lzip < lzma25 / bsc < brotli9 << brotli11 <<< zpaq`
-- sorted by decompression time
-  - `lz4hc < lz4 < zstd < miniz < brotli9 < brotli11 < lzma20 / lzma25 < lzip < bsc << zpaq`
-- sorted by memory overhead
-  - `lz4 < lz4hc < zstd < miniz < brotli9 < lzma20 < lzip < lzma25 / bsc < brotli11 << zpaq`
+- sorted by compression ratio:
+- `zpaq < lzma25 / bsc < brotli11 < lzip < lzma20 < brotli9 < zstd < miniz < lz4hc < lz4`
+- sorted by compression time:
+- `lz4 < lz4hc < zstd < miniz < lzma20 < lzip < lzma25 / bsc < brotli9 << brotli11 <<< zpaq`
+- sorted by decompression time:
+- `lz4hc < lz4 < zstd < miniz < brotli9 < brotli11 < lzma20 / lzma25 < lzip < bsc << zpaq`
+- sorted by memory overhead:
+- `lz4 < lz4hc < zstd < miniz < brotli9 < lzma20 < lzip < lzma25 / bsc < brotli11 << zpaq`
 - and maybe use SHOCO for plain text ascii IDs (SHOCO is an entropy text-compressor)
 
-### functional api
+### API - data
 ```c++
-namespace bundle {
-bool is_packed( T );
-bool is_unpacked( T );
-T pack( unsigned q, T );
-bool pack( unsigned q, T out, U in );
-bool pack( unsigned q, const char *in, size_t len, char *out, size_t &zlen );
-T unpack( T );
-bool unpack( unsigned q, T out, U in );
-bool unpack( unsigned q, const char *in, size_t len, char *out, size_t &zlen );
-unsigned type_of( string );
-string name_of( string );
-string version_of( string );
-string ext_of( string );
-size_t length( string );
-size_t zlength( string );
-void *zptr( string );
-size_t bound( unsigned q, size_t len );
-const char *const name_of( unsigned q );
-const char *const version( unsigned q );
-const char *const ext_of( unsigned q );
-unsigned type_of( const void *mem, size_t size );
+namespace bundle
+{
+  // low level API (raw pointers)
+  bool is_packed( *ptr, len );
+  bool is_unpacked( *ptr, len );
+  unsigned type_of( *ptr, len );
+  size_t len( *ptr, len );
+  size_t zlen( *ptr, len );
+  const void *zptr( *ptr, len );
+  bool pack( unsigned Q, *in, len, *out, &zlen );
+  bool unpack( unsigned Q, *in, len, *out, &zlen );
+
+  // medium level API, templates (in-place)
+  bool is_packed( T );
+  bool is_unpacked( T );
+  unsigned type_of( T );
+  size_t len( T );
+  size_t zlen( T );
+  const void *zptr( T );
+  bool unpack( T &, T );
+  bool pack( unsigned Q, T &, T );
+
+  // high level API, templates (copy)
+  T pack( unsigned Q, T );
+  T unpack( T );
 }
 ```
+For a complete review check [bundle.hpp header](bundle.hpp)
 
-### archival api
+### API - archives
 ```c++
 struct file : map<string,string> { // ~map of properties
   bool has(property);              // property check
@@ -124,9 +129,11 @@ struct archive : vector<file>    { // ~sequence of files
 ```
 
 ### Changelog
+- v0.9.3 (2015/09/25)
+  - Add a few missing API calls
 - v0.9.2 (2015/09/22)
   - Pump up Brotli
-  - split BROTLI enum into BROTLI9/11 pair
+  - Split BROTLI enum into BROTLI9/11 pair
 - v0.9.1 (2015/05/10)
   - Switch to ZLIB/LibPNG license
 - v0.9.0 (2015/04/08)
@@ -179,7 +186,7 @@ struct archive : vector<file>    { // ~sequence of files
 - v0.0.0 (2014/05/09)
   - Initial commit
 
-### licenses
+### Licenses
 - [bundle](https://github.com/r-lyeh/bundle), zlib/libpng license.
 - [brotli](https://github.com/google/brotli) by Jyrki Alakuijala and Zoltan Szabadka, Apache 2.0 license.
 - [easylzma](https://github.com/lloyd/easylzma) by Igor Pavlov and Lloyd Hilaiel, public domain.
@@ -191,5 +198,5 @@ struct archive : vector<file>    { // ~sequence of files
 - [shoco](https://github.com/Ed-von-Schleck/shoco) by Christian Schramm, MIT license.
 - [zstd](https://github.com/Cyan4973/zstd) by Yann Collet, BSD license.
 
-### evaluated alternatives
+### Evaluated alternatives
 [FastLZ](http://fastlz.org/), [FLZP](http://cs.fit.edu/~mmahoney/compression/#flzp), [LibLZF](http://freshmeat.net/projects/liblzf), [LZFX](https://code.google.com/p/lzfx/), [LZHAM](https://code.google.com/p/lzham/), [LZJB](http://en.wikipedia.org/wiki/LZJB), [LZLIB](http://www.nongnu.org/lzip/lzlib.html), [LZO](http://www.oberhumer.com/opensource/lzo/), [LZP](http://www.cbloom.com/src/index_lz.html), [SMAZ](https://github.com/antirez/smaz), [Snappy](https://code.google.com/p/snappy/), [ZLIB](http://www.zlib.net/), [bzip2](http://www.bzip2.org/), Yappy

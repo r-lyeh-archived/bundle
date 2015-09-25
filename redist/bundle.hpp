@@ -16,7 +16,8 @@
 #define BUNDLE_CXX11 0
 #endif
 
-#define BUNDLE_VERSION "0.9.2" /* (2015/09/22) Pump up Brotli; split BROTLI enum into BROTLI9/11 pair
+#define BUNDLE_VERSION "0.9.3" /* (2015/09/25) Add a few missing API calls
+#define BUNDLE_VERSION "0.9.2" // (2015/09/22) Pump up Brotli; split BROTLI enum into BROTLI9/11 pair
 #define BUNDLE_VERSION "0.9.1" // (2015/05/10) Switch to ZLIB/LibPNG license
 #define BUNDLE_VERSION "0.9.0" // (2015/04/08) BSC support
 #define BUNDLE_VERSION "0.8.1" // (2015/04/07) Pump up Brotli+ZSTD, LZMA20/25 dict, unify FOURCCs
@@ -64,43 +65,57 @@ namespace bundle
     // speed/ratio aliases
     enum { NONE = RAW, UNCOMPRESSED = RAW, VERY_FAST = LZ4, FAST = LZ4HC, DEFAULT = MINIZ, OVER = LZMA20, EXTRA = LZMA25, UBER = ZPAQ, AUTO = ~0u };
 
-    // dont compress if compression ratio is below 5%
-    enum { NO_COMPRESSION_TRESHOLD = 5 };
-
-    // low level API
-
-    unsigned type_of( const void *mem, size_t size );
+    // algorithm properties
     const char *const name_of( unsigned q );
     const char *const version_of( unsigned q );
     const char *const ext_of( unsigned q );
-    size_t bound( unsigned q, size_t len );
     size_t unc_payload( unsigned q );
+    size_t bound( unsigned q, size_t len );
+
+    // dont compress if compression ratio is below 5%
+    enum { NO_COMPRESSION_TRESHOLD = 5 };
+
+    // low level API (raw pointers)
+
+    bool is_packed( const void *mem, size_t size );
+    bool is_unpacked( const void *mem, size_t size );
+    unsigned type_of( const void *mem, size_t size );
+    size_t len( const void *mem, size_t size );
+    size_t zlen( const void *mem, size_t size );
+    const void *zptr( const void *mem, size_t size );
     bool pack( unsigned q, const void *in, size_t len, void *out, size_t &zlen );
     bool unpack( unsigned q, const void *in, size_t len, void *out, size_t &zlen );
 
     std::string vlebit( size_t i );
     size_t vlebit( const char *&i );
 
-    // high level API
-
-    unsigned type_of( const std::string &self );
-    std::string name_of( const std::string &self );
-    std::string version_of( const std::string &self );
-    std::string ext_of( const std::string &self );
-    size_t length( const std::string &self );
-    size_t zlength( const std::string &self );
-    void *zptr( const std::string &self );
-
-    // high level API, templates
+    // medium level API, templates (in-place)
 
     template<typename container>
     static inline bool is_packed( const container &input ) {
-        return input.size() >= 2 && 0 == input[0] && input[1] >= 0x70 && input[1] <= 0x7F;
+        return is_packed( &input[0], input.size() );
     }
 
     template<typename container>
     static inline bool is_unpacked( const container &input ) {
-        return !is_packed(input);
+        return !is_packed( &input[0], input.size() );
+    }
+
+    template<typename T>
+    static inline unsigned type_of( const T &input ) {
+        return type_of( &input[0], input.size() );
+    }
+    template<typename T>
+    static inline size_t len( const T &input ) {
+        return zlen( &input[0], input.size() );
+    }
+    template<typename T>
+    static inline size_t zlen( const T &input ) {
+        return zlen( &input[0], input.size() );
+    }
+    template<typename T>
+    static inline const void *zptr( const T &input ) {
+        return zptr( &input[0], input.size() );
     }
 
     template < class T1, class T2 >
@@ -129,13 +144,6 @@ namespace bundle
 
         output = input;
         return false;
-    }
-
-    template < class T1 >
-    static inline T1 unpack( const T1 &input ) {
-        T1 output;
-        unpack( output, input );
-        return output;
     }
 
     template < class T1, class T2 >
@@ -173,12 +181,24 @@ namespace bundle
         return false;
     }
 
+    // high level API, templates (copy)
+
+    template < class T1 >
+    static inline T1 unpack( const T1 &input ) {
+        T1 output;
+        unpack( output, input );
+        return output;
+    }
+
+
     template<typename container>
     static inline container pack( unsigned q, const container &input ) {
         container output;
         pack( q, output, input );
         return output;
     }
+
+    // helpers
 
     static inline std::vector<unsigned> fast_encodings() {
         static std::vector<unsigned> all;

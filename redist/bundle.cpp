@@ -248,6 +248,14 @@ namespace bundle {
         }
     }
 
+    bool is_packed( const void *mem, size_t size ) {
+        unsigned char *mem8 = (unsigned char *)mem;
+        return mem8 && size >= 2 && 0 == mem8[0] && mem8[1] >= 0x70 && mem8[1] <= 0x7F;
+    }
+    bool is_unpacked( const void *mem, size_t size ) {
+        return !is_packed( mem, size );
+    }
+
     const char *const name_of( unsigned q ) {
         switch( q ) {
             break; default : return "NONE";
@@ -318,6 +326,24 @@ namespace bundle {
         if( size >= 1 && mem && mem[0] == 0xEC ) return MINIZ;
         if( size >= 1 && mem && mem[0] >= 0xF0 ) return LZ4;
         return NONE;
+    }
+
+    size_t len( const void *mem, size_t len ) {
+        if( !is_packed(mem, len) ) return 0;
+        const char *ptr = (const char *)mem + 2;
+        return vlebit(ptr);
+    }
+
+    size_t zlen( const void *mem, size_t len ) {
+        if( !is_packed(mem, len) ) return 0;
+        const char *ptr = (const char *)mem + 2;
+        return vlebit(ptr), vlebit(ptr);
+    }
+
+    const void *zptr( const void *mem, size_t len ) {
+        if( !is_packed(mem, len) ) return 0;
+        const char *ptr = (const char *)mem + 2;
+        return vlebit(ptr), vlebit(ptr), (const void *)ptr;
     }
 
     size_t bound( unsigned q, size_t len ) {
@@ -524,19 +550,6 @@ namespace bundle {
 namespace bundle
 {
     // public API
-
-    unsigned type_of( const std::string &self ) {
-        return is_packed( self ) ? self[ 1 ] & 0x0F : NONE;
-    }
-    std::string name_of( const std::string &self ) {
-        return bundle::name_of( type_of(self) );
-    }
-    std::string version_of( const std::string &self ) {
-        return bundle::version_of( type_of(self) );
-    }
-    std::string ext_of( const std::string &self ) {
-        return bundle::ext_of( type_of(self) );
-    }
 
     std::string vlebit( size_t i ) {
         std::string out;
