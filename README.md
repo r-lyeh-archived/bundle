@@ -73,7 +73,7 @@ int main() {
 All ok.
 ```
 
-### on picking up compressors (on regular basis)
+### On picking up compressors (as regular basis)
 - sorted by compression ratio:
 - `zpaq < lzma25 / bsc < brotli11 < lzip < lzma20 < brotli9 < zstd < miniz < lz4hc < lz4`
 - sorted by compression time:
