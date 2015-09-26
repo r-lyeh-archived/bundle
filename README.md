@@ -88,13 +88,12 @@ All ok.
 
 ### Charts
 
-[@mavam](https://github.com/mavam) has an awesome R script that plots some fancy graphics in [his compbench repository](https://github.com/mavam/compbench)
-The following examples are a few of his own showing an invocation for a 10,000 packet PCAP trace:
+[@mavam](https://github.com/mavam) has an awesome R script that plots some fancy graphics in [his compbench repository](https://github.com/mavam/compbench). The following CC0 images are a few of his own showcasing an invocation for a 10,000 packet PCAP trace:
 
-![Compression Ratio](https://raw.githubusercontent.com/mavam/compbench/master/screenshots/ratio.png)
-![Speed Scatterplot](https://raw.githubusercontent.com/mavam/compbench/master/screenshots/speed-scatter.png)
-![Speed Barplot](https://raw.githubusercontent.com/mavam/compbench/master/screenshots/speed-bar.png)
 ![Tradeoff](https://raw.githubusercontent.com/mavam/compbench/master/screenshots/tradeoff.png)
+![Compression Ratio](https://raw.githubusercontent.com/mavam/compbench/master/screenshots/compression-ratio.png)
+![Throughput Scatterplot](https://raw.githubusercontent.com/mavam/compbench/master/screenshots/throughput-scatter.png)
+![Throughput Barplot](https://raw.githubusercontent.com/mavam/compbench/master/screenshots/throughput-bars.png)
 
 ### API - data
 ```c++
