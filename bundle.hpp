@@ -16,8 +16,9 @@
 #define BUNDLE_CXX11 0
 #endif
 
-#define BUNDLE_VERSION "0.9.4" /* (2015/09/26) Add CSC20 + Shrinker support; rename enums LZ4->LZ4F/LZ4HC->LZ4
-#define BUNDLE_VERSION "0.9.3" /* (2015/09/25) Add a few missing API calls
+#define BUNDLE_VERSION "0.9.5" /* (2015/09/28) Add missing prototypes; bugfix helper function
+#define BUNDLE_VERSION "0.9.4" // (2015/09/26) Add CSC20 + Shrinker support; rename enums LZ4->LZ4F/LZ4HC->LZ4
+#define BUNDLE_VERSION "0.9.3" // (2015/09/25) Add a few missing API calls
 #define BUNDLE_VERSION "0.9.2" // (2015/09/22) Pump up Brotli; split BROTLI enum into BROTLI9/11 pair
 #define BUNDLE_VERSION "0.9.1" // (2015/05/10) Switch to ZLIB/LibPNG license
 #define BUNDLE_VERSION "0.9.0" // (2015/04/08) BSC support
@@ -81,6 +82,7 @@ namespace bundle
     bool is_packed( const void *mem, size_t size );
     bool is_unpacked( const void *mem, size_t size );
     unsigned type_of( const void *mem, size_t size );
+    unsigned guess_type_of( const void *mem, size_t size );
     size_t len( const void *mem, size_t size );
     size_t zlen( const void *mem, size_t size );
     const void *zptr( const void *mem, size_t size );
@@ -103,12 +105,28 @@ namespace bundle
     }
 
     template<typename T>
+    static inline unsigned guess_type_of( const T &input ) {
+        return guess_type_of( &input[0], input.size() );
+    }
+    template<typename T>
     static inline unsigned type_of( const T &input ) {
         return type_of( &input[0], input.size() );
     }
     template<typename T>
+    static inline const char *const name_of( const T &input ) {
+        return name_of( type_of( input ) );
+    }
+    template<typename T>
+    static inline const char *const version_of( const T &input ) {
+        return version_of( type_of( input ) );
+    }
+    template<typename T>
+    static inline const char *const ext_of( const T &input ) {
+        return ext_of( type_of( input ) );
+    }
+    template<typename T>
     static inline size_t len( const T &input ) {
-        return zlen( &input[0], input.size() );
+        return len( &input[0], input.size() );
     }
     template<typename T>
     static inline size_t zlen( const T &input ) {

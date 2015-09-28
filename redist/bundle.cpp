@@ -345,7 +345,7 @@ namespace bundle {
         }
     }
 
-    unsigned type_of( const void *ptr, size_t size ) {
+    unsigned guess_type_of( const void *ptr, size_t size ) {
         unsigned char *mem = (unsigned char *)ptr;
         //std::string s; s.resize( size ); memcpy( &s[0], mem, size );
         //std::cout << hexdump( s) << std::endl;
@@ -353,6 +353,11 @@ namespace bundle {
         if( size >= 1 && mem && mem[0] == 0xEC ) return MINIZ;
         if( size >= 1 && mem && mem[0] >= 0xF0 ) return LZ4F;
         return NONE;
+    }
+
+    unsigned type_of( const void *mem, size_t size ) {
+        const char *ptr = (const char *)mem + 1;
+        return (*ptr) & 0x0F;
     }
 
     size_t len( const void *mem, size_t len ) {

@@ -157,6 +157,9 @@ struct archive : vector<file>    { // ~sequence of files
 [FastLZ](http://fastlz.org/), [FLZP](http://cs.fit.edu/~mmahoney/compression/#flzp), [LibLZF](http://freshmeat.net/projects/liblzf), [LZFX](https://code.google.com/p/lzfx/), [LZHAM](https://code.google.com/p/lzham/), [LZJB](http://en.wikipedia.org/wiki/LZJB), [LZLIB](http://www.nongnu.org/lzip/lzlib.html), [LZO](http://www.oberhumer.com/opensource/lzo/), [LZP](http://www.cbloom.com/src/index_lz.html), [SMAZ](https://github.com/antirez/smaz), [Snappy](https://code.google.com/p/snappy/), [ZLIB](http://www.zlib.net/), [bzip2](http://www.bzip2.org/), Yappy
 
 ### Changelog
+- v0.9.5 (2015/09/28)
+  - Add missing prototypes
+  - Bugfix helper function
 - v0.9.4 (2015/09/26)
   - Add CSC20 + Shrinker support
   - Rename enums LZ4->LZ4F/LZ4HC->LZ4
