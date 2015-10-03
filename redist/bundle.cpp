@@ -23,7 +23,6 @@
 #include "bundle.hpp"
 #include "deps/giant/giant.hpp"
 
-// easylzma interface
 namespace {
     /* callbacks for streamed input and output */
 
@@ -62,7 +61,11 @@ namespace {
             return len;
         }
     };
+}
 
+// easylzma interface
+#ifndef BUNDLE_NO_LZIP
+namespace {
     size_t elzma_write_callback( void *ctx, const void *buf, size_t size ) {
         wrbuf * f = (wrbuf *) ctx;
         assert( f );
@@ -149,8 +152,10 @@ namespace {
         return wr.pos;
     }
 }
+#endif
 
 // zpaq interface
+#ifndef BUNDLE_NO_ZPAQ
 namespace
 {
     class In: public libzpaq::Reader, public rdbuf {
@@ -212,10 +217,11 @@ namespace libzpaq {
         exit(1);
     }
 }
+#endif
 
 // CSC interface
+#ifndef BUNDLE_NO_CSC
 namespace {
-
     struct CSCSeqStream {
         union {
             ISeqInStream is;
@@ -236,6 +242,7 @@ namespace {
         return sss->wr->writebuf(buf, size);
     }
 }
+#endif
 
 namespace bundle {
 
@@ -383,9 +390,15 @@ namespace bundle {
         size_t zlen = len;
         switch( q ) {
             break; default : zlen = zlen * 2;
+#ifndef BUNDLE_NO_LZ4
             break; case LZ4F: case LZ4: zlen = LZ4_compressBound((int)(len));
+#endif
+#ifndef BUNDLE_NO_MINIZ
             break; case MINIZ: zlen = mz_compressBound(len);
+#endif
+#ifndef BUNDLE_NO_ZSTD
             break; case ZSTD: zlen = ZSTD_compressBound(len);
+#endif
 #if 0
             // for archival purposes
 
@@ -416,10 +429,17 @@ namespace bundle {
             ok = true;
             switch( q ) {
                 break; default: ok = false;
+#ifndef BUNDLE_NO_LZ4
                 break; case LZ4F: outlen = LZ4_compress( (const char *)in, (char *)out, inlen );
                 break; case LZ4: outlen = LZ4_compressHC2( (const char *)in, (char *)out, inlen, 16 );
+#endif
+#ifndef BUNDLE_NO_MINIZ
                 break; case MINIZ: case AUTO: outlen = tdefl_compress_mem_to_mem( out, outlen, in, inlen, TDEFL_MAX_PROBES_MASK ); // TDEFL_DEFAULT_MAX_PROBES );
+#endif
+#ifndef BUNDLE_NO_SHOCO
                 break; case SHOCO: outlen = shoco_compress( (const char *)in, inlen, (char *)out, outlen );
+#endif
+#ifndef BUNDLE_NO_LZMA
                 break; case LZMA20: case LZMA25: { //outlen = lzma_compress<0>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen );
                         SizeT propsSize = LZMA_PROPS_SIZE;
                         outlen = outlen - LZMA_PROPS_SIZE - 8;
@@ -455,8 +475,14 @@ namespace bundle {
                             outlen = outlen + LZMA_PROPS_SIZE + 8;
                         }
                 }
+#endif
+#ifndef BUNDLE_NO_LZIP
                 break; case LZIP: outlen = lzma_compress<1>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen );
+#endif
+#ifndef BUNDLE_NO_ZPAQ
                 break; case ZPAQ: outlen = zpaq_compress( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen );
+#endif
+#ifndef BUNDLE_NO_BROTLI
                 break; case BROTLI9: case BROTLI11: {
                         brotli::BrotliParams bp;
                         // Default compression mode. The compressor does not know anything in
@@ -474,9 +500,17 @@ namespace bundle {
                         bp.lgblock = 0;
                         ok = (1 == brotli::BrotliCompressBuffer( bp, inlen, (const uint8_t *)in, &outlen, (uint8_t *)out ));
                 }
+#endif
+#ifndef BUNDLE_NO_ZSTD
                 break; case ZSTD: outlen = ZSTD_compress( out, outlen, in, inlen ); if( ZSTD_isError(outlen) ) outlen = 0;
+#endif
+#ifndef BUNDLE_NO_BSC
                 break; case BSC: outlen = bsc_compress((const unsigned char *)in, (unsigned char *)out, inlen, LIBBSC_DEFAULT_LZPHASHSIZE, LIBBSC_DEFAULT_LZPMINLEN, LIBBSC_DEFAULT_BLOCKSORTER, LIBBSC_CODER_QLFC_ADAPTIVE, LIBBSC_FEATURE_FASTMODE | 0);
+#endif
+#ifndef BUNDLE_NO_SHRINKER
                 break; case SHRINKER: outlen = shrinker_compress((void *)in, out, inlen); if( -1 == int(outlen) ) outlen = 0;
+#endif
+#ifndef BUNDLE_NO_CSC
                 break; case CSC20: {
                         CSCSeqStream isss, osss;
                         isss.rd = new rdbuf( (const uint8_t *)in, inlen );
@@ -508,6 +542,7 @@ namespace bundle {
                         delete isss.rd, isss.rd = 0;
                         delete osss.wr, osss.wr = 0;
                 }
+#endif
 #if 0
                 // for archival purposes:
                 break; case YAPPY: outlen = Yappy_Compress( (const unsigned char *)in, (unsigned char *)out, inlen ) - out;
@@ -564,21 +599,42 @@ namespace bundle {
             ok = true;
             switch( q ) {
                 break; default: ok = false;
+#ifndef BUNDLE_NO_LZ4
                 break; case LZ4F: case LZ4: if( LZ4_decompress_safe( (const char *)in, (char *)out, inlen, outlen ) >= 0 ) bytes_read = inlen; // faster: bytes_read = LZ4_uncompress( (const char *)in, (char *)out, outlen );
+#endif
+#ifndef BUNDLE_NO_MINIZ
                 break; case MINIZ: if( TINFL_DECOMPRESS_MEM_TO_MEM_FAILED != tinfl_decompress_mem_to_mem( out, outlen, in, inlen, TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF ) ) bytes_read = inlen;
+#endif
+#ifndef BUNDLE_NO_SHOCO
                 break; case SHOCO: bytes_read = shoco_decompress( (const char *)in, inlen, (char *)out, outlen ) == outlen ? inlen : 0;
+#endif
+#ifndef BUNDLE_NO_LZMA
                 break; case LZMA20: case LZMA25: {
                         size_t inlen2 = inlen - LZMA_PROPS_SIZE - 8;
                         if( SZ_OK == LzmaUncompress((unsigned char *)out, &outlen, (unsigned char *)in + LZMA_PROPS_SIZE + 8, &inlen2, (unsigned char *)in, LZMA_PROPS_SIZE) ) {
                             bytes_read = inlen;
                         }
                 }
+#endif
+#ifndef BUNDLE_NO_LZIP
                 break; case LZIP: if( lzma_decompress<1>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen ) ) bytes_read = inlen;
+#endif
+#ifndef BUNDLE_NO_ZPAQ
                 break; case ZPAQ: if( zpaq_decompress( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen ) ) bytes_read = inlen;
+#endif
+#ifndef BUNDLE_NO_BROTLI
                 break; case BROTLI9: case BROTLI11: if( 1 == BrotliDecompressBuffer(inlen, (const uint8_t *)in, &outlen, (uint8_t *)out ) ) bytes_read = inlen;
+#endif
+#ifndef BUNDLE_NO_ZSTD
                 break; case ZSTD: bytes_read = ZSTD_decompress( out, outlen, in, inlen ); if( !ZSTD_isError(bytes_read) ) bytes_read = inlen;
+#endif
+#ifndef BUNDLE_NO_BSC
                 break; case BSC: bsc_decompress((const unsigned char *)in, inlen, (unsigned char *)out, outlen, /*LIBBSC_FEATURE_FASTMODE | */0); bytes_read = inlen;
+#endif
+#ifndef BUNDLE_NO_SHRINKER
                 break; case SHRINKER: bytes_read = shrinker_decompress((void *)in, out, outlen); bytes_read = -1 == int(bytes_read) ? 0 : inlen;
+#endif
+#ifndef BUNDLE_NO_CSC
                 break; case CSC20: {
                     CSCSeqStream isss, osss;
                     isss.rd = new rdbuf( (const uint8_t *)in, inlen );
@@ -598,6 +654,7 @@ namespace bundle {
                     delete isss.rd, isss.rd = 0;
                     delete osss.wr, osss.wr = 0;
                 }
+#endif
 #if 0
                 // for archival purposes:
                 break; case EASYLZMA: if( lzma_decompress<0>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen ) ) bytes_read = inlen;
@@ -669,8 +726,9 @@ namespace bundle
         if( !binary.size() )
             return true; // :)
 
-        if( type == container::ZIP )
+        if( type == ZIP )
         {
+#ifndef BUNDLE_NO_MINIZ
             // Try to open the archive.
             mz_zip_archive zip_archive;
             memset(&zip_archive, 0, sizeof(zip_archive));
@@ -734,6 +792,9 @@ namespace bundle
 
             // We're done.
             mz_zip_reader_end(&zip_archive);
+#else
+            return false;
+#endif
         }
         else
         {}
@@ -748,8 +809,9 @@ namespace bundle
     {
         std::string result;
 
-        if( type == container::ZIP )
+        if( type == ZIP )
         {
+#ifndef BUNDLE_NO_MINIZ
             mz_zip_archive zip_archive;
             memset( &zip_archive, 0, sizeof(zip_archive) );
 
@@ -822,6 +884,7 @@ namespace bundle
             memcpy( &result.at(0), pBuf, pSize );
 
             free( pBuf );
+#endif
         }
         else
         {}

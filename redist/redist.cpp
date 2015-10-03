@@ -4,7 +4,12 @@
 // headers
 #include "bundle.hpp"
 
+#if defined(BUNDLE_NO_LZMA) && !defined(BUNDLE_NO_LZIP)
+#define BUNDLE_NO_LZIP
+#endif
+
 // brotli
+#ifndef BUNDLE_NO_BROTLI
 #include "deps/brotli/enc/backward_references.cc"
 #include "deps/brotli/enc/block_splitter.cc"
 #include "deps/brotli/enc/brotli_bit_stream.cc"
@@ -26,10 +31,11 @@
 #include "deps/brotli/dec/huffman.c"
 #include "deps/brotli/dec/state.c"
 #include "deps/brotli/dec/streams.c"
+#endif
 
-
-#if 0
 // lzham
+#if 0
+#ifndef BUNDLE_NO_LZHAM
 #define LZHAM_NO_ZLIB_COMPATIBLE_NAMES
 #if defined(_WIN32) && !defined(WIN32)
 #define WIN32
@@ -58,30 +64,43 @@
 #include "deps/lzham/lzhamlib/lzham_lib.cpp"
 #include "deps/lzham/src/lzham_mem.cpp"
 #endif
+#endif
 
+// lzp1
 #if 0
 #include "deps/lzp1/lzp1.hpp"
 #endif
-//#include "deps/lz4/lz4.h"
-//#include "deps/lz4/lz4hc.h"
+
+#ifndef BUNDLE_NO_SHOCO
 #include "deps/shoco/shoco.h"
+#endif
+
+#ifndef BUNDLE_NO_LZIP
+#ifndef BUNDLE_NO_LZMA
 #include "deps/easylzma/src/easylzma/compress.h"
 #include "deps/easylzma/src/easylzma/decompress.h"
+#endif
+#endif
+
 #ifdef NDEBUG
 #undef NDEBUG
 #endif
-#include "deps/zpaq/libzpaq.h"
 
-#if 1
+#ifndef BUNDLE_NO_ZPAQ
+#include "deps/zpaq/libzpaq.h"
+#endif
+
 // miniz
+#ifndef BUNDLE_NO_MINIZ
+#define MINIZ_NO_STDIO 1
 #define MINIZ_NO_ZLIB_COMPATIBLE_NAMES 1
 //#define MINIZ_USE_UNALIGNED_LOADS_AND_STORES 1
 //#define MINIZ_HAS_64BIT_REGISTERS 1
 #include "deps/miniz/miniz.c"
 #endif
 
-#if 1
 // lz4, which defines 'inline' and 'restrict' which is later required by shoco
+#ifndef BUNDLE_NO_LZ4
 #include "deps/lz4/lz4.c"
 #undef ALLOCATOR
 #define U16_S U16_S2
@@ -118,19 +137,24 @@
 #undef MAX_DISTANCE
 #endif
 
-#if 1
 // shoco
+#ifndef BUNDLE_NO_SHOCO
 #include "deps/shoco/shoco.c"
 #endif
 
-#if 1
 // easylzma
+#ifndef BUNDLE_NO_LZIP
+#ifndef BUNDLE_NO_LZMA
 #include "deps/easylzma/src/common_internal.c"
 #include "deps/easylzma/src/compress.c"
 #include "deps/easylzma/src/decompress.c"
 #include "deps/easylzma/src/lzip_header.c"
 #include "deps/easylzma/src/lzma_header.c"
+#endif
+#endif
+
 // lzma sdk
+#ifndef BUNDLE_NO_LZMA
 #define _7ZIP_ST
 #include "deps/easylzma/src/pavlov/7zCrc.c"
 #include "deps/easylzma/src/pavlov/Alloc.c"
@@ -150,8 +174,8 @@
 #include "deps/easylzma/src/pavlov/Bcj2.c"
 #endif
 
-#if 1
 // zpaq
+#ifndef BUNDLE_NO_ZPAQ
 #if defined __X86__ || defined __i386__ || defined i386 || defined _M_IX86 || defined __386__ || defined __x86_64__ || defined _M_X64
 #   define BUNDLE_CPU_X86 1
 #   if defined __x86_64__ || defined _M_X64
@@ -207,8 +231,8 @@ struct init_blosc {
 } _;
 #endif
 
-#if 1
 // bsc
+#ifndef BUNDLE_NO_BSC
 #pragma comment(lib, "Advapi32.lib")
 //#define LIBBSC_SORT_TRANSFORM_SUPPORT 1
 #include "deps/libbsc/libbsc/libbsc.h"
@@ -261,16 +285,21 @@ extern "C" void bz_internal_error(int errcode) {
 #undef swap
 #endif
 
+#ifndef BUNDLE_NO_ZSTD
 #undef HASH_MASK
 #undef HASH_LOG
 #include "deps/zstd/lib/fse.h"
 #include "deps/zstd/lib/fse.c"
 #include "deps/zstd/lib/zstd.h"
 #include "deps/zstd/lib/zstd.c"
+#endif
 
+#ifndef BUNDLE_NO_SHRINKER
 #include "deps/shrinker/shrinker.h"
 #include "deps/shrinker/shrinker.c"
+#endif
 
+#ifndef BUNDLE_NO_CSC
 #undef MIN
 #undef MAX
 #undef KB
@@ -304,6 +333,7 @@ extern "C" void bz_internal_error(int errcode) {
 #define CSCInstance CSCInstance2
 #include "deps/libcsc/csc_enc.cpp"
 #include "deps/libcsc/csc_encoder_main.cpp"
+#endif
 
 // bundle
 #include "bundle.cpp"

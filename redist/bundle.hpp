@@ -16,7 +16,8 @@
 #define BUNDLE_CXX11 0
 #endif
 
-#define BUNDLE_VERSION "0.9.5" /* (2015/09/28) Add missing prototypes; bugfix helper function
+#define BUNDLE_VERSION "0.9.6" /* (2015/10/03) Add library configuration directives { BUNDLE_NO_ZSTD, BUNDLE_NO_CSC, ... }
+#define BUNDLE_VERSION "0.9.5" // (2015/09/28) Add missing prototypes; bugfix helper function
 #define BUNDLE_VERSION "0.9.4" // (2015/09/26) Add CSC20 + Shrinker support; rename enums LZ4->LZ4F/LZ4HC->LZ4
 #define BUNDLE_VERSION "0.9.3" // (2015/09/25) Add a few missing API calls
 #define BUNDLE_VERSION "0.9.2" // (2015/09/22) Pump up Brotli; split BROTLI enum into BROTLI9/11 pair
@@ -465,7 +466,6 @@ namespace bundle
         {}
 
         // binary serialization
-
         bool bin( const std::string &binary );
         std::string bin( unsigned q = EXTRA ) const;
 
