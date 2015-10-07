@@ -19,7 +19,7 @@ int main( int argc, char **argv )
         pak[0]["data"] = "hello world";
 
         pak[1]["name"] = "test2.txt";
-        pak[1]["data"] = 1337;
+        pak[1]["data"] = "1337";
 
         std::cout << "zipping files..." << std::endl;
 

@@ -180,6 +180,7 @@ struct archive : vector<file>    { // ~sequence of files
 [FastLZ](http://fastlz.org/), [FLZP](http://cs.fit.edu/~mmahoney/compression/#flzp), [LibLZF](http://freshmeat.net/projects/liblzf), [LZFX](https://code.google.com/p/lzfx/), [LZHAM](https://code.google.com/p/lzham/), [LZJB](http://en.wikipedia.org/wiki/LZJB), [LZLIB](http://www.nongnu.org/lzip/lzlib.html), [LZO](http://www.oberhumer.com/opensource/lzo/), [LZP](http://www.cbloom.com/src/index_lz.html), [SMAZ](https://github.com/antirez/smaz), [Snappy](https://code.google.com/p/snappy/), [ZLIB](http://www.zlib.net/), [bzip2](http://www.bzip2.org/), Yappy
 
 ### Changelog
+- v0.9.8 (2015/10/07): Remove confusing bundle::string variant class from API
 - v0.9.7 (2015/10/07): Add license configuration directives
 - v0.9.6 (2015/10/03): Add library configuration directives
 - v0.9.5 (2015/09/28): Add missing prototypes

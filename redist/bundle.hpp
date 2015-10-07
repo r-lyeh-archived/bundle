@@ -16,7 +16,8 @@
 #define BUNDLE_CXX11 0
 #endif
 
-#define BUNDLE_VERSION "0.9.7" /* (2015/10/07) Add license configuration directives { BUNDLE_NO_BSD2, BUNDLE_NO_BSD3, ... }
+#define BUNDLE_VERSION "0.9.8" /* (2015/10/07) Remove confusing bundle::string variant class from API
+#define BUNDLE_VERSION "0.9.7" // (2015/10/07) Add license configuration directives { BUNDLE_NO_BSD2, BUNDLE_NO_BSD3, ... }
 #define BUNDLE_VERSION "0.9.6" // (2015/10/03) Add library configuration directives { BUNDLE_NO_ZSTD, BUNDLE_NO_CSC, ... }
 #define BUNDLE_VERSION "0.9.5" // (2015/09/28) Add missing prototypes; bugfix helper function
 #define BUNDLE_VERSION "0.9.4" // (2015/09/26) Add CSC20 + Shrinker support; rename enums LZ4->LZ4F/LZ4HC->LZ4
@@ -398,61 +399,27 @@ namespace bundle
 
 namespace bundle
 {
-    class string : public std::string
-    {
-        public:
+    template< typename T >
+    std::string itoa( const T &t ) {
+        std::stringstream ss;
+        ss.precision(20);
+        return ss << t ? ss.str() : std::string();
+    }
 
-        string() : std::string()
-        {}
+    template< typename T >
+    T as( const std::string &text ) {
+        T t;
+        std::stringstream ss( text );
+        return ss >> t ? t : T();
+    }
 
-        template< typename T >
-        explicit string( const T &t ) : std::string() {
-            operator=(t);
-        }
-
-        template< typename T >
-        string &operator=( const T &t ) {
-            std::stringstream ss;
-            ss.precision(20);
-            return ss << t ? (this->assign( ss.str() ), *this) : *this;
-        }
-
-        template< typename T >
-        T as() const {
-            T t;
-            std::stringstream ss( *this );
-            return ss >> t ? t : T();
-        }
-
-        template< typename T0 >
-        string( const std::string &_fmt, const T0 &t0 ) : std::string() {
-            std::string t[] = { string(), string(t0) };
-            for( const char *fmt = _fmt.c_str(); *fmt; ++fmt ) {
-                /**/ if( *fmt == '\1' ) t[0] += t[1];
-                else                    t[0] += *fmt;
-            }
-            this->assign( t[0] );
-        }
-
-        template< typename T0, typename T1 >
-        string( const std::string &_fmt, const T0 &t0, const T1 &t1 ) : std::string() {
-            std::string t[] = { string(), string(t0), string(t1) };
-            for( const char *fmt = _fmt.c_str(); *fmt; ++fmt ) {
-                /**/ if( *fmt == '\1' ) t[0] += t[1];
-                else if( *fmt == '\2' ) t[0] += t[2];
-                else                    t[0] += *fmt;
-            }
-            this->assign( t[0] );
-        }
-    };
-
-    struct file : public std::map< std::string, bundle::string >
+    struct file : public std::map< std::string, std::string >
     {
         bool has( const std::string &property ) const;
 
         template <typename T>
         T get( const std::string &property ) const {
-            return (*this->find( property )).second.as<T>();
+            return as<T>( (*this->find( property )).second );
         }
     };
 
@@ -471,7 +438,6 @@ namespace bundle
         std::string bin( unsigned q = EXTRA ) const;
 
         // debug
-
         std::string toc() const {
             // @todo: add offset in file
             std::string ret;
@@ -479,9 +445,9 @@ namespace bundle
                 const bundle::file &file = *it;
                 ret += "\t{\n";
                 for( bundle::file::const_iterator it = file.begin(), end = file.end(); it != end; ++it ) {
-                    const std::pair< std::string, bundle::string > &property = *it;
+                    const std::pair< std::string, std::string > &property = *it;
                     if( property.first == "data" )
-                        ret += "\t\t\"data\":\"... (" + string( property.second.size() ) + " bytes)\",\n";
+                        ret += "\t\t\"data\":\"... (" + bundle::itoa( property.second.size() ) + " bytes)\",\n";
                     else
                         ret += "\t\t\"" + property.first + "\":\"" + property.second + "\",\n";
                 }
