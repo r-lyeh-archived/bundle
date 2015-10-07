@@ -4,8 +4,58 @@
 // headers
 #include "bundle.hpp"
 
+#ifdef BUNDLE_NO_UNLICENSE
+#   ifndef BUNDLE_NO_CSC
+#       define BUNDLE_NO_CSC
+#   endif
+#   ifndef BUNDLE_NO_MINIZ
+#       define BUNDLE_NO_MINIZ
+#   endif
+#   ifndef BUNDLE_NO_ZPAQ
+#       define BUNDLE_NO_ZPAQ
+#   endif
+#   ifndef BUNDLE_NO_LZIP
+#       define BUNDLE_NO_LZIP
+#   endif
+#   ifndef BUNDLE_NO_LZMA
+#       define BUNDLE_NO_LZMA
+#   endif
+#endif
+
+#ifdef BUNDLE_NO_BSD2
+#   ifndef BUNDLE_NO_ZSTD
+#       define BUNDLE_NO_ZSTD
+#   endif
+#   ifndef BUNDLE_NO_LZ4
+#       define BUNDLE_NO_LZ4
+#   endif
+#endif
+
+#ifdef BUNDLE_NO_BSD3
+#   ifndef BUNDLE_NO_SHRINKER
+#       define BUNDLE_NO_SHRINKER
+#   endif
+#endif
+
+#ifdef BUNDLE_NO_MIT
+#   ifndef BUNDLE_NO_SHOCO
+#       define BUNDLE_NO_SHOCO
+#   endif
+#endif
+
+#ifdef BUNDLE_NO_APACHE2
+#   ifndef BUNDLE_NO_BSC
+#       define BUNDLE_NO_BSC
+#   endif
+#   ifndef BUNDLE_NO_BROTLI
+#       define BUNDLE_NO_BROTLI
+#   endif
+#endif
+
+
+
 #if defined(BUNDLE_NO_LZMA) && !defined(BUNDLE_NO_LZIP)
-#define BUNDLE_NO_LZIP
+#   define BUNDLE_NO_LZIP
 #endif
 
 // brotli

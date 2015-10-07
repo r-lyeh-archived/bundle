@@ -139,6 +139,29 @@ struct archive : vector<file>    { // ~sequence of files
 };
 ```
 
+### Directives
+
+|#define directive|Default value|Meaning|
+|:-----------|:---------------|:---------|
+|BUNDLE_NO_APACHE2|(undefined)|Define to exclude any Apache 2.0 library from build
+|BUNDLE_NO_BSD2|(undefined)|Define to exclude any BSD-2 library from build
+|BUNDLE_NO_BSD3|(undefined)|Define to exclude any BSD-3 library from build
+|BUNDLE_NO_MIT|(undefined)|Define to exclude any MIT library from build
+|BUNDLE_NO_UNLICENSE|(undefined)|Define to exclude any Public Domain library from build (*)
+|BUNDLE_NO_BROTLI|(undefined)|Define to exclude Brotli library from build
+|BUNDLE_NO_BSC|(undefined)|Define to exclude LibBsc library from build
+|BUNDLE_NO_CSC|(undefined)|Define to exclude CSC library from build
+|BUNDLE_NO_LZ4|(undefined)|Define to exclude LZ4/LZ4 libraries 
+|BUNDLE_NO_LZIP|(undefined)|Define to exclude EasyLZMA library from build
+|BUNDLE_NO_LZMA|(undefined)|Define to exclude LZMA library from build
+|BUNDLE_NO_MINIZ|(undefined)|Define to exclude MiniZ library from build (*)
+|BUNDLE_NO_SHOCO|(undefined)|Define to exclude Shoco library from build
+|BUNDLE_NO_SHRINKER|(undefined)|Define to exclude Shrinker library from build
+|BUNDLE_NO_ZPAQ|(undefined)|Define to exclude ZPAQ library from build
+|BUNDLE_NO_ZSTD|(undefined)|Define to exclude ZSTD library from build
+
+(*): This #define will disable `.zip` archive support as well.
+
 ### Licenses
 - [bundle](https://github.com/r-lyeh/bundle), ZLIB/LibPNG license.
 - [brotli](https://github.com/google/brotli) by Jyrki Alakuijala and Zoltan Szabadka, Apache 2.0 license.
@@ -157,55 +180,45 @@ struct archive : vector<file>    { // ~sequence of files
 [FastLZ](http://fastlz.org/), [FLZP](http://cs.fit.edu/~mmahoney/compression/#flzp), [LibLZF](http://freshmeat.net/projects/liblzf), [LZFX](https://code.google.com/p/lzfx/), [LZHAM](https://code.google.com/p/lzham/), [LZJB](http://en.wikipedia.org/wiki/LZJB), [LZLIB](http://www.nongnu.org/lzip/lzlib.html), [LZO](http://www.oberhumer.com/opensource/lzo/), [LZP](http://www.cbloom.com/src/index_lz.html), [SMAZ](https://github.com/antirez/smaz), [Snappy](https://code.google.com/p/snappy/), [ZLIB](http://www.zlib.net/), [bzip2](http://www.bzip2.org/), Yappy
 
 ### Changelog
-- v0.9.6 (2015/10/03) Add library configuration directive: BUNDLE_NO_BROTLI
-- v0.9.6 (2015/10/03) Add library configuration directive: BUNDLE_NO_BSC
-- v0.9.6 (2015/10/03) Add library configuration directive: BUNDLE_NO_CSC
-- v0.9.6 (2015/10/03) Add library configuration directive: BUNDLE_NO_LZ4
-- v0.9.6 (2015/10/03) Add library configuration directive: BUNDLE_NO_LZHAM
-- v0.9.6 (2015/10/03) Add library configuration directive: BUNDLE_NO_LZIP
-- v0.9.6 (2015/10/03) Add library configuration directive: BUNDLE_NO_LZMA
-- v0.9.6 (2015/10/03) Add library configuration directive: BUNDLE_NO_MINIZ
-- v0.9.6 (2015/10/03) Add library configuration directive: BUNDLE_NO_SHOCO
-- v0.9.6 (2015/10/03) Add library configuration directive: BUNDLE_NO_SHRINKER
-- v0.9.6 (2015/10/03) Add library configuration directive: BUNDLE_NO_ZPAQ
-- v0.9.6 (2015/10/03) Add library configuration directive: BUNDLE_NO_ZSTD
-- v0.9.5 (2015/09/28) Add missing prototypes
-- v0.9.5 (2015/09/28) Bugfix helper function
-- v0.9.4 (2015/09/26) Add CSC20 + Shrinker support
-- v0.9.4 (2015/09/26) Rename enums LZ4->LZ4F/LZ4HC->LZ4
-- v0.9.3 (2015/09/25) Add a few missing API calls
-- v0.9.2 (2015/09/22) Pump up Brotli
-- v0.9.2 (2015/09/22) Split BROTLI enum into BROTLI9/11 pair
-- v0.9.1 (2015/05/10) Switch to ZLIB/LibPNG license
-- v0.9.0 (2015/04/08) BSC support
-- v0.8.1 (2015/04/07) Pump up Brotli+ZSTD
-- v0.8.1 (2015/04/07) LZMA20/25 dict
-- v0.8.1 (2015/04/07) Unify FOURCCs
-- v0.8.0 (2015/01/27) ZSTD support
-- v0.8.0 (2015/01/27) Reorder enums
-- v0.8.0 (2015/01/27) Simplify API
-- v0.7.1 (2015/01/26) Fix LZMA
-- v0.7.1 (2015/01/26) Verify DEFLATEs
-- v0.7.1 (2015/01/26) New AUTO enum
-- v0.7.0 (2014/10/22) Brotli support
-- v0.7.0 (2014/10/22) Pump up LZ4
-- v0.6.3 (2014/09/27) Switch to BOOST license
-- v0.6.2 (2014/09/02) Fix 0-byte streams
-- v0.6.2 (2014/09/02) Deflate alignment
-- v0.6.1 (2014/06/30) Safer LZ4 decompression
-- v0.6.1 (2014/06/30) Pump up LZ4 + ZPAQ
-- v0.6.0 (2014/06/26) LZ4HC support
-- v0.6.0 (2014/06/26) Optimize in-place decompression
-- v0.5.0 (2014/06/09) ZPAQ support
-- v0.5.0 (2014/06/09) UBER encoding
-- v0.5.0 (2014/06/09) Fixes
-- v0.4.1 (2014/06/05) Switch to lzmasdk
-- v0.4.0 (2014/05/30) Maximize compression (lzma)
-- v0.3.0 (2014/05/28) Fix alignment (deflate)
-- v0.3.0 (2014/05/28) Change stream header
-- v0.2.1 (2014/05/23) Fix overflow bug
-- v0.2.0 (2014/05/14) Add VLE header
-- v0.2.0 (2014/05/14) Fix vs201x compilation errors
-- v0.1.0 (2014/05/13) Add high-level API
-- v0.1.0 (2014/05/13) Add iOS support
-- v0.0.0 (2014/05/09) Initial commit
+- v0.9.7 (2015/10/07): Add license configuration directives
+- v0.9.6 (2015/10/03): Add library configuration directives
+- v0.9.5 (2015/09/28): Add missing prototypes
+- v0.9.5 (2015/09/28): Bugfix helper function
+- v0.9.4 (2015/09/26): Add CSC20 + Shrinker support
+- v0.9.4 (2015/09/26): Rename enums LZ4->LZ4F/LZ4HC->LZ4
+- v0.9.3 (2015/09/25): Add a few missing API calls
+- v0.9.2 (2015/09/22): Pump up Brotli
+- v0.9.2 (2015/09/22): Split BROTLI enum into BROTLI9/11 pair
+- v0.9.1 (2015/05/10): Switch to ZLIB/LibPNG license
+- v0.9.0 (2015/04/08): BSC support
+- v0.8.1 (2015/04/07): Pump up Brotli+ZSTD
+- v0.8.1 (2015/04/07): LZMA20/25 dict
+- v0.8.1 (2015/04/07): Unify FOURCCs
+- v0.8.0 (2015/01/27): ZSTD support
+- v0.8.0 (2015/01/27): Reorder enums
+- v0.8.0 (2015/01/27): Simplify API
+- v0.7.1 (2015/01/26): Fix LZMA
+- v0.7.1 (2015/01/26): Verify DEFLATEs
+- v0.7.1 (2015/01/26): New AUTO enum
+- v0.7.0 (2014/10/22): Brotli support
+- v0.7.0 (2014/10/22): Pump up LZ4
+- v0.6.3 (2014/09/27): Switch to BOOST license
+- v0.6.2 (2014/09/02): Fix 0-byte streams
+- v0.6.2 (2014/09/02): Deflate alignment
+- v0.6.1 (2014/06/30): Safer LZ4 decompression
+- v0.6.1 (2014/06/30): Pump up LZ4 + ZPAQ
+- v0.6.0 (2014/06/26): LZ4HC support
+- v0.6.0 (2014/06/26): Optimize in-place decompression
+- v0.5.0 (2014/06/09): ZPAQ support
+- v0.5.0 (2014/06/09): UBER encoding
+- v0.5.0 (2014/06/09): Fixes
+- v0.4.1 (2014/06/05): Switch to lzmasdk
+- v0.4.0 (2014/05/30): Maximize compression (lzma)
+- v0.3.0 (2014/05/28): Fix alignment (deflate)
+- v0.3.0 (2014/05/28): Change stream header
+- v0.2.1 (2014/05/23): Fix overflow bug
+- v0.2.0 (2014/05/14): Add VLE header
+- v0.2.0 (2014/05/14): Fix vs201x compilation errors
+- v0.1.0 (2014/05/13): Add high-level API
+- v0.1.0 (2014/05/13): Add iOS support
+- v0.0.0 (2014/05/09): Initial commit
