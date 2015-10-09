@@ -9,10 +9,10 @@ int main() {
     // pack, unpack & verify a few encoders
     using namespace bundle;
     std::vector<unsigned> libs { RAW, LZ4F, LZ4, SHOCO, MINIZ, LZMA20, LZIP, LZMA25, BROTLI9, BROTLI11, ZSTD, BSC, SHRINKER, CSC20 };
-    for( auto &use : libs ) {
-        std::string packed = pack(use, original);
+    for( auto &lib : libs ) {
+        std::string packed = pack(lib, original);
         std::string unpacked = unpack(packed);
-        std::cout << name_of(use) << ": " << original.size() << " to " << packed.size() << " bytes" << std::endl;
+        std::cout << name_of(lib) << ": " << original.size() << " to " << packed.size() << " bytes" << std::endl;
         assert( original == unpacked );
     }
 

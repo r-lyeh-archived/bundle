@@ -44,10 +44,10 @@ int main() {
     // pack, unpack & verify a few encoders
     using namespace bundle;
     std::vector<unsigned> libs { RAW, LZ4, LZ4HC, SHOCO, MINIZ, LZMA20, LZIP, LZMA25, BROTLI9, BROTLI11, ZSTD, BSC, SHRINKER, CSC20 };
-    for( auto &use : libs ) {
-        std::string packed = pack(use, original);
+    for( auto &lib : libs ) {
+        std::string packed = pack(lib, original);
         std::string unpacked = unpack(packed);
-        std::cout << name_of(use) << ": " << original.size() << " to " << packed.size() << " bytes" << std::endl;
+        std::cout << name_of(lib) << ": " << original.size() << " to " << packed.size() << " bytes" << std::endl;
         assert( original == unpacked );
     }
 
@@ -128,15 +128,18 @@ For a complete review check [bundle.hpp header](bundle.hpp)
 
 ### API - archives
 ```c++
-struct file : map<string,string> { // ~map of properties
-  bool has(property);              // property check
-  string &get(property);           // property access
-};
-struct archive : vector<file>    { // ~sequence of files
-  void bin(string);                // serialization
-  string bin() const;              // serialization
-  string toc() const;              // debug
-};
+namespace bundle
+{
+  struct file : map<string,string> { // ~map of properties
+    bool has(property);              // property check
+    string &get(property);           // property access
+  };
+  struct archive : vector<file>    { // ~sequence of files
+    void bin(string);                // serialization
+    string bin() const;              // serialization
+    string toc() const;              // debug
+  };
+}
 ```
 
 ### Directives
@@ -180,6 +183,7 @@ struct archive : vector<file>    { // ~sequence of files
 [FastLZ](http://fastlz.org/), [FLZP](http://cs.fit.edu/~mmahoney/compression/#flzp), [LibLZF](http://freshmeat.net/projects/liblzf), [LZFX](https://code.google.com/p/lzfx/), [LZHAM](https://code.google.com/p/lzham/), [LZJB](http://en.wikipedia.org/wiki/LZJB), [LZLIB](http://www.nongnu.org/lzip/lzlib.html), [LZO](http://www.oberhumer.com/opensource/lzo/), [LZP](http://www.cbloom.com/src/index_lz.html), [SMAZ](https://github.com/antirez/smaz), [Snappy](https://code.google.com/p/snappy/), [ZLIB](http://www.zlib.net/), [bzip2](http://www.bzip2.org/), Yappy
 
 ### Changelog
+- v1.0.0 (2015/10/09): Change benchmark API to sort multiples values as well
 - v0.9.8 (2015/10/07): Remove confusing bundle::string variant class from API
 - v0.9.7 (2015/10/07): Add license configuration directives
 - v0.9.6 (2015/10/03): Add library configuration directives

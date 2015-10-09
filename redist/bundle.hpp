@@ -16,7 +16,8 @@
 #define BUNDLE_CXX11 0
 #endif
 
-#define BUNDLE_VERSION "0.9.8" /* (2015/10/07) Remove confusing bundle::string variant class from API
+#define BUNDLE_VERSION "1.0.0" /* (2015/10/09) Change benchmark API to sort multiples values as well
+#define BUNDLE_VERSION "0.9.8" // (2015/10/07) Remove confusing bundle::string variant class from API
 #define BUNDLE_VERSION "0.9.7" // (2015/10/07) Add license configuration directives { BUNDLE_NO_BSD2, BUNDLE_NO_BSD3, ... }
 #define BUNDLE_VERSION "0.9.6" // (2015/10/03) Add library configuration directives { BUNDLE_NO_ZSTD, BUNDLE_NO_CSC, ... }
 #define BUNDLE_VERSION "0.9.5" // (2015/09/28) Add missing prototypes; bugfix helper function
@@ -45,6 +46,7 @@
 #include <cassert>
 #include <cstdio>
 #include <cstring>
+#include <functional>
 #include <iomanip>
 #include <iostream>
 #include <limits>
@@ -333,65 +335,83 @@ namespace bundle
         return results;
     }
 
-    // find best choice for given data
+    // sort_* functions return sorted slot indices (as seen order in measures vector)
+
     template< class T >
-    unsigned find_slot_for_smallest_compressor( const std::vector< measure<T> > &measures, double no_compression_treshold = NO_COMPRESSION_TRESHOLD / 1.0 ) {
-        unsigned q = ~0;
-        double ratio = -1;
+    std::vector<unsigned> sort_smallest_encoders( const std::vector< measure<T> > &measures, double no_compression_treshold = NO_COMPRESSION_TRESHOLD ) {
+        std::map<double,unsigned,std::greater<double>> q;
         for( auto end = measures.size(), it = end - end; it < end; ++it ) {
             auto &r = measures[ it ];
-            if( r.pass && r.ratio > ratio && r.ratio >= no_compression_treshold ) {
-                ratio = r.ratio;
-                q = it;
+            if( r.pass && r.q != NONE && r.ratio >= no_compression_treshold ) {
+                q[ r.ratio ] = it;
             }
         }
-        return q;
+        std::vector<unsigned> v;
+        for( auto &it : q ) {
+            v.push_back( it.second );
+        }
+        return v;
     }
 
     template< class T >
-    unsigned find_slot_for_fastest_compressor( const std::vector< measure<T> > &measures ) {
-        unsigned q = ~0;
-        double enctime = std::numeric_limits<double>::max();
+    std::vector<unsigned> sort_fastest_encoders( const std::vector< measure<T> > &measures ) {
+        std::map<double,unsigned> q;
         for( auto end = measures.size(), it = end - end; it < end; ++it ) {
             auto &r = measures[ it ];
-            if( r.pass && r.enctime < enctime && r.q != NONE ) {
-                enctime = r.enctime;
-                q = it;
+            if( r.pass && r.q != NONE ) {
+                q[ r.enctime ] = it;
             }
         }
-        return q;
+        std::vector<unsigned> v;
+        for( auto &it : q ) {
+            v.push_back( it.second );
+        }
+        return v;
     }
 
     template< class T >
-    unsigned find_slot_for_fastest_decompressor( const std::vector< measure<T> > &measures ) {
-        unsigned q = ~0;
-        double dectime = std::numeric_limits<double>::max();
+    std::vector<unsigned> sort_fastest_decoders( const std::vector< measure<T> > &measures ) {
+        std::map<double,unsigned> q;
         for( auto end = measures.size(), it = end - end; it < end; ++it ) {
             auto &r = measures[ it ];
-            if( r.pass && r.dectime < dectime && r.q != NONE ) {
-                dectime = r.dectime;
-                q = it;
+            if( r.pass && r.q != NONE ) {
+                q[ r.dectime ] = it;
             }
         }
-        return q;
+        std::vector<unsigned> v;
+        for( auto &it : q ) {
+            v.push_back( it.second );
+        }
+        return v;
+    }
+
+    // find_* functions return sorted encoding enums (as slot indices are traversed from measures vector)
+
+    template< class T >
+    std::vector<unsigned> find_smallest_encoders( const std::vector< measure<T> > &measures, double no_compression_treshold = NO_COMPRESSION_TRESHOLD ) {
+        std::vector<unsigned> v;
+        for( auto &slot : sort_smallest_encoders( measures, no_compression_treshold ) ) {
+            v.push_back( type_of( measures[slot].packed ) );
+        }
+        return v;
     }
 
     template< class T >
-    unsigned find_smallest_compressor( const std::vector< measure<T> > &measures, double no_compression_treshold = NO_COMPRESSION_TRESHOLD / 1.0 ) {
-        auto slot = find_slot_for_smallest_compressor( measures, no_compression_treshold );
-        return slot == ~0 ? NONE : type_of( measures[slot].packed );
+    std::vector<unsigned> find_fastest_encoders( const std::vector< measure<T> > &measures ) {
+        std::vector<unsigned> v;
+        for( auto &slot : sort_fastest_encoders( measures ) ) {
+            v.push_back( type_of( measures[slot].packed ) );
+        }
+        return v;
     }
 
     template< class T >
-    unsigned find_fastest_compressor( const std::vector< measure<T> > &measures ) {
-        auto slot = find_slot_for_fastest_compressor( measures );
-        return slot == ~0 ? NONE : type_of( measures[slot].packed );
-    }
-
-    template< class T >
-    unsigned find_fastest_decompressor( const std::vector< measure<T> > &measures ) {
-        auto slot = find_slot_for_fastest_decompressor( measures );
-        return slot == ~0 ? NONE : type_of( measures[slot].packed );
+    std::vector<unsigned> find_fastest_decoders( const std::vector< measure<T> > &measures ) {
+        std::vector<unsigned> v;
+        for( auto &slot : sort_fastest_decoders( measures ) ) {
+            v.push_back( type_of( measures[slot].packed ) );
+        }
+        return v;
     }
 
 #endif

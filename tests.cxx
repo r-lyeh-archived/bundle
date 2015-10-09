@@ -70,9 +70,20 @@ int main( int argc, char **argv )
             std::cout << in.str() << std::endl;
         }
 
-        std::cout << "fastest decompressor: " << name_of( find_fastest_decompressor(data) ) << std::endl;
-        std::cout << "fastest compressor: " << name_of( find_fastest_compressor(data) ) << std::endl;
-        std::cout << "smallest compressor: " << name_of( find_smallest_compressor(data) ) << std::endl;
+        std::string rank = "fastest encoders: ";
+        for( auto &R : find_fastest_encoders(data) )
+            std::cout << rank << name_of( R ), rank = ',';
+        std::cout << std::endl;
+
+        rank = "fastest decoders: ";
+        for( auto &R : find_fastest_decoders(data) )
+            std::cout << rank << name_of( R ), rank = ',';
+        std::cout << std::endl;
+
+        rank = "minimum encoders: ";
+        for( auto &R : find_smallest_encoders(data) )
+            std::cout << rank << name_of( R ), rank = ',';
+        std::cout << std::endl;
 
         bundle::archive pak;
 
