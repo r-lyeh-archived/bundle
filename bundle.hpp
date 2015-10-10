@@ -16,7 +16,8 @@
 #define BUNDLE_CXX11 0
 #endif
 
-#define BUNDLE_VERSION "1.0.0" /* (2015/10/09) Change benchmark API to sort multiples values as well
+#define BUNDLE_VERSION "1.0.1" /* (2015/10/10) Shrink to fit during measures() function
+#define BUNDLE_VERSION "1.0.0" // (2015/10/09) Change benchmark API to sort multiples values as well
 #define BUNDLE_VERSION "0.9.8" // (2015/10/07) Remove confusing bundle::string variant class from API
 #define BUNDLE_VERSION "0.9.7" // (2015/10/07) Add license configuration directives { BUNDLE_NO_BSD2, BUNDLE_NO_BSD3, ... }
 #define BUNDLE_VERSION "0.9.6" // (2015/10/03) Add library configuration directives { BUNDLE_NO_ZSTD, BUNDLE_NO_CSC, ... }
@@ -298,6 +299,7 @@ namespace bundle
 #ifdef BUNDLE_USE_OMP_TIMER
                 auto start = omp_get_wtime();
                 r.packed = pack( encoding, original );
+                r.packed.shrink_to_fit();
                 auto end = omp_get_wtime();
                 r.enctime = ( end - start ) * 1000000;
 #else

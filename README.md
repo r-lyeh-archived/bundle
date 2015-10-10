@@ -183,6 +183,7 @@ namespace bundle
 [FastLZ](http://fastlz.org/), [FLZP](http://cs.fit.edu/~mmahoney/compression/#flzp), [LibLZF](http://freshmeat.net/projects/liblzf), [LZFX](https://code.google.com/p/lzfx/), [LZHAM](https://code.google.com/p/lzham/), [LZJB](http://en.wikipedia.org/wiki/LZJB), [LZLIB](http://www.nongnu.org/lzip/lzlib.html), [LZO](http://www.oberhumer.com/opensource/lzo/), [LZP](http://www.cbloom.com/src/index_lz.html), [SMAZ](https://github.com/antirez/smaz), [Snappy](https://code.google.com/p/snappy/), [ZLIB](http://www.zlib.net/), [bzip2](http://www.bzip2.org/), Yappy
 
 ### Changelog
+- v1.0.1 (2015/10/10): Shrink to fit during measures() function
 - v1.0.0 (2015/10/09): Change benchmark API to sort multiples values as well
 - v0.9.8 (2015/10/07): Remove confusing bundle::string variant class from API
 - v0.9.7 (2015/10/07): Add license configuration directives
