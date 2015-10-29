@@ -16,7 +16,8 @@
 #define BUNDLE_CXX11 0
 #endif
 
-#define BUNDLE_VERSION "1.0.1" /* (2015/10/10) Shrink to fit during measures() function
+#define BUNDLE_VERSION "1.0.2" /* (2015/10/29) Skip extra copy during archive decompression; add extra archive meta-info
+#define BUNDLE_VERSION "1.0.1" // (2015/10/10) Shrink to fit during measures() function
 #define BUNDLE_VERSION "1.0.0" // (2015/10/09) Change benchmark API to sort multiples values as well
 #define BUNDLE_VERSION "0.9.8" // (2015/10/07) Remove confusing bundle::string variant class from API
 #define BUNDLE_VERSION "0.9.7" // (2015/10/07) Add license configuration directives { BUNDLE_NO_BSD2, BUNDLE_NO_BSD3, ... }
@@ -443,6 +444,20 @@ namespace bundle
         T get( const std::string &property ) const {
             return as<T>( (*this->find( property )).second );
         }
+
+        // inspection (json doc)
+        std::string toc() const {
+            std::string ret, sep = "\t{\n";
+            for( const_iterator it = this->begin(), end = this->end(); it != end; ++it ) {
+                const std::pair< std::string, std::string > &property = *it;
+                if( property.first == "data" )
+                    ret += sep + "\t\t\"data\":\"... (" + bundle::itoa( property.second.size() ) + " bytes)\"";
+                else
+                    ret += sep + "\t\t\"" + property.first + "\":\"" + property.second + "\"";
+                sep = ",\n";
+            }
+            return ret + "\n\t}";
+        }
     };
 
     class archive : public std::vector< bundle::file >
@@ -459,24 +474,14 @@ namespace bundle
         bool bin( const std::string &binary );
         std::string bin( unsigned q = EXTRA ) const;
 
-        // debug
+        // inspection (json doc)
         std::string toc() const {
-            // @todo: add offset in file
-            std::string ret;
+            std::string ret, sep = "[\n";
             for( const_iterator it = this->begin(), end = this->end(); it != end; ++it ) {
-                const bundle::file &file = *it;
-                ret += "\t{\n";
-                for( bundle::file::const_iterator it = file.begin(), end = file.end(); it != end; ++it ) {
-                    const std::pair< std::string, std::string > &property = *it;
-                    if( property.first == "data" )
-                        ret += "\t\t\"data\":\"... (" + bundle::itoa( property.second.size() ) + " bytes)\",\n";
-                    else
-                        ret += "\t\t\"" + property.first + "\":\"" + property.second + "\",\n";
-                }
-                ret += "\t},\n";
+                ret += sep + it->toc();
+                sep = ",\n";
             }
-            if( ret.size() >= 2 ) { ret[ ret.size() - 2 ] = '\n', ret = ret.substr( 0, ret.size() - 1 ); }
-            return std::string() + "[\n" + ret + "]\n";
+            return ret + "\n]\n";
         }
     };
 }

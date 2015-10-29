@@ -3,10 +3,10 @@
 - Bundle is an embeddable compression library that supports ZIP, LZMA, LZIP, ZPAQ, LZ4, ZSTD, BROTLI, BSC, CSC, SHRINKER and SHOCO (C++03)(C++11).
 - Bundle is optimized for highest compression ratios on each compressor, where possible.
 - Bundle is optimized for fastest decompression times on each decompressor, where possible.
-- Bundle is easy to integrate, comes in an amalgamated distribution.
-- Bundle is tiny. Header and source files. Self-contained, dependencies included.
+- Bundle is easy to integrate, self-contained, all dependencies included.
+- Bundle is redistributable. Two amalgamated files.
 - Bundle is cross-platform.
-- Bundle is zlib/libpng licensed.
+- Bundle is ZLIB/LibPNG licensed.
 
 ### bundle stream format
 ```c++
@@ -57,21 +57,24 @@ int main() {
 
 ### Possible output
 ```
-[ OK ] NONE: ratio=0% enctime=78452us dectime=48559us (zlen=55574506 bytes)
-[ OK ] LZ4F: ratio=96.2244% enctime=59468us dectime=54583us (zlen=2098285 bytes)
-[ OK ] SHOCO: ratio=26.4155% enctime=641602us dectime=292279us (zlen=40894196 bytes)
-[ OK ] MINIZ: ratio=99.4327% enctime=323871us dectime=55654us (zlen=315271 bytes)
-[ OK ] LZIP: ratio=99.9574% enctime=5345118us dectime=214263us (zlen=23651 bytes)
-[ OK ] LZMA20: ratio=99.9346% enctime=5181916us dectime=79593us (zlen=36355 bytes)
-[ OK ] LZMA25: ratio=99.9667% enctime=5527585us dectime=83422us (zlen=18513 bytes)
-[ OK ] LZ4: ratio=99.5944% enctime=476480us dectime=40808us (zlen=225409 bytes)
-[ OK ] ZSTD: ratio=99.8687% enctime=69955us dectime=79821us (zlen=72969 bytes)
-[ OK ] BSC: ratio=99.9991% enctime=110453us dectime=143885us (zlen=524 bytes)
-[ OK ] BROTLI9: ratio=99.998% enctime=915402us dectime=93187us (zlen=1086 bytes)
-[ OK ] SHRINKER: ratio=99.4873% enctime=83200us dectime=55524us (zlen=284912 bytes)
-[ OK ] CSC20: ratio=99.9696% enctime=1105565us dectime=272270us (zlen=16897 bytes)
-[ OK ] BROTLI11: ratio=99.9984% enctime=15051465us dectime=76943us (zlen=864 bytes)
-[ OK ] ZPAQ: ratio=99.9969% enctime=150045662us dectime=147353064us (zlen=1743 bytes)
+[ OK ] NONE: ratio=0% enctime=94512us dectime=40005us (zlen=55574506 bytes)
+[ OK ] LZ4F: ratio=96.2244% enctime=75509us dectime=72509us (zlen=2098285 bytes)
+[ OK ] SHOCO: ratio=26.4155% enctime=686046us dectime=295016us (zlen=40894196 bytes)
+[ OK ] MINIZ: ratio=99.4327% enctime=317018us dectime=43002us (zlen=315271 bytes)
+[ OK ] LZIP: ratio=99.9574% enctime=5244299us dectime=206011us (zlen=23651 bytes)
+[ OK ] LZMA20: ratio=99.9346% enctime=5032287us dectime=71004us (zlen=36355 bytes)
+[ OK ] LZMA25: ratio=99.9667% enctime=5173295us dectime=78004us (zlen=18513 bytes)
+[ OK ] LZ4: ratio=99.5944% enctime=476027us dectime=45002us (zlen=225409 bytes)
+[ OK ] ZSTD: ratio=99.8687% enctime=52003us dectime=41002us (zlen=72969 bytes)
+[ OK ] BSC: ratio=99.9991% enctime=106006us dectime=90005us (zlen=524 bytes)
+[ OK ] BROTLI9: ratio=99.998% enctime=768043us dectime=78004us (zlen=1086 bytes)
+[ OK ] SHRINKER: ratio=99.4873% enctime=72004us dectime=41002us (zlen=284912 bytes)
+[ OK ] CSC20: ratio=99.9696% enctime=880050us dectime=268015us (zlen=16897 bytes)
+[ OK ] BROTLI11: ratio=99.9984% enctime=14719842us dectime=79004us (zlen=864 bytes)
+[ OK ] ZPAQ: ratio=99.9969% enctime=145704338us dectime=145788338us (zlen=1743 bytes)
+fastest encoders: ZSTD,SHRINKER,LZ4F,BSC,MINIZ,LZ4,SHOCO,BROTLI9,CSC20,LZMA20,LZMA25,LZIP,BROTLI11,ZPAQ
+fastest decoders: SHRINKER,MINIZ,LZ4,LZMA20,LZ4F,BROTLI9,BROTLI11,BSC,LZIP,CSC20,SHOCO,ZPAQ
+minimum encoders: BSC,BROTLI11,BROTLI9,ZPAQ,CSC20,LZMA25,LZIP,LZMA20,ZSTD,LZ4,SHRINKER,MINIZ,LZ4F,SHOCO
 All ok.
 ```
 
@@ -133,37 +136,43 @@ namespace bundle
   struct file : map<string,string> { // ~map of properties
     bool has(property);              // property check
     string &get(property);           // property access
+    string toc() const;              // inspection
   };
   struct archive : vector<file>    { // ~sequence of files
     void bin(string);                // serialization
     string bin() const;              // serialization
-    string toc() const;              // debug
+    string toc() const;              // inspection
   };
 }
 ```
 
-### Directives
-
+### Build Directives (Licensing)
 |#define directive|Default value|Meaning|
 |:-----------|:---------------|:---------|
-|BUNDLE_NO_APACHE2|(undefined)|Define to exclude any Apache 2.0 library from build
-|BUNDLE_NO_BSD2|(undefined)|Define to exclude any BSD-2 library from build
-|BUNDLE_NO_BSD3|(undefined)|Define to exclude any BSD-3 library from build
-|BUNDLE_NO_MIT|(undefined)|Define to exclude any MIT library from build
-|BUNDLE_NO_UNLICENSE|(undefined)|Define to exclude any Public Domain library from build (*)
-|BUNDLE_NO_BROTLI|(undefined)|Define to exclude Brotli library from build
-|BUNDLE_NO_BSC|(undefined)|Define to exclude LibBsc library from build
-|BUNDLE_NO_CSC|(undefined)|Define to exclude CSC library from build
-|BUNDLE_NO_LZ4|(undefined)|Define to exclude LZ4/LZ4 libraries 
-|BUNDLE_NO_LZIP|(undefined)|Define to exclude EasyLZMA library from build
-|BUNDLE_NO_LZMA|(undefined)|Define to exclude LZMA library from build
-|BUNDLE_NO_MINIZ|(undefined)|Define to exclude MiniZ library from build (*)
-|BUNDLE_NO_SHOCO|(undefined)|Define to exclude Shoco library from build
-|BUNDLE_NO_SHRINKER|(undefined)|Define to exclude Shrinker library from build
-|BUNDLE_NO_ZPAQ|(undefined)|Define to exclude ZPAQ library from build
-|BUNDLE_NO_ZSTD|(undefined)|Define to exclude ZSTD library from build
+|BUNDLE_NO_APACHE2|(undefined)|Define to remove any Apache 2.0 library from build
+|BUNDLE_NO_BSD2|(undefined)|Define to remove any BSD-2 library from build
+|BUNDLE_NO_BSD3|(undefined)|Define to remove any BSD-3 library from build
+|BUNDLE_NO_MIT|(undefined)|Define to remove any MIT library from build
+|BUNDLE_NO_UNLICENSE|(undefined)|Define to remove any Public Domain library from build (*)
 
-(*): This #define will disable `.zip` archive support as well.
+(*): disables `.zip` archive support as well.
+
+### Build Directives (Libraries)
+|#define directive|Default value|Meaning|
+|:-----------|:---------------|:---------|
+|BUNDLE_NO_BROTLI|(undefined)|Define to remove Brotli library from build
+|BUNDLE_NO_BSC|(undefined)|Define to remove LibBsc library from build
+|BUNDLE_NO_CSC|(undefined)|Define to remove CSC library from build
+|BUNDLE_NO_LZ4|(undefined)|Define to remove LZ4/LZ4 libraries 
+|BUNDLE_NO_LZIP|(undefined)|Define to remove EasyLZMA library from build
+|BUNDLE_NO_LZMA|(undefined)|Define to remove LZMA library from build
+|BUNDLE_NO_MINIZ|(undefined)|Define to remove MiniZ library from build (*)
+|BUNDLE_NO_SHOCO|(undefined)|Define to remove Shoco library from build
+|BUNDLE_NO_SHRINKER|(undefined)|Define to remove Shrinker library from build
+|BUNDLE_NO_ZPAQ|(undefined)|Define to remove ZPAQ library from build
+|BUNDLE_NO_ZSTD|(undefined)|Define to remove ZSTD library from build
+
+(*): disables `.zip` archive support as well.
 
 ### Licenses
 - [bundle](https://github.com/r-lyeh/bundle), ZLIB/LibPNG license.
@@ -183,6 +192,8 @@ namespace bundle
 [FastLZ](http://fastlz.org/), [FLZP](http://cs.fit.edu/~mmahoney/compression/#flzp), [LibLZF](http://freshmeat.net/projects/liblzf), [LZFX](https://code.google.com/p/lzfx/), [LZHAM](https://code.google.com/p/lzham/), [LZJB](http://en.wikipedia.org/wiki/LZJB), [LZLIB](http://www.nongnu.org/lzip/lzlib.html), [LZO](http://www.oberhumer.com/opensource/lzo/), [LZP](http://www.cbloom.com/src/index_lz.html), [SMAZ](https://github.com/antirez/smaz), [Snappy](https://code.google.com/p/snappy/), [ZLIB](http://www.zlib.net/), [bzip2](http://www.bzip2.org/), Yappy
 
 ### Changelog
+- v1.0.2 (2015/10/29): Skip extra copy during archive decompression
+- v1.0.2 (2015/10/29): Add extra archive meta-info
 - v1.0.1 (2015/10/10): Shrink to fit during measures() function
 - v1.0.0 (2015/10/09): Change benchmark API to sort multiples values as well
 - v0.9.8 (2015/10/07): Remove confusing bundle::string variant class from API
