@@ -1,10 +1,48 @@
-/** this is an amalgamated file. do not edit.
+/** This is an auto-generated file. Do not edit.
  */
 
-// headers
 #include "bundle.hpp"
 
+// here comes the fun. take a coffee {
+
+// ensure some libs evaluate the wrong directive too {
+#if defined(_WIN32) && !defined(WIN32)
+#define WIN32
+#endif
+// }
+
+// ensure no other lib is polluting min/max macros at any point { 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <winsock2.h>
+#include <windows.h>
+#endif
+#include <algorithm>
+// }
+
+// same for OMP {
+#ifdef _OPENMP
+#   include <omp.h>
+#endif
+// }
+
+// exclude c++11 libs
+#if BUNDLE_USE_CXX11 == 0
+#   ifndef BUNDLE_NO_ZMOLLY
+#       define BUNDLE_NO_ZMOLLY
+#   endif
+#   ifndef BUNDLE_NO_MCM
+#       define BUNDLE_NO_MCM
+#   endif
+#endif
+
+// exclude licenses
 #ifdef BUNDLE_NO_UNLICENSE
+#   ifndef BUNDLE_NO_BCM
+#       define BUNDLE_NO_BCM
+#   endif
 #   ifndef BUNDLE_NO_CSC
 #       define BUNDLE_NO_CSC
 #   endif
@@ -32,6 +70,12 @@
 #endif
 
 #ifdef BUNDLE_NO_BSD3
+#   ifndef BUNDLE_NO_ZLING
+#       define BUNDLE_NO_ZLING
+#   endif
+#   ifndef BUNDLE_NO_ZMOLLY
+#       define BUNDLE_NO_ZMOLLY
+#   endif
 #   ifndef BUNDLE_NO_SHRINKER
 #       define BUNDLE_NO_SHRINKER
 #   endif
@@ -52,8 +96,16 @@
 #   endif
 #endif
 
+#ifdef BUNDLE_NO_GPL
+#   ifndef BUNDLE_NO_TANGELO
+#       define BUNDLE_NO_TANGELO
+#   endif
+#   ifndef BUNDLE_NO_MCM
+#       define BUNDLE_NO_MCM
+#   endif
+#endif
 
-
+// mutual exclusion
 #if defined(BUNDLE_NO_LZMA) && !defined(BUNDLE_NO_LZIP)
 #   define BUNDLE_NO_LZIP
 #endif
@@ -63,6 +115,7 @@
 #include "deps/brotli/enc/backward_references.cc"
 #include "deps/brotli/enc/block_splitter.cc"
 #include "deps/brotli/enc/brotli_bit_stream.cc"
+#include "deps/brotli/enc/dictionary.cc"
 #include "deps/brotli/enc/encode.cc"
 //#include "deps/brotli/enc/encode_parallel.cc"
 #include "deps/brotli/enc/entropy_encode.cc"
@@ -71,13 +124,15 @@
 #include "deps/brotli/enc/metablock.cc"
 #include "deps/brotli/enc/static_dict.cc"
 #include "deps/brotli/enc/streams.cc"
-#define kBrotliDictionary                 kBrotliDictionary2
-#define kBrotliDictionaryOffsetsByLength  kBrotliDictionaryOffsetsByLength2
-#define kBrotliDictionarySizeBitsByLength kBrotliDictionarySizeBitsByLength2
-#define kMaxDictionaryWordLength          kMaxDictionaryWordLength2
-#define kMinDictionaryWordLength          kMinDictionaryWordLength2
+#include "deps/brotli/enc/utf8_util.cc"
+#define kBrotliDictionary                 kBrotliDictionary_Dec
+#define kBrotliDictionaryOffsetsByLength  kBrotliDictionaryOffsetsByLength_Dec
+#define kBrotliDictionarySizeBitsByLength kBrotliDictionarySizeBitsByLength_Dec
+#define kBrotliMinDictionaryWordLength    kBrotliMinDictionaryWordLength_Dec
+#define kBrotliMaxDictionaryWordLength    kBrotliMaxDictionaryWordLength_Dec
 #include "deps/brotli/dec/bit_reader.c"
 #include "deps/brotli/dec/decode.c"
+#include "deps/brotli/dec/dictionary.c"
 #include "deps/brotli/dec/huffman.c"
 #include "deps/brotli/dec/state.c"
 #include "deps/brotli/dec/streams.c"
@@ -87,9 +142,6 @@
 #if 0
 #ifndef BUNDLE_NO_LZHAM
 #define LZHAM_NO_ZLIB_COMPATIBLE_NAMES
-#if defined(_WIN32) && !defined(WIN32)
-#define WIN32
-#endif
 #include "deps/lzham/src/lzham_core.h"
 #include "deps/lzham/src/lzham_lzbase.cpp"
 #include "deps/lzham/src/lzham_lzcomp.cpp"
@@ -151,7 +203,7 @@
 
 // lz4, which defines 'inline' and 'restrict' which is later required by shoco
 #ifndef BUNDLE_NO_LZ4
-#include "deps/lz4/lz4.c"
+#include "deps/lz4/lib/lz4.c"
 #undef ALLOCATOR
 #define U16_S U16_S2
 #define U32_S U32_S2
@@ -163,28 +215,43 @@
 #undef MAX_DISTANCE
 #undef ML_MASK
 #undef STEPSIZE
-#define LZ4_NbCommonBytes LZ4_NbCommonBytes2
-#define limitedOutput limitedOutput2
-#define limitedOutput_directive limitedOutput_directive2
-#define LZ4_stream_t LZ4_stream_t2
-#define LZ4_streamDecode_t LZ4_streamDecode_t2
-#define LZ4_resetStream LZ4_resetStream2
-#define LZ4_createStream LZ4_createStream2
-#define LZ4_freeStream LZ4_freeStream2
-#define LZ4_loadDict LZ4_loadDict2
-#define LZ4_compress_continue LZ4_compress_continue2
-#define LZ4_compress_limitedOutput_continue LZ4_compress_limitedOutput_continue2
-#define LZ4_saveDict LZ4_saveDict2
-#define LZ4_setStreamDecode LZ4_setStreamDecode2
-#define LZ4_streamDecode_t2 LZ4_streamDecode_t22
-#define LZ4_createStreamDecode LZ4_createStreamDecode2
-#define LZ4_freeStreamDecode LZ4_freeStreamDecode2
-#define LZ4_decompress_safe_continue LZ4_decompress_safe_continue2
-#define LZ4_decompress_fast_continue LZ4_decompress_fast_continue2
-#include "deps/lz4/lz4hc.c"
+#define LZ4_NbCommonBytes LZ4_NbCommonBytes_hc
+#define limitedOutput limitedOutput_hc
+#define limitedOutput_directive limitedOutput_directive_hc
+#define LZ4_stream_t LZ4_stream_t_hc
+#define LZ4_streamDecode_t LZ4_streamDecode_t_hc
+#define LZ4_resetStream LZ4_resetStream_hc
+#define LZ4_createStream LZ4_createStream_hc
+#define LZ4_freeStream LZ4_freeStream_hc
+#define LZ4_loadDict LZ4_loadDict_hc
+#define LZ4_compress_continue LZ4_compress_continue_hc
+#define LZ4_compress_limitedOutput_continue LZ4_compress_limitedOutput_continue_hc
+#define LZ4_saveDict LZ4_saveDict_hc
+#define LZ4_setStreamDecode LZ4_setStreamDecode_hc
+#define LZ4_streamDecode_t2 LZ4_streamDecode_t2_hc
+#define LZ4_createStreamDecode LZ4_createStreamDecode_hc
+#define LZ4_freeStreamDecode LZ4_freeStreamDecode_hc
+#define LZ4_decompress_safe_continue LZ4_decompress_safe_continue_hc
+#define LZ4_decompress_fast_continue LZ4_decompress_fast_continue_hc
+#define LZ4_64bits LZ4_64bits_hc
+#define LZ4_isLittleEndian LZ4_isLittleEndian_hc
+#define LZ4_read16 LZ4_read16_hc
+#define LZ4_readLE16 LZ4_readLE16_hc
+#define LZ4_writeLE16 LZ4_writeLE16_hc
+#define LZ4_read32 LZ4_read32_hc
+#define LZ4_read64 LZ4_read64_hc
+#define LZ4_read_ARCH LZ4_read_ARCH_hc
+#define LZ4_copy4 LZ4_copy4_hc
+#define LZ4_copy8 LZ4_copy8_hc
+#define LZ4_wildCopy LZ4_wildCopy_hc
+#define LZ4_minLength LZ4_minLength_hc
+#define LZ4_count LZ4_count_hc
+#define prime5bytes prime5bytes_hc
+#include "deps/lz4/lib/lz4hc.c"
 #undef KB
 #undef MB
 #undef MAX_DISTANCE
+#undef FORCE_INLINE
 #endif
 
 // shoco
@@ -270,21 +337,15 @@
 #include "deps/c-blosc/blosc/blosc.c"
 #include "deps/c-blosc/blosc/blosclz.c"
 #include "deps/c-blosc/blosc/shuffle.c"
-struct init_blosc {
-    init_blosc() {
-        blosc_init();
-        blosc_set_nthreads(1);
-    }
-    ~init_blosc() {
-        blosc_destroy();
-    }
-} _;
 #endif
 
 // bsc
 #ifndef BUNDLE_NO_BSC
 #pragma comment(lib, "Advapi32.lib")
 //#define LIBBSC_SORT_TRANSFORM_SUPPORT 1
+#ifdef INLINE
+#undef INLINE
+#endif
 #include "deps/libbsc/libbsc/libbsc.h"
 #include "deps/libbsc/libbsc/libbsc/libbsc.cpp"
 #include "deps/libbsc/libbsc/lzp/lzp.cpp"
@@ -298,11 +359,16 @@ struct init_blosc {
 #include "deps/libbsc/libbsc/coder/coder.cpp"
 //#include "deps/libbsc/libbsc/filters/detectors.cpp"
 //#include "deps/libbsc/libbsc/filters/preprocessing.cpp"
-struct init_bsc {
-    init_bsc() {
-        bsc_init(0);
-    }
-} __;
+#endif
+
+#ifndef BUNDLE_NO_BCM
+#include "deps/bcm/bcm.cpp"
+#ifdef _fseeki64
+#undef _fseeki64
+#endif
+#ifdef _ftelli64
+#undef _ftelli64
+#endif
 #endif
 
 #if 0
@@ -336,12 +402,45 @@ extern "C" void bz_internal_error(int errcode) {
 #endif
 
 #ifndef BUNDLE_NO_ZSTD
+#ifdef MIN
+#undef MIN
+#endif
+#ifdef MAX
+#undef MAX
+#endif
+#ifdef ERROR
+#undef ERROR
+#endif
 #undef HASH_MASK
 #undef HASH_LOG
+#define BYTE BYTE_zstd
+#define U16  U16_zstd
+#define S16  S16_zstd
+#define U32  U32_zstd
+#define S32  S32_zstd
+#define U64  U64_zstd
+#define S64  S64_zstd
+#define ZSTD_LEGACY_SUPPORT 0
 #include "deps/zstd/lib/fse.h"
 #include "deps/zstd/lib/fse.c"
+#include "deps/zstd/lib/huff0.h"
+#include "deps/zstd/lib/huff0.c"
 #include "deps/zstd/lib/zstd.h"
 #include "deps/zstd/lib/zstd.c"
+#ifdef KB
+#undef KB
+#endif
+#ifdef MB
+#undef MB
+#endif
+#ifdef GB
+#undef GB
+#endif
+#ifdef MAXD_LOG
+#undef MAXD_LOG
+#endif
+#include "deps/zstd/lib/zstdhc.h"
+#include "deps/zstd/lib/zstdhc.c"
 #endif
 
 #ifndef BUNDLE_NO_SHRINKER
@@ -380,11 +479,88 @@ extern "C" void bz_internal_error(int errcode) {
 #include "deps/libcsc/csc_mf.cpp"
 #include "deps/libcsc/csc_model.cpp"
 #include "deps/libcsc/csc_profiler.cpp"
-#define CSCInstance CSCInstance2
+#define CSCInstance CSCInstance_Enc
 #include "deps/libcsc/csc_enc.cpp"
 #include "deps/libcsc/csc_encoder_main.cpp"
 #endif
 
-// bundle
-#include "bundle.cpp"
+#ifndef BUNDLE_NO_MCM
+#ifdef KB
+#undef KB
+#endif
+#ifdef MB
+#undef MB
+#endif
+#ifdef GB
+#undef GB
+#endif
+#ifdef min
+#undef min
+#endif
+#ifdef max
+#undef max
+#endif
+#ifdef CM
+#undef CM
+#endif
+#define KB2 KB2_MCM
+#define MB2 MB2_MCM
+#define GB2 GB2_MCM
+#define Analyzer Analyzer_MCM
+#define CM CM_MCM
+#ifdef LZ
+#undef LZ
+#endif
+#define LZ LZ_MCM
+#define MatchFinder MatchFinder_MCM
+#ifdef kBlockSize
+#undef kBlockSize
+#endif
+#define kBlockSize_MCM
+#ifdef kNumStates
+#undef kNumStates
+#endif
+#define kNumStates kNumStates_MCM
+#include "deps/mcm/Archive.cpp"
+#include "deps/mcm/CM.cpp"
+#include "deps/mcm/Compressor.cpp"
+//#include "deps/mcm/FilterTest.cpp"
+#include "deps/mcm/Huffman.cpp"
+#include "deps/mcm/LZ.cpp"
+#include "deps/mcm/MCM.cpp"
+#include "deps/mcm/Memory.cpp"
+#include "deps/mcm/Util.cpp"
+#endif
 
+#ifndef BUNDLE_NO_ZLING
+#ifdef kMatchMinLen
+#undef kMatchMinLen
+#endif
+#define kMatchMinLen kMatchMinLen_zling
+#ifdef kMatchMaxLen
+#undef kMatchMaxLen
+#endif
+#define kMatchMaxLen kMatchMaxLen_zling
+#ifdef kBlockSize
+#undef kBlockSize
+#endif
+#define kBlockSize kBlockSize_zling
+#include "deps/libzling/libzling/libzling.cpp"
+#include "deps/libzling/libzling/libzling_huffman.cpp"
+#include "deps/libzling/libzling/libzling_lz.cpp"
+#include "deps/libzling/libzling/libzling_utils.cpp"
+#endif
+
+#ifndef BUNDLE_NO_TANGELO
+#include "deps/tangelo/tangelo.cpp"
+#endif
+
+#ifndef BUNDLE_NO_ZMOLLY
+#include "deps/zmolly/0.0.1/zmolly.cpp"
+#endif
+
+#include "deps/endian/endian.h"
+
+// } end of coffee
+
+#include "bundle.cpp"

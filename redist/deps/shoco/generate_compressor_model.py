@@ -40,6 +40,10 @@ static const int8_t chrs_by_chr_and_successor_id[MAX_CHR - MIN_CHR][{successors_
   {{{chrs_by_chr_and_successor_id}}}
 }};
 
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4324)    // structure was padded due to __declspec(align())
+#endif
 
 typedef struct Pack {{
   const uint32_t word;
@@ -50,6 +54,10 @@ typedef struct Pack {{
   const char header_mask;
   const char header;
 }} Pack;
+
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 #define PACK_COUNT {pack_count}
 #define MAX_SUCCESSOR_N {max_successor_len}

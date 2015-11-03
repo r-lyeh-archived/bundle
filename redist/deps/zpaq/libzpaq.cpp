@@ -1,8 +1,18 @@
-/* libzpaq.cpp - LIBZPAQ Version 6.52 implementation - May 9, 2014.
+/* libzpaq.cpp - LIBZPAQ Version 7.05 implementation - Apr. 16, 2015.
 
-  This software is provided as-is, with no warranty.
-  I, Matt Mahoney, on behalf of Dell Inc., release this software into
-  the public domain.   This applies worldwide.
+  libdivsufsort.c for divsufsort 2.00, included within, is
+  (C) 2003-2008 Yuta Mori, all rights reserved.
+  It is released under the MIT license as described in the comments
+  at the beginning of that section.
+
+  Some of the code for AES is from libtomcrypt 1.17 by Tom St. Denis
+  and is public domain.
+
+  The Salsa20/8 code for Scrypt is by D. Bernstein and is public domain.
+
+  All of the remaining software is provided as-is, with no warranty.
+  I, Matt Mahoney, release this software into
+  the public domain. This applies worldwide.
   In some countries this may not be legally possible; if so:
   I grant anyone the right to use this software for any purpose,
   without any conditions, unless such conditions are required by law.
@@ -14,13 +24,16 @@ See libzpaq.h for additional documentation.
 
 #include "libzpaq.h"
 #include <string.h>
+#include <string>
+#include <vector>
+#include <stdio.h>
 
-#ifndef NOJIT
 #ifdef unix
+#ifndef NOJIT
 #include <sys/mman.h>
+#endif
 #else
 #include <windows.h>
-#endif
 #endif
 
 namespace libzpaq {
@@ -90,7 +103,7 @@ void allocx(U8* &p, int &n, int newsize) {
 
 // Start a new hash
 void SHA1::init() {
-  len0=len1=0;
+  len=0;
   h[0]=0x67452301;
   h[1]=0xEFCDAB89;
   h[2]=0x98BADCFE;
@@ -103,18 +116,18 @@ void SHA1::init() {
 const char* SHA1::result() {
 
   // pad and append length
-  const U32 s1=len1, s0=len0;
+  const U64 s=len;
   put(0x80);
-  while ((len0&511)!=448)
+  while ((len&511)!=448)
     put(0);
-  put(s1>>24);
-  put(s1>>16);
-  put(s1>>8);
-  put(s1);
-  put(s0>>24);
-  put(s0>>16);
-  put(s0>>8);
-  put(s0);
+  put(s>>56);
+  put(s>>48);
+  put(s>>40);
+  put(s>>32);
+  put(s>>24);
+  put(s>>16);
+  put(s>>8);
+  put(s);
 
   // copy h to hbuf
   for (int i=0; i<5; ++i) {
@@ -129,6 +142,18 @@ const char* SHA1::result() {
   return hbuf;
 }
 
+// Hash buf[0..n-1]
+void SHA1::write(const char* buf, int64_t n) {
+  const unsigned char* p=(const unsigned char*) buf;
+  for (; n>0 && (U32(len)&511)!=0; --n) put(*p++);
+  for (; n>=64; n-=64) {
+    for (int i=0; i<16; ++i)
+      w[i]=p[0]<<24|p[1]<<16|p[2]<<8|p[3], p+=4;
+    len+=512;
+    process();
+  }
+  for (; n>0; --n) put(*p++);
+}
 
 // Hash 1 block of 64 bytes
 void SHA1::process() {
@@ -649,6 +674,35 @@ void stretchKey(char* out, const char* in, const char* salt) {
   scrypt(in, 32, salt, 32, 1<<14, 8, 1, out, 32);
 }
 
+//////////////////////////// random //////////////////////////
+
+// Put n cryptographic random bytes in buf[0..n-1].
+// The first byte will not be 'z' or '7' (start of a ZPAQ archive).
+// For a pure random number, discard the first byte.
+// In VC++, must link to advapi32.lib.
+
+void random(char* buf, int n) {
+#ifdef unix
+  FILE* in=fopen("/dev/urandom", "rb");
+  if (in && fread(buf, 1, n, in)==n)
+    fclose(in);
+  else {
+    error("key generation failed");
+  }
+#else
+  HCRYPTPROV h;
+  if (CryptAcquireContext(&h, NULL, NULL, PROV_RSA_FULL,
+      CRYPT_VERIFYCONTEXT) && CryptGenRandom(h, n, (BYTE*)buf))
+    CryptReleaseContext(h, 0);
+  else {
+    fprintf(stderr, "CryptGenRandom: error %d\n", int(GetLastError()));
+    error("key generation failed");
+  }
+#endif
+  if (n>=1 && (buf[0]=='z' || buf[0]=='7'))
+    buf[0]^=0x80;
+}
+
 //////////////////////////// Component ///////////////////////
 
 // A Component is a context model, indirect context model, match model,
@@ -915,7 +969,7 @@ void ZPAQL::initp() {
 // Flush pending output
 void ZPAQL::flush() {
   if (output) output->write(&outbuf[0], bufptr);
-  if (sha1) for (int i=0; i<bufptr; ++i) sha1->put(U8(outbuf[i]));
+  if (sha1) sha1->write(&outbuf[0], bufptr);
   bufptr=0;
 }
 
@@ -959,6 +1013,8 @@ void ZPAQL::init(int hbits, int mbits) {
   assert(header[0]+256*header[1]==cend-2+hend-hbegin);
   assert(bufptr==0);
   assert(outbuf.isize()>0);
+  if (hbits>32) error("H too big");
+  if (mbits>32) error("M too big");
   h.resize(1, hbits);
   m.resize(1, mbits);
   r.resize(256);
@@ -1644,7 +1700,6 @@ static const U8 stdt[712]={
      0,     0,     0,     0,     0,     0,     1,     0
 };
 
-// Initailize model-independent tables
 Predictor::Predictor(ZPAQL& zr):
     c8(1), hmap4(1), z(zr) {
   assert(sizeof(U8)==1);
@@ -1653,40 +1708,9 @@ Predictor::Predictor(ZPAQL& zr):
   assert(sizeof(U64)==8);
   assert(sizeof(short)==2);
   assert(sizeof(int)==4);
-
-  // Initialize tables
-  memcpy(dt2k, sdt2k, sizeof(dt2k));
-  memcpy(dt, sdt, sizeof(dt));
-  memcpy(squasht, ssquasht, sizeof(squasht));
-
-  // ssquasht[i]=int(32768.0/(1+exp((i-2048)*(-1.0/64))));
-  // Copy middle 1344 of 4096 entries.
-  memset(squasht, 0, 1376*2);
-  memcpy(squasht+1376, ssquasht, 1344*2);
-  for (int i=2720; i<4096; ++i) squasht[i]=32767;
-
-  // sstretcht[i]=int(log((i+0.5)/(32767.5-i))*64+0.5+100000)-100000;
-  int k=16384;
-  for (int i=0; i<712; ++i)
-    for (int j=stdt[i]; j>0; --j)
-      stretcht[k++]=i;
-  assert(k==32768);
-  for (int i=0; i<16384; ++i)
-    stretcht[i]=-stretcht[32767-i];
-
-#ifndef NDEBUG
-  // Verify floating point math for squash() and stretch()
-  U32 sqsum=0, stsum=0;
-  for (int i=32767; i>=0; --i)
-    stsum=stsum*3+stretch(i);
-  for (int i=4095; i>=0; --i)
-    sqsum=sqsum*3+squash(i-2048);
-  assert(stsum==3887533746u);
-  assert(sqsum==2278286169u);
-#endif
-
   pcode=0;
   pcode_size=0;
+  initTables=false;
 }
 
 Predictor::~Predictor() {
@@ -1701,6 +1725,39 @@ void Predictor::init() {
 
   // Initialize context hash function
   z.inith();
+
+  // Initialize model independent tables
+  if (!initTables && isModeled()) {
+    initTables=true;
+    memcpy(dt2k, sdt2k, sizeof(dt2k));
+    memcpy(dt, sdt, sizeof(dt));
+
+    // ssquasht[i]=int(32768.0/(1+exp((i-2048)*(-1.0/64))));
+    // Copy middle 1344 of 4096 entries.
+    memset(squasht, 0, 1376*2);
+    memcpy(squasht+1376, ssquasht, 1344*2);
+    for (int i=2720; i<4096; ++i) squasht[i]=32767;
+
+    // sstretcht[i]=int(log((i+0.5)/(32767.5-i))*64+0.5+100000)-100000;
+    int k=16384;
+    for (int i=0; i<712; ++i)
+      for (int j=stdt[i]; j>0; --j)
+        stretcht[k++]=i;
+    assert(k==32768);
+    for (int i=0; i<16384; ++i)
+      stretcht[i]=-stretcht[32767-i];
+
+#ifndef NDEBUG
+    // Verify floating point math for squash() and stretch()
+    U32 sqsum=0, stsum=0;
+    for (int i=32767; i>=0; --i)
+      stsum=stsum*3+stretch(i);
+    for (int i=4095; i>=0; --i)
+      sqsum=sqsum*3+squash(i-2048);
+    assert(stsum==3887533746u);
+    assert(sqsum==2278286169u);
+#endif
+  }
 
   // Initialize predictions
   for (int i=0; i<256; ++i) h[i]=p[i]=0;
@@ -1793,6 +1850,7 @@ void Predictor::init() {
 
 // Return next bit prediction using interpreted COMP code
 int Predictor::predict0() {
+  assert(initTables);
   assert(c8>=1 && c8<=255);
 
   // Predict next bit
@@ -1892,6 +1950,7 @@ int Predictor::predict0() {
 
 // Update model with decoded bit y (0...1)
 void Predictor::update0(int y) {
+  assert(initTables);
   assert(y==0 || y==1);
   assert(c8>=1 && c8<=255);
   assert(hmap4>=1 && hmap4<=511);
@@ -2009,6 +2068,7 @@ void Predictor::update0(int y) {
 // collision detection. If not found after 3 adjacent tries, replace the
 // row with lowest element 1 as priority. Return index of row.
 size_t Predictor::find(Array<U8>& ht, int sizebits, U32 cxt) {
+  assert(initTables);
   assert(ht.size()==size_t(16)<<sizebits);
   int chk=cxt>>sizebits&255;
   size_t h0=(cxt*16)&(ht.size()-16);
@@ -2028,7 +2088,8 @@ size_t Predictor::find(Array<U8>& ht, int sizebits, U32 cxt) {
 /////////////////////// Decoder ///////////////////////
 
 Decoder::Decoder(ZPAQL& z):
-    in(0), low(1), high(0xFFFFFFFF), curr(0), pr(z), buf(BUFSIZE) {
+    in(0), low(1), high(0xFFFFFFFF), curr(0), rpos(0), wpos(0),
+    pr(z), buf(BUFSIZE) {
 }
 
 void Decoder::init() {
@@ -2037,27 +2098,9 @@ void Decoder::init() {
   else low=high=curr=0;
 }
 
-// Read un-modeled input into buf[low=0..high-1]
-// with curr remaining in subblock to read.
-void Decoder::loadbuf() {
-  assert(!pr.isModeled());
-  assert(low==high);
-  if (curr==0) {
-    for (int i=0; i<4; ++i) {
-      int c=in->get();
-      if (c<0) error("unexpected end of input");
-      curr=curr<<8|c;
-    }
-  }
-  U32 n=buf.size();
-  if (n>curr) n=curr;
-  high=in->read(&buf[0], n);
-  curr-=high;
-  low=0;
-}
-
 // Return next bit of decoded input, which has 16 bit probability p of being 1
 int Decoder::decode(int p) {
+  assert(pr.isModeled());
   assert(p>=0 && p<65536);
   assert(high>low && low>0);
   if (curr<low || curr>high) error("archive corrupted");
@@ -2071,7 +2114,7 @@ int Decoder::decode(int p) {
     high=high<<8|255;
     low=low<<8;
     low+=(low==0);
-    int c=in->get();
+    int c=get();
     if (c<0) error("unexpected end of file");
     curr=curr<<8|c;
   }
@@ -2083,7 +2126,7 @@ int Decoder::decompress() {
   if (pr.isModeled()) {  // n>0 components?
     if (curr==0) {  // segment initialization
       for (int i=0; i<4; ++i)
-        curr=curr<<8|in->get();
+        curr=curr<<8|get();
     }
     if (decode(0)) {
       if (curr!=0) error("decoding end of stream");
@@ -2100,9 +2143,12 @@ int Decoder::decompress() {
     }
   }
   else {
-    if (low==high) loadbuf();
-    if (low==high) return -1;
-    return buf[low++]&255;
+    if (curr==0) {
+      for (int i=0; i<4; ++i) curr=curr<<8|get();
+      if (curr==0) return -1;
+    }
+    --curr;
+    return get();
   }
 }
 
@@ -2111,25 +2157,23 @@ int Decoder::skip() {
   int c=-1;
   if (pr.isModeled()) {
     while (curr==0)  // at start?
-      curr=in->get();
-    while (curr && (c=in->get())>=0)  // find 4 zeros
+      curr=get();
+    while (curr && (c=get())>=0)  // find 4 zeros
       curr=curr<<8|c;
-    while ((c=in->get())==0) ;  // might be more than 4
+    while ((c=get())==0) ;  // might be more than 4
     return c;
   }
   else {
     if (curr==0)  // at start?
-      for (int i=0; i<4 && (c=in->get())>=0; ++i) curr=curr<<8|c;
+      for (int i=0; i<4 && (c=get())>=0; ++i) curr=curr<<8|c;
     while (curr>0) {
-      U32 n=BUFSIZE;
-      if (n>curr) n=curr;
-      U32 n1=in->read(&buf[0], n);
-      curr-=n1;
-      if (n1<1) return -1;
-      if (curr==0)
-        for (int i=0; i<4 && (c=in->get())>=0; ++i) curr=curr<<8|c;
+      while (curr>0) {
+        --curr;
+        if (get()<0) return error("skipped to EOF"), -1;
+      }
+      for (int i=0; i<4 && (c=get())>=0; ++i) curr=curr<<8|c;
     }
-    if (c>=0) c=in->get();
+    if (c>=0) c=get();
     return c;
   }
 }
@@ -2166,6 +2210,7 @@ int PostProcessor::write(int c) {
     case 3:  // PROG psize[0]
       if (c<0) error("Unexpected EOS");
       hsize+=c*256;  // high byte of psize
+      if (hsize<1) error("Empty PCOMP");
       z.header.resize(hsize+300);
       z.cend=8;
       z.hbegin=z.hend=z.cend+128;
@@ -2204,7 +2249,7 @@ bool Decompresser::findBlock(double* memptr) {
   U32 h1=0x3D49B113, h2=0x29EB7F93, h3=0x2614BE13, h4=0x3828EB13;
   // Rolling hashes initialized to hash of first 13 bytes
   int c;
-  while ((c=dec.in->get())!=-1) {
+  while ((c=dec.get())!=-1) {
     h1=h1*12+c;
     h2=h2*20+c;
     h3=h3*28+c;
@@ -2215,9 +2260,9 @@ bool Decompresser::findBlock(double* memptr) {
   if (c==-1) return false;
 
   // Read header
-  if ((c=dec.in->get())!=1 && c!=2) error("unsupported ZPAQ level");
-  if (dec.in->get()!=1) error("unsupported ZPAQL type");
-  z.read(dec.in);
+  if ((c=dec.get())!=1 && c!=2) error("unsupported ZPAQ level");
+  if (dec.get()!=1) error("unsupported ZPAQL type");
+  z.read(&dec);
   if (c==1 && z.header.isize()>6 && z.header[6]==0)
     error("ZPAQ level 1 requires at least 1 component");
   if (memptr) *memptr=z.memory();
@@ -2230,10 +2275,10 @@ bool Decompresser::findBlock(double* memptr) {
 // If a segment is found, write the filename and return true, else false.
 bool Decompresser::findFilename(Writer* filename) {
   assert(state==FILENAME);
-  int c=dec.in->get();
+  int c=dec.get();
   if (c==1) {  // segment found
     while (true) {
-      c=dec.in->get();
+      c=dec.get();
       if (c==-1) error("unexpected EOF");
       if (c==0) {
         state=COMMENT;
@@ -2256,12 +2301,12 @@ void Decompresser::readComment(Writer* comment) {
   assert(state==COMMENT);
   state=DATA;
   while (true) {
-    int c=dec.in->get();
+    int c=dec.get();
     if (c==-1) error("unexpected EOF");
     if (c==0) break;
     if (comment) comment->put(c);
   }
-  if (dec.in->get()!=0) error("missing reserved byte");
+  if (dec.get()!=0) error("missing reserved byte");
 }
 
 // Decompress n bytes, or all if n < 0. Return false if done
@@ -2307,7 +2352,7 @@ void Decompresser::readSegmentEnd(char* sha1string) {
     decode_state=SKIP;
   }
   else if (state==SEGEND)
-    c=dec.in->get();
+    c=dec.get();
   state=FILENAME;
 
   // Read checksum
@@ -2317,7 +2362,7 @@ void Decompresser::readSegmentEnd(char* sha1string) {
   else if (c==253) {
     if (sha1string) sha1string[0]=1;
     for (int i=1; i<=20; ++i) {
-      c=dec.in->get();
+      c=dec.get();
       if (sha1string) sha1string[i]=c;
     }
   }
@@ -2920,7 +2965,7 @@ void Compressor::endSegment(const char* sha1string) {
 }
 
 // End segment, write checksum and size is verify is true
-char* Compressor::endSegmentChecksum(int64_t* size) {
+char* Compressor::endSegmentChecksum(int64_t* size, bool dosha1) {
   if (state==SEG1)
     postProcess();
   assert(state==SEG2);
@@ -2936,6 +2981,8 @@ char* Compressor::endSegmentChecksum(int64_t* size) {
   if (verify) {
     if (size) *size=sha1.usize();
     memcpy(sha1result, sha1.result(), 20);
+  }
+  if (verify && dosha1) {
     enc.out->put(253);
     for (int i=0; i<20; ++i)
       enc.out->put(sha1result[i]);
@@ -2955,16 +3002,29 @@ void Compressor::endBlock() {
 
 /////////////////////////// compress() ///////////////////////
 
-void compress(Reader* in, Writer* out, int level) {
-  assert(level>=1);
-  Compressor c;
-  c.setInput(in);
-  c.setOutput(out);
-  c.startBlock(level);
-  c.startSegment();
-  c.compress();
-  c.endSegment();
-  c.endBlock();
+void compress(Reader* in, Writer* out, const char* method,
+              const char* filename, const char* comment, bool dosha1) {
+
+  // Get block size
+  int bs=4;
+  if (method && method[0] && method[1]>='0' && method[1]<='9') {
+    bs=method[1]-'0';
+    if (method[2]>='0' && method[2]<='9') bs=bs*10+method[2]-'0';
+    if (bs>11) bs=11;
+  }
+  bs=(0x100000<<bs)-4096;
+
+  // Compress in blocks
+  StringBuffer sb(bs);
+  sb.write(0, bs);
+  int n=0;
+  while (in && (n=in->read((char*)sb.data(), bs))>0) {
+    sb.resize(n);
+    compressBlock(&sb, out, method, filename, comment, dosha1);
+    filename=0;
+    comment=0;
+    sb.resize(0);
+  }
 }
 
 //////////////////////// ZPAQL::assemble() ////////////////////
@@ -3152,7 +3212,7 @@ int ZPAQL::assemble() {
     error("JIT supported only for x86-32 and x86-64");
 
   const U8* hcomp=&header[hbegin];
-  const int hlen=hend-hbegin+1;
+  const int hlen=hend-hbegin+2;
   const int msize=m.size();
   const int hsize=h.size();
   static const int regcode[8]={2,6,7,5}; // a,b,c,d.. -> edx,esi,edi,ebp,eax..
@@ -3261,8 +3321,8 @@ int ZPAQL::assemble() {
         if (op==39||op==47||op==63)next2=i+2+(hcomp[i+1]<<24>>24);// jt,jf,jmp
         if (op==63) next1=NONE;  // jmp
         if ((next2<0 || next2>=hlen) && next2!=NONE) next2=hlen-1; // error
-        if (next1!=NONE && !(it[next1]&1)) it[next1]|=1, ++done;
-        if (next2!=NONE && !(it[next2]&2)) it[next2]|=2, ++done;
+        if (next1>=0 && next1<hlen && !(it[next1]&1)) it[next1]|=1, ++done;
+        if (next2>=0 && next2<hlen && !(it[next2]&2)) it[next2]|=2, ++done;
       }
     }
   } while (done>0);
@@ -4574,6 +4634,3081 @@ void ZPAQL::run(U32 input) {
   if (!((int(*)())(&rcode[0]))())
     libzpaq::error("Bad ZPAQL opcode");
 #endif
+}
+
+////////////////////////// divsufsort ///////////////////////////////
+
+/*
+ * divsufsort.c for libdivsufsort-lite
+ * Copyright (c) 2003-2008 Yuta Mori All Rights Reserved.
+ *
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use,
+ * copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following
+ * conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+/*- Constants -*/
+#define INLINE __inline
+#if defined(ALPHABET_SIZE) && (ALPHABET_SIZE < 1)
+# undef ALPHABET_SIZE
+#endif
+#if !defined(ALPHABET_SIZE)
+# define ALPHABET_SIZE (256)
+#endif
+#define BUCKET_A_SIZE (ALPHABET_SIZE)
+#define BUCKET_B_SIZE (ALPHABET_SIZE * ALPHABET_SIZE)
+#if defined(SS_INSERTIONSORT_THRESHOLD)
+# if SS_INSERTIONSORT_THRESHOLD < 1
+#  undef SS_INSERTIONSORT_THRESHOLD
+#  define SS_INSERTIONSORT_THRESHOLD (1)
+# endif
+#else
+# define SS_INSERTIONSORT_THRESHOLD (8)
+#endif
+#if defined(SS_BLOCKSIZE)
+# if SS_BLOCKSIZE < 0
+#  undef SS_BLOCKSIZE
+#  define SS_BLOCKSIZE (0)
+# elif 32768 <= SS_BLOCKSIZE
+#  undef SS_BLOCKSIZE
+#  define SS_BLOCKSIZE (32767)
+# endif
+#else
+# define SS_BLOCKSIZE (1024)
+#endif
+/* minstacksize = log(SS_BLOCKSIZE) / log(3) * 2 */
+#if SS_BLOCKSIZE == 0
+# define SS_MISORT_STACKSIZE (96)
+#elif SS_BLOCKSIZE <= 4096
+# define SS_MISORT_STACKSIZE (16)
+#else
+# define SS_MISORT_STACKSIZE (24)
+#endif
+#define SS_SMERGE_STACKSIZE (32)
+#define TR_INSERTIONSORT_THRESHOLD (8)
+#define TR_STACKSIZE (64)
+
+
+/*- Macros -*/
+#ifndef SWAP
+# define SWAP(_a, _b) do { t = (_a); (_a) = (_b); (_b) = t; } while(0)
+#endif /* SWAP */
+#ifndef MIN
+# define MIN(_a, _b) (((_a) < (_b)) ? (_a) : (_b))
+#endif /* MIN */
+#ifndef MAX
+# define MAX(_a, _b) (((_a) > (_b)) ? (_a) : (_b))
+#endif /* MAX */
+#define STACK_PUSH(_a, _b, _c, _d)\
+  do {\
+    assert(ssize < STACK_SIZE);\
+    stack[ssize].a = (_a), stack[ssize].b = (_b),\
+    stack[ssize].c = (_c), stack[ssize++].d = (_d);\
+  } while(0)
+#define STACK_PUSH5(_a, _b, _c, _d, _e)\
+  do {\
+    assert(ssize < STACK_SIZE);\
+    stack[ssize].a = (_a), stack[ssize].b = (_b),\
+    stack[ssize].c = (_c), stack[ssize].d = (_d), stack[ssize++].e = (_e);\
+  } while(0)
+#define STACK_POP(_a, _b, _c, _d)\
+  do {\
+    assert(0 <= ssize);\
+    if(ssize == 0) { return; }\
+    (_a) = stack[--ssize].a, (_b) = stack[ssize].b,\
+    (_c) = stack[ssize].c, (_d) = stack[ssize].d;\
+  } while(0)
+#define STACK_POP5(_a, _b, _c, _d, _e)\
+  do {\
+    assert(0 <= ssize);\
+    if(ssize == 0) { return; }\
+    (_a) = stack[--ssize].a, (_b) = stack[ssize].b,\
+    (_c) = stack[ssize].c, (_d) = stack[ssize].d, (_e) = stack[ssize].e;\
+  } while(0)
+#define BUCKET_A(_c0) bucket_A[(_c0)]
+#if ALPHABET_SIZE == 256
+#define BUCKET_B(_c0, _c1) (bucket_B[((_c1) << 8) | (_c0)])
+#define BUCKET_BSTAR(_c0, _c1) (bucket_B[((_c0) << 8) | (_c1)])
+#else
+#define BUCKET_B(_c0, _c1) (bucket_B[(_c1) * ALPHABET_SIZE + (_c0)])
+#define BUCKET_BSTAR(_c0, _c1) (bucket_B[(_c0) * ALPHABET_SIZE + (_c1)])
+#endif
+
+
+/*- Private Functions -*/
+
+static const int lg_table[256]= {
+ -1,0,1,1,2,2,2,2,3,3,3,3,3,3,3,3,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
+  5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,
+  6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,
+  6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,
+  7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,
+  7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,
+  7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,
+  7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7
+};
+
+#if (SS_BLOCKSIZE == 0) || (SS_INSERTIONSORT_THRESHOLD < SS_BLOCKSIZE)
+
+static INLINE
+int
+ss_ilg(int n) {
+#if SS_BLOCKSIZE == 0
+  return (n & 0xffff0000) ?
+          ((n & 0xff000000) ?
+            24 + lg_table[(n >> 24) & 0xff] :
+            16 + lg_table[(n >> 16) & 0xff]) :
+          ((n & 0x0000ff00) ?
+             8 + lg_table[(n >>  8) & 0xff] :
+             0 + lg_table[(n >>  0) & 0xff]);
+#elif SS_BLOCKSIZE < 256
+  return lg_table[n];
+#else
+  return (n & 0xff00) ?
+          8 + lg_table[(n >> 8) & 0xff] :
+          0 + lg_table[(n >> 0) & 0xff];
+#endif
+}
+
+#endif /* (SS_BLOCKSIZE == 0) || (SS_INSERTIONSORT_THRESHOLD < SS_BLOCKSIZE) */
+
+#if SS_BLOCKSIZE != 0
+
+static const int sqq_table[256] = {
+  0,  16,  22,  27,  32,  35,  39,  42,  45,  48,  50,  53,  55,  57,  59,  61,
+ 64,  65,  67,  69,  71,  73,  75,  76,  78,  80,  81,  83,  84,  86,  87,  89,
+ 90,  91,  93,  94,  96,  97,  98,  99, 101, 102, 103, 104, 106, 107, 108, 109,
+110, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126,
+128, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142,
+143, 144, 144, 145, 146, 147, 148, 149, 150, 150, 151, 152, 153, 154, 155, 155,
+156, 157, 158, 159, 160, 160, 161, 162, 163, 163, 164, 165, 166, 167, 167, 168,
+169, 170, 170, 171, 172, 173, 173, 174, 175, 176, 176, 177, 178, 178, 179, 180,
+181, 181, 182, 183, 183, 184, 185, 185, 186, 187, 187, 188, 189, 189, 190, 191,
+192, 192, 193, 193, 194, 195, 195, 196, 197, 197, 198, 199, 199, 200, 201, 201,
+202, 203, 203, 204, 204, 205, 206, 206, 207, 208, 208, 209, 209, 210, 211, 211,
+212, 212, 213, 214, 214, 215, 215, 216, 217, 217, 218, 218, 219, 219, 220, 221,
+221, 222, 222, 223, 224, 224, 225, 225, 226, 226, 227, 227, 228, 229, 229, 230,
+230, 231, 231, 232, 232, 233, 234, 234, 235, 235, 236, 236, 237, 237, 238, 238,
+239, 240, 240, 241, 241, 242, 242, 243, 243, 244, 244, 245, 245, 246, 246, 247,
+247, 248, 248, 249, 249, 250, 250, 251, 251, 252, 252, 253, 253, 254, 254, 255
+};
+
+static INLINE
+int
+ss_isqrt(int x) {
+  int y, e;
+
+  if(x >= (SS_BLOCKSIZE * SS_BLOCKSIZE)) { return SS_BLOCKSIZE; }
+  e = (x & 0xffff0000) ?
+        ((x & 0xff000000) ?
+          24 + lg_table[(x >> 24) & 0xff] :
+          16 + lg_table[(x >> 16) & 0xff]) :
+        ((x & 0x0000ff00) ?
+           8 + lg_table[(x >>  8) & 0xff] :
+           0 + lg_table[(x >>  0) & 0xff]);
+
+  if(e >= 16) {
+    y = sqq_table[x >> ((e - 6) - (e & 1))] << ((e >> 1) - 7);
+    if(e >= 24) { y = (y + 1 + x / y) >> 1; }
+    y = (y + 1 + x / y) >> 1;
+  } else if(e >= 8) {
+    y = (sqq_table[x >> ((e - 6) - (e & 1))] >> (7 - (e >> 1))) + 1;
+  } else {
+    return sqq_table[x] >> 4;
+  }
+
+  return (x < (y * y)) ? y - 1 : y;
+}
+
+#endif /* SS_BLOCKSIZE != 0 */
+
+
+/*---------------------------------------------------------------------------*/
+
+/* Compares two suffixes. */
+static INLINE
+int
+ss_compare(const unsigned char *T,
+           const int *p1, const int *p2,
+           int depth) {
+  const unsigned char *U1, *U2, *U1n, *U2n;
+
+  for(U1 = T + depth + *p1,
+      U2 = T + depth + *p2,
+      U1n = T + *(p1 + 1) + 2,
+      U2n = T + *(p2 + 1) + 2;
+      (U1 < U1n) && (U2 < U2n) && (*U1 == *U2);
+      ++U1, ++U2) {
+  }
+
+  return U1 < U1n ?
+        (U2 < U2n ? *U1 - *U2 : 1) :
+        (U2 < U2n ? -1 : 0);
+}
+
+
+/*---------------------------------------------------------------------------*/
+
+#if (SS_BLOCKSIZE != 1) && (SS_INSERTIONSORT_THRESHOLD != 1)
+
+/* Insertionsort for small size groups */
+static
+void
+ss_insertionsort(const unsigned char *T, const int *PA,
+                 int *first, int *last, int depth) {
+  int *i, *j;
+  int t;
+  int r;
+
+  for(i = last - 2; first <= i; --i) {
+    for(t = *i, j = i + 1; 0 < (r = ss_compare(T, PA + t, PA + *j, depth));) {
+      do { *(j - 1) = *j; } while((++j < last) && (*j < 0));
+      if(last <= j) { break; }
+    }
+    if(r == 0) { *j = ~*j; }
+    *(j - 1) = t;
+  }
+}
+
+#endif /* (SS_BLOCKSIZE != 1) && (SS_INSERTIONSORT_THRESHOLD != 1) */
+
+
+/*---------------------------------------------------------------------------*/
+
+#if (SS_BLOCKSIZE == 0) || (SS_INSERTIONSORT_THRESHOLD < SS_BLOCKSIZE)
+
+static INLINE
+void
+ss_fixdown(const unsigned char *Td, const int *PA,
+           int *SA, int i, int size) {
+  int j, k;
+  int v;
+  int c, d, e;
+
+  for(v = SA[i], c = Td[PA[v]]; (j = 2 * i + 1) < size; SA[i] = SA[k], i = k) {
+    d = Td[PA[SA[k = j++]]];
+    if(d < (e = Td[PA[SA[j]]])) { k = j; d = e; }
+    if(d <= c) { break; }
+  }
+  SA[i] = v;
+}
+
+/* Simple top-down heapsort. */
+static
+void
+ss_heapsort(const unsigned char *Td, const int *PA, int *SA, int size) {
+  int i, m;
+  int t;
+
+  m = size;
+  if((size % 2) == 0) {
+    m--;
+    if(Td[PA[SA[m / 2]]] < Td[PA[SA[m]]]) { SWAP(SA[m], SA[m / 2]); }
+  }
+
+  for(i = m / 2 - 1; 0 <= i; --i) { ss_fixdown(Td, PA, SA, i, m); }
+  if((size % 2) == 0) { SWAP(SA[0], SA[m]); ss_fixdown(Td, PA, SA, 0, m); }
+  for(i = m - 1; 0 < i; --i) {
+    t = SA[0], SA[0] = SA[i];
+    ss_fixdown(Td, PA, SA, 0, i);
+    SA[i] = t;
+  }
+}
+
+
+/*---------------------------------------------------------------------------*/
+
+/* Returns the median of three elements. */
+static INLINE
+int *
+ss_median3(const unsigned char *Td, const int *PA,
+           int *v1, int *v2, int *v3) {
+  int *t;
+  if(Td[PA[*v1]] > Td[PA[*v2]]) { SWAP(v1, v2); }
+  if(Td[PA[*v2]] > Td[PA[*v3]]) {
+    if(Td[PA[*v1]] > Td[PA[*v3]]) { return v1; }
+    else { return v3; }
+  }
+  return v2;
+}
+
+/* Returns the median of five elements. */
+static INLINE
+int *
+ss_median5(const unsigned char *Td, const int *PA,
+           int *v1, int *v2, int *v3, int *v4, int *v5) {
+  int *t;
+  if(Td[PA[*v2]] > Td[PA[*v3]]) { SWAP(v2, v3); }
+  if(Td[PA[*v4]] > Td[PA[*v5]]) { SWAP(v4, v5); }
+  if(Td[PA[*v2]] > Td[PA[*v4]]) { SWAP(v2, v4); SWAP(v3, v5); }
+  if(Td[PA[*v1]] > Td[PA[*v3]]) { SWAP(v1, v3); }
+  if(Td[PA[*v1]] > Td[PA[*v4]]) { SWAP(v1, v4); SWAP(v3, v5); }
+  if(Td[PA[*v3]] > Td[PA[*v4]]) { return v4; }
+  return v3;
+}
+
+/* Returns the pivot element. */
+static INLINE
+int *
+ss_pivot(const unsigned char *Td, const int *PA, int *first, int *last) {
+  int *middle;
+  int t;
+
+  t = last - first;
+  middle = first + t / 2;
+
+  if(t <= 512) {
+    if(t <= 32) {
+      return ss_median3(Td, PA, first, middle, last - 1);
+    } else {
+      t >>= 2;
+      return ss_median5(Td, PA, first, first + t, middle, last - 1 - t, last - 1);
+    }
+  }
+  t >>= 3;
+  first  = ss_median3(Td, PA, first, first + t, first + (t << 1));
+  middle = ss_median3(Td, PA, middle - t, middle, middle + t);
+  last   = ss_median3(Td, PA, last - 1 - (t << 1), last - 1 - t, last - 1);
+  return ss_median3(Td, PA, first, middle, last);
+}
+
+
+/*---------------------------------------------------------------------------*/
+
+/* Binary partition for substrings. */
+static INLINE
+int *
+ss_partition(const int *PA,
+                    int *first, int *last, int depth) {
+  int *a, *b;
+  int t;
+  for(a = first - 1, b = last;;) {
+    for(; (++a < b) && ((PA[*a] + depth) >= (PA[*a + 1] + 1));) { *a = ~*a; }
+    for(; (a < --b) && ((PA[*b] + depth) <  (PA[*b + 1] + 1));) { }
+    if(b <= a) { break; }
+    t = ~*b;
+    *b = *a;
+    *a = t;
+  }
+  if(first < a) { *first = ~*first; }
+  return a;
+}
+
+/* Multikey introsort for medium size groups. */
+static
+void
+ss_mintrosort(const unsigned char *T, const int *PA,
+              int *first, int *last,
+              int depth) {
+#define STACK_SIZE SS_MISORT_STACKSIZE
+  struct { int *a, *b, c; int d; } stack[STACK_SIZE];
+  const unsigned char *Td;
+  int *a, *b, *c, *d, *e, *f;
+  int s, t;
+  int ssize;
+  int limit;
+  int v, x = 0;
+
+  for(ssize = 0, limit = ss_ilg(last - first);;) {
+
+    if((last - first) <= SS_INSERTIONSORT_THRESHOLD) {
+#if 1 < SS_INSERTIONSORT_THRESHOLD
+      if(1 < (last - first)) { ss_insertionsort(T, PA, first, last, depth); }
+#endif
+      STACK_POP(first, last, depth, limit);
+      continue;
+    }
+
+    Td = T + depth;
+    if(limit-- == 0) { ss_heapsort(Td, PA, first, last - first); }
+    if(limit < 0) {
+      for(a = first + 1, v = Td[PA[*first]]; a < last; ++a) {
+        if((x = Td[PA[*a]]) != v) {
+          if(1 < (a - first)) { break; }
+          v = x;
+          first = a;
+        }
+      }
+      if(Td[PA[*first] - 1] < v) {
+        first = ss_partition(PA, first, a, depth);
+      }
+      if((a - first) <= (last - a)) {
+        if(1 < (a - first)) {
+          STACK_PUSH(a, last, depth, -1);
+          last = a, depth += 1, limit = ss_ilg(a - first);
+        } else {
+          first = a, limit = -1;
+        }
+      } else {
+        if(1 < (last - a)) {
+          STACK_PUSH(first, a, depth + 1, ss_ilg(a - first));
+          first = a, limit = -1;
+        } else {
+          last = a, depth += 1, limit = ss_ilg(a - first);
+        }
+      }
+      continue;
+    }
+
+    /* choose pivot */
+    a = ss_pivot(Td, PA, first, last);
+    v = Td[PA[*a]];
+    SWAP(*first, *a);
+
+    /* partition */
+    for(b = first; (++b < last) && ((x = Td[PA[*b]]) == v);) { }
+    if(((a = b) < last) && (x < v)) {
+      for(; (++b < last) && ((x = Td[PA[*b]]) <= v);) {
+        if(x == v) { SWAP(*b, *a); ++a; }
+      }
+    }
+    for(c = last; (b < --c) && ((x = Td[PA[*c]]) == v);) { }
+    if((b < (d = c)) && (x > v)) {
+      for(; (b < --c) && ((x = Td[PA[*c]]) >= v);) {
+        if(x == v) { SWAP(*c, *d); --d; }
+      }
+    }
+    for(; b < c;) {
+      SWAP(*b, *c);
+      for(; (++b < c) && ((x = Td[PA[*b]]) <= v);) {
+        if(x == v) { SWAP(*b, *a); ++a; }
+      }
+      for(; (b < --c) && ((x = Td[PA[*c]]) >= v);) {
+        if(x == v) { SWAP(*c, *d); --d; }
+      }
+    }
+
+    if(a <= d) {
+      c = b - 1;
+
+      if((s = a - first) > (t = b - a)) { s = t; }
+      for(e = first, f = b - s; 0 < s; --s, ++e, ++f) { SWAP(*e, *f); }
+      if((s = d - c) > (t = last - d - 1)) { s = t; }
+      for(e = b, f = last - s; 0 < s; --s, ++e, ++f) { SWAP(*e, *f); }
+
+      a = first + (b - a), c = last - (d - c);
+      b = (v <= Td[PA[*a] - 1]) ? a : ss_partition(PA, a, c, depth);
+
+      if((a - first) <= (last - c)) {
+        if((last - c) <= (c - b)) {
+          STACK_PUSH(b, c, depth + 1, ss_ilg(c - b));
+          STACK_PUSH(c, last, depth, limit);
+          last = a;
+        } else if((a - first) <= (c - b)) {
+          STACK_PUSH(c, last, depth, limit);
+          STACK_PUSH(b, c, depth + 1, ss_ilg(c - b));
+          last = a;
+        } else {
+          STACK_PUSH(c, last, depth, limit);
+          STACK_PUSH(first, a, depth, limit);
+          first = b, last = c, depth += 1, limit = ss_ilg(c - b);
+        }
+      } else {
+        if((a - first) <= (c - b)) {
+          STACK_PUSH(b, c, depth + 1, ss_ilg(c - b));
+          STACK_PUSH(first, a, depth, limit);
+          first = c;
+        } else if((last - c) <= (c - b)) {
+          STACK_PUSH(first, a, depth, limit);
+          STACK_PUSH(b, c, depth + 1, ss_ilg(c - b));
+          first = c;
+        } else {
+          STACK_PUSH(first, a, depth, limit);
+          STACK_PUSH(c, last, depth, limit);
+          first = b, last = c, depth += 1, limit = ss_ilg(c - b);
+        }
+      }
+    } else {
+      limit += 1;
+      if(Td[PA[*first] - 1] < v) {
+        first = ss_partition(PA, first, last, depth);
+        limit = ss_ilg(last - first);
+      }
+      depth += 1;
+    }
+  }
+#undef STACK_SIZE
+}
+
+#endif /* (SS_BLOCKSIZE == 0) || (SS_INSERTIONSORT_THRESHOLD < SS_BLOCKSIZE) */
+
+
+/*---------------------------------------------------------------------------*/
+
+#if SS_BLOCKSIZE != 0
+
+static INLINE
+void
+ss_blockswap(int *a, int *b, int n) {
+  int t;
+  for(; 0 < n; --n, ++a, ++b) {
+    t = *a, *a = *b, *b = t;
+  }
+}
+
+static INLINE
+void
+ss_rotate(int *first, int *middle, int *last) {
+  int *a, *b, t;
+  int l, r;
+  l = middle - first, r = last - middle;
+  for(; (0 < l) && (0 < r);) {
+    if(l == r) { ss_blockswap(first, middle, l); break; }
+    if(l < r) {
+      a = last - 1, b = middle - 1;
+      t = *a;
+      do {
+        *a-- = *b, *b-- = *a;
+        if(b < first) {
+          *a = t;
+          last = a;
+          if((r -= l + 1) <= l) { break; }
+          a -= 1, b = middle - 1;
+          t = *a;
+        }
+      } while(1);
+    } else {
+      a = first, b = middle;
+      t = *a;
+      do {
+        *a++ = *b, *b++ = *a;
+        if(last <= b) {
+          *a = t;
+          first = a + 1;
+          if((l -= r + 1) <= r) { break; }
+          a += 1, b = middle;
+          t = *a;
+        }
+      } while(1);
+    }
+  }
+}
+
+
+/*---------------------------------------------------------------------------*/
+
+static
+void
+ss_inplacemerge(const unsigned char *T, const int *PA,
+                int *first, int *middle, int *last,
+                int depth) {
+  const int *p;
+  int *a, *b;
+  int len, half;
+  int q, r;
+  int x;
+
+  for(;;) {
+    if(*(last - 1) < 0) { x = 1; p = PA + ~*(last - 1); }
+    else                { x = 0; p = PA +  *(last - 1); }
+    for(a = first, len = middle - first, half = len >> 1, r = -1;
+        0 < len;
+        len = half, half >>= 1) {
+      b = a + half;
+      q = ss_compare(T, PA + ((0 <= *b) ? *b : ~*b), p, depth);
+      if(q < 0) {
+        a = b + 1;
+        half -= (len & 1) ^ 1;
+      } else {
+        r = q;
+      }
+    }
+    if(a < middle) {
+      if(r == 0) { *a = ~*a; }
+      ss_rotate(a, middle, last);
+      last -= middle - a;
+      middle = a;
+      if(first == middle) { break; }
+    }
+    --last;
+    if(x != 0) { while(*--last < 0) { } }
+    if(middle == last) { break; }
+  }
+}
+
+
+/*---------------------------------------------------------------------------*/
+
+/* Merge-forward with internal buffer. */
+static
+void
+ss_mergeforward(const unsigned char *T, const int *PA,
+                int *first, int *middle, int *last,
+                int *buf, int depth) {
+  int *a, *b, *c, *bufend;
+  int t;
+  int r;
+
+  bufend = buf + (middle - first) - 1;
+  ss_blockswap(buf, first, middle - first);
+
+  for(t = *(a = first), b = buf, c = middle;;) {
+    r = ss_compare(T, PA + *b, PA + *c, depth);
+    if(r < 0) {
+      do {
+        *a++ = *b;
+        if(bufend <= b) { *bufend = t; return; }
+        *b++ = *a;
+      } while(*b < 0);
+    } else if(r > 0) {
+      do {
+        *a++ = *c, *c++ = *a;
+        if(last <= c) {
+          while(b < bufend) { *a++ = *b, *b++ = *a; }
+          *a = *b, *b = t;
+          return;
+        }
+      } while(*c < 0);
+    } else {
+      *c = ~*c;
+      do {
+        *a++ = *b;
+        if(bufend <= b) { *bufend = t; return; }
+        *b++ = *a;
+      } while(*b < 0);
+
+      do {
+        *a++ = *c, *c++ = *a;
+        if(last <= c) {
+          while(b < bufend) { *a++ = *b, *b++ = *a; }
+          *a = *b, *b = t;
+          return;
+        }
+      } while(*c < 0);
+    }
+  }
+}
+
+/* Merge-backward with internal buffer. */
+static
+void
+ss_mergebackward(const unsigned char *T, const int *PA,
+                 int *first, int *middle, int *last,
+                 int *buf, int depth) {
+  const int *p1, *p2;
+  int *a, *b, *c, *bufend;
+  int t;
+  int r;
+  int x;
+
+  bufend = buf + (last - middle) - 1;
+  ss_blockswap(buf, middle, last - middle);
+
+  x = 0;
+  if(*bufend < 0)       { p1 = PA + ~*bufend; x |= 1; }
+  else                  { p1 = PA +  *bufend; }
+  if(*(middle - 1) < 0) { p2 = PA + ~*(middle - 1); x |= 2; }
+  else                  { p2 = PA +  *(middle - 1); }
+  for(t = *(a = last - 1), b = bufend, c = middle - 1;;) {
+    r = ss_compare(T, p1, p2, depth);
+    if(0 < r) {
+      if(x & 1) { do { *a-- = *b, *b-- = *a; } while(*b < 0); x ^= 1; }
+      *a-- = *b;
+      if(b <= buf) { *buf = t; break; }
+      *b-- = *a;
+      if(*b < 0) { p1 = PA + ~*b; x |= 1; }
+      else       { p1 = PA +  *b; }
+    } else if(r < 0) {
+      if(x & 2) { do { *a-- = *c, *c-- = *a; } while(*c < 0); x ^= 2; }
+      *a-- = *c, *c-- = *a;
+      if(c < first) {
+        while(buf < b) { *a-- = *b, *b-- = *a; }
+        *a = *b, *b = t;
+        break;
+      }
+      if(*c < 0) { p2 = PA + ~*c; x |= 2; }
+      else       { p2 = PA +  *c; }
+    } else {
+      if(x & 1) { do { *a-- = *b, *b-- = *a; } while(*b < 0); x ^= 1; }
+      *a-- = ~*b;
+      if(b <= buf) { *buf = t; break; }
+      *b-- = *a;
+      if(x & 2) { do { *a-- = *c, *c-- = *a; } while(*c < 0); x ^= 2; }
+      *a-- = *c, *c-- = *a;
+      if(c < first) {
+        while(buf < b) { *a-- = *b, *b-- = *a; }
+        *a = *b, *b = t;
+        break;
+      }
+      if(*b < 0) { p1 = PA + ~*b; x |= 1; }
+      else       { p1 = PA +  *b; }
+      if(*c < 0) { p2 = PA + ~*c; x |= 2; }
+      else       { p2 = PA +  *c; }
+    }
+  }
+}
+
+/* D&C based merge. */
+static
+void
+ss_swapmerge(const unsigned char *T, const int *PA,
+             int *first, int *middle, int *last,
+             int *buf, int bufsize, int depth) {
+#define STACK_SIZE SS_SMERGE_STACKSIZE
+#define GETIDX(a) ((0 <= (a)) ? (a) : (~(a)))
+#define MERGE_CHECK(a, b, c)\
+  do {\
+    if(((c) & 1) ||\
+       (((c) & 2) && (ss_compare(T, PA + GETIDX(*((a) - 1)), PA + *(a), depth) == 0))) {\
+      *(a) = ~*(a);\
+    }\
+    if(((c) & 4) && ((ss_compare(T, PA + GETIDX(*((b) - 1)), PA + *(b), depth) == 0))) {\
+      *(b) = ~*(b);\
+    }\
+  } while(0)
+  struct { int *a, *b, *c; int d; } stack[STACK_SIZE];
+  int *l, *r, *lm, *rm;
+  int m, len, half;
+  int ssize;
+  int check, next;
+
+  for(check = 0, ssize = 0;;) {
+    if((last - middle) <= bufsize) {
+      if((first < middle) && (middle < last)) {
+        ss_mergebackward(T, PA, first, middle, last, buf, depth);
+      }
+      MERGE_CHECK(first, last, check);
+      STACK_POP(first, middle, last, check);
+      continue;
+    }
+
+    if((middle - first) <= bufsize) {
+      if(first < middle) {
+        ss_mergeforward(T, PA, first, middle, last, buf, depth);
+      }
+      MERGE_CHECK(first, last, check);
+      STACK_POP(first, middle, last, check);
+      continue;
+    }
+
+    for(m = 0, len = MIN(middle - first, last - middle), half = len >> 1;
+        0 < len;
+        len = half, half >>= 1) {
+      if(ss_compare(T, PA + GETIDX(*(middle + m + half)),
+                       PA + GETIDX(*(middle - m - half - 1)), depth) < 0) {
+        m += half + 1;
+        half -= (len & 1) ^ 1;
+      }
+    }
+
+    if(0 < m) {
+      lm = middle - m, rm = middle + m;
+      ss_blockswap(lm, middle, m);
+      l = r = middle, next = 0;
+      if(rm < last) {
+        if(*rm < 0) {
+          *rm = ~*rm;
+          if(first < lm) { for(; *--l < 0;) { } next |= 4; }
+          next |= 1;
+        } else if(first < lm) {
+          for(; *r < 0; ++r) { }
+          next |= 2;
+        }
+      }
+
+      if((l - first) <= (last - r)) {
+        STACK_PUSH(r, rm, last, (next & 3) | (check & 4));
+        middle = lm, last = l, check = (check & 3) | (next & 4);
+      } else {
+        if((next & 2) && (r == middle)) { next ^= 6; }
+        STACK_PUSH(first, lm, l, (check & 3) | (next & 4));
+        first = r, middle = rm, check = (next & 3) | (check & 4);
+      }
+    } else {
+      if(ss_compare(T, PA + GETIDX(*(middle - 1)), PA + *middle, depth) == 0) {
+        *middle = ~*middle;
+      }
+      MERGE_CHECK(first, last, check);
+      STACK_POP(first, middle, last, check);
+    }
+  }
+#undef STACK_SIZE
+}
+
+#endif /* SS_BLOCKSIZE != 0 */
+
+
+/*---------------------------------------------------------------------------*/
+
+/* Substring sort */
+static
+void
+sssort(const unsigned char *T, const int *PA,
+       int *first, int *last,
+       int *buf, int bufsize,
+       int depth, int n, int lastsuffix) {
+  int *a;
+#if SS_BLOCKSIZE != 0
+  int *b, *middle, *curbuf;
+  int j, k, curbufsize, limit;
+#endif
+  int i;
+
+  if(lastsuffix != 0) { ++first; }
+
+#if SS_BLOCKSIZE == 0
+  ss_mintrosort(T, PA, first, last, depth);
+#else
+  if((bufsize < SS_BLOCKSIZE) &&
+      (bufsize < (last - first)) &&
+      (bufsize < (limit = ss_isqrt(last - first)))) {
+    if(SS_BLOCKSIZE < limit) { limit = SS_BLOCKSIZE; }
+    buf = middle = last - limit, bufsize = limit;
+  } else {
+    middle = last, limit = 0;
+  }
+  for(a = first, i = 0; SS_BLOCKSIZE < (middle - a); a += SS_BLOCKSIZE, ++i) {
+#if SS_INSERTIONSORT_THRESHOLD < SS_BLOCKSIZE
+    ss_mintrosort(T, PA, a, a + SS_BLOCKSIZE, depth);
+#elif 1 < SS_BLOCKSIZE
+    ss_insertionsort(T, PA, a, a + SS_BLOCKSIZE, depth);
+#endif
+    curbufsize = last - (a + SS_BLOCKSIZE);
+    curbuf = a + SS_BLOCKSIZE;
+    if(curbufsize <= bufsize) { curbufsize = bufsize, curbuf = buf; }
+    for(b = a, k = SS_BLOCKSIZE, j = i; j & 1; b -= k, k <<= 1, j >>= 1) {
+      ss_swapmerge(T, PA, b - k, b, b + k, curbuf, curbufsize, depth);
+    }
+  }
+#if SS_INSERTIONSORT_THRESHOLD < SS_BLOCKSIZE
+  ss_mintrosort(T, PA, a, middle, depth);
+#elif 1 < SS_BLOCKSIZE
+  ss_insertionsort(T, PA, a, middle, depth);
+#endif
+  for(k = SS_BLOCKSIZE; i != 0; k <<= 1, i >>= 1) {
+    if(i & 1) {
+      ss_swapmerge(T, PA, a - k, a, middle, buf, bufsize, depth);
+      a -= k;
+    }
+  }
+  if(limit != 0) {
+#if SS_INSERTIONSORT_THRESHOLD < SS_BLOCKSIZE
+    ss_mintrosort(T, PA, middle, last, depth);
+#elif 1 < SS_BLOCKSIZE
+    ss_insertionsort(T, PA, middle, last, depth);
+#endif
+    ss_inplacemerge(T, PA, first, middle, last, depth);
+  }
+#endif
+
+  if(lastsuffix != 0) {
+    /* Insert last type B* suffix. */
+    int PAi[2]; PAi[0] = PA[*(first - 1)], PAi[1] = n - 2;
+    for(a = first, i = *(first - 1);
+        (a < last) && ((*a < 0) || (0 < ss_compare(T, &(PAi[0]), PA + *a, depth)));
+        ++a) {
+      *(a - 1) = *a;
+    }
+    *(a - 1) = i;
+  }
+}
+
+
+/*---------------------------------------------------------------------------*/
+
+static INLINE
+int
+tr_ilg(int n) {
+  return (n & 0xffff0000) ?
+          ((n & 0xff000000) ?
+            24 + lg_table[(n >> 24) & 0xff] :
+            16 + lg_table[(n >> 16) & 0xff]) :
+          ((n & 0x0000ff00) ?
+             8 + lg_table[(n >>  8) & 0xff] :
+             0 + lg_table[(n >>  0) & 0xff]);
+}
+
+
+/*---------------------------------------------------------------------------*/
+
+/* Simple insertionsort for small size groups. */
+static
+void
+tr_insertionsort(const int *ISAd, int *first, int *last) {
+  int *a, *b;
+  int t, r;
+
+  for(a = first + 1; a < last; ++a) {
+    for(t = *a, b = a - 1; 0 > (r = ISAd[t] - ISAd[*b]);) {
+      do { *(b + 1) = *b; } while((first <= --b) && (*b < 0));
+      if(b < first) { break; }
+    }
+    if(r == 0) { *b = ~*b; }
+    *(b + 1) = t;
+  }
+}
+
+
+/*---------------------------------------------------------------------------*/
+
+static INLINE
+void
+tr_fixdown(const int *ISAd, int *SA, int i, int size) {
+  int j, k;
+  int v;
+  int c, d, e;
+
+  for(v = SA[i], c = ISAd[v]; (j = 2 * i + 1) < size; SA[i] = SA[k], i = k) {
+    d = ISAd[SA[k = j++]];
+    if(d < (e = ISAd[SA[j]])) { k = j; d = e; }
+    if(d <= c) { break; }
+  }
+  SA[i] = v;
+}
+
+/* Simple top-down heapsort. */
+static
+void
+tr_heapsort(const int *ISAd, int *SA, int size) {
+  int i, m;
+  int t;
+
+  m = size;
+  if((size % 2) == 0) {
+    m--;
+    if(ISAd[SA[m / 2]] < ISAd[SA[m]]) { SWAP(SA[m], SA[m / 2]); }
+  }
+
+  for(i = m / 2 - 1; 0 <= i; --i) { tr_fixdown(ISAd, SA, i, m); }
+  if((size % 2) == 0) { SWAP(SA[0], SA[m]); tr_fixdown(ISAd, SA, 0, m); }
+  for(i = m - 1; 0 < i; --i) {
+    t = SA[0], SA[0] = SA[i];
+    tr_fixdown(ISAd, SA, 0, i);
+    SA[i] = t;
+  }
+}
+
+
+/*---------------------------------------------------------------------------*/
+
+/* Returns the median of three elements. */
+static INLINE
+int *
+tr_median3(const int *ISAd, int *v1, int *v2, int *v3) {
+  int *t;
+  if(ISAd[*v1] > ISAd[*v2]) { SWAP(v1, v2); }
+  if(ISAd[*v2] > ISAd[*v3]) {
+    if(ISAd[*v1] > ISAd[*v3]) { return v1; }
+    else { return v3; }
+  }
+  return v2;
+}
+
+/* Returns the median of five elements. */
+static INLINE
+int *
+tr_median5(const int *ISAd,
+           int *v1, int *v2, int *v3, int *v4, int *v5) {
+  int *t;
+  if(ISAd[*v2] > ISAd[*v3]) { SWAP(v2, v3); }
+  if(ISAd[*v4] > ISAd[*v5]) { SWAP(v4, v5); }
+  if(ISAd[*v2] > ISAd[*v4]) { SWAP(v2, v4); SWAP(v3, v5); }
+  if(ISAd[*v1] > ISAd[*v3]) { SWAP(v1, v3); }
+  if(ISAd[*v1] > ISAd[*v4]) { SWAP(v1, v4); SWAP(v3, v5); }
+  if(ISAd[*v3] > ISAd[*v4]) { return v4; }
+  return v3;
+}
+
+/* Returns the pivot element. */
+static INLINE
+int *
+tr_pivot(const int *ISAd, int *first, int *last) {
+  int *middle;
+  int t;
+
+  t = last - first;
+  middle = first + t / 2;
+
+  if(t <= 512) {
+    if(t <= 32) {
+      return tr_median3(ISAd, first, middle, last - 1);
+    } else {
+      t >>= 2;
+      return tr_median5(ISAd, first, first + t, middle, last - 1 - t, last - 1);
+    }
+  }
+  t >>= 3;
+  first  = tr_median3(ISAd, first, first + t, first + (t << 1));
+  middle = tr_median3(ISAd, middle - t, middle, middle + t);
+  last   = tr_median3(ISAd, last - 1 - (t << 1), last - 1 - t, last - 1);
+  return tr_median3(ISAd, first, middle, last);
+}
+
+
+/*---------------------------------------------------------------------------*/
+
+typedef struct _trbudget_t trbudget_t;
+struct _trbudget_t {
+  int chance;
+  int remain;
+  int incval;
+  int count;
+};
+
+static INLINE
+void
+trbudget_init(trbudget_t *budget, int chance, int incval) {
+  budget->chance = chance;
+  budget->remain = budget->incval = incval;
+}
+
+static INLINE
+int
+trbudget_check(trbudget_t *budget, int size) {
+  if(size <= budget->remain) { budget->remain -= size; return 1; }
+  if(budget->chance == 0) { budget->count += size; return 0; }
+  budget->remain += budget->incval - size;
+  budget->chance -= 1;
+  return 1;
+}
+
+
+/*---------------------------------------------------------------------------*/
+
+static INLINE
+void
+tr_partition(const int *ISAd,
+             int *first, int *middle, int *last,
+             int **pa, int **pb, int v) {
+  int *a, *b, *c, *d, *e, *f;
+  int t, s;
+  int x = 0;
+
+  for(b = middle - 1; (++b < last) && ((x = ISAd[*b]) == v);) { }
+  if(((a = b) < last) && (x < v)) {
+    for(; (++b < last) && ((x = ISAd[*b]) <= v);) {
+      if(x == v) { SWAP(*b, *a); ++a; }
+    }
+  }
+  for(c = last; (b < --c) && ((x = ISAd[*c]) == v);) { }
+  if((b < (d = c)) && (x > v)) {
+    for(; (b < --c) && ((x = ISAd[*c]) >= v);) {
+      if(x == v) { SWAP(*c, *d); --d; }
+    }
+  }
+  for(; b < c;) {
+    SWAP(*b, *c);
+    for(; (++b < c) && ((x = ISAd[*b]) <= v);) {
+      if(x == v) { SWAP(*b, *a); ++a; }
+    }
+    for(; (b < --c) && ((x = ISAd[*c]) >= v);) {
+      if(x == v) { SWAP(*c, *d); --d; }
+    }
+  }
+
+  if(a <= d) {
+    c = b - 1;
+    if((s = a - first) > (t = b - a)) { s = t; }
+    for(e = first, f = b - s; 0 < s; --s, ++e, ++f) { SWAP(*e, *f); }
+    if((s = d - c) > (t = last - d - 1)) { s = t; }
+    for(e = b, f = last - s; 0 < s; --s, ++e, ++f) { SWAP(*e, *f); }
+    first += (b - a), last -= (d - c);
+  }
+  *pa = first, *pb = last;
+}
+
+static
+void
+tr_copy(int *ISA, const int *SA,
+        int *first, int *a, int *b, int *last,
+        int depth) {
+  /* sort suffixes of middle partition
+     by using sorted order of suffixes of left and right partition. */
+  int *c, *d, *e;
+  int s, v;
+
+  v = b - SA - 1;
+  for(c = first, d = a - 1; c <= d; ++c) {
+    if((0 <= (s = *c - depth)) && (ISA[s] == v)) {
+      *++d = s;
+      ISA[s] = d - SA;
+    }
+  }
+  for(c = last - 1, e = d + 1, d = b; e < d; --c) {
+    if((0 <= (s = *c - depth)) && (ISA[s] == v)) {
+      *--d = s;
+      ISA[s] = d - SA;
+    }
+  }
+}
+
+static
+void
+tr_partialcopy(int *ISA, const int *SA,
+               int *first, int *a, int *b, int *last,
+               int depth) {
+  int *c, *d, *e;
+  int s, v;
+  int rank, lastrank, newrank = -1;
+
+  v = b - SA - 1;
+  lastrank = -1;
+  for(c = first, d = a - 1; c <= d; ++c) {
+    if((0 <= (s = *c - depth)) && (ISA[s] == v)) {
+      *++d = s;
+      rank = ISA[s + depth];
+      if(lastrank != rank) { lastrank = rank; newrank = d - SA; }
+      ISA[s] = newrank;
+    }
+  }
+
+  lastrank = -1;
+  for(e = d; first <= e; --e) {
+    rank = ISA[*e];
+    if(lastrank != rank) { lastrank = rank; newrank = e - SA; }
+    if(newrank != rank) { ISA[*e] = newrank; }
+  }
+
+  lastrank = -1;
+  for(c = last - 1, e = d + 1, d = b; e < d; --c) {
+    if((0 <= (s = *c - depth)) && (ISA[s] == v)) {
+      *--d = s;
+      rank = ISA[s + depth];
+      if(lastrank != rank) { lastrank = rank; newrank = d - SA; }
+      ISA[s] = newrank;
+    }
+  }
+}
+
+static
+void
+tr_introsort(int *ISA, const int *ISAd,
+             int *SA, int *first, int *last,
+             trbudget_t *budget) {
+#define STACK_SIZE TR_STACKSIZE
+  struct { const int *a; int *b, *c; int d, e; }stack[STACK_SIZE];
+  int *a, *b, *c;
+  int t;
+  int v, x = 0;
+  int incr = ISAd - ISA;
+  int limit, next;
+  int ssize, trlink = -1;
+
+  for(ssize = 0, limit = tr_ilg(last - first);;) {
+
+    if(limit < 0) {
+      if(limit == -1) {
+        /* tandem repeat partition */
+        tr_partition(ISAd - incr, first, first, last, &a, &b, last - SA - 1);
+
+        /* update ranks */
+        if(a < last) {
+          for(c = first, v = a - SA - 1; c < a; ++c) { ISA[*c] = v; }
+        }
+        if(b < last) {
+          for(c = a, v = b - SA - 1; c < b; ++c) { ISA[*c] = v; }
+        }
+
+        /* push */
+        if(1 < (b - a)) {
+          STACK_PUSH5(NULL, a, b, 0, 0);
+          STACK_PUSH5(ISAd - incr, first, last, -2, trlink);
+          trlink = ssize - 2;
+        }
+        if((a - first) <= (last - b)) {
+          if(1 < (a - first)) {
+            STACK_PUSH5(ISAd, b, last, tr_ilg(last - b), trlink);
+            last = a, limit = tr_ilg(a - first);
+          } else if(1 < (last - b)) {
+            first = b, limit = tr_ilg(last - b);
+          } else {
+            STACK_POP5(ISAd, first, last, limit, trlink);
+          }
+        } else {
+          if(1 < (last - b)) {
+            STACK_PUSH5(ISAd, first, a, tr_ilg(a - first), trlink);
+            first = b, limit = tr_ilg(last - b);
+          } else if(1 < (a - first)) {
+            last = a, limit = tr_ilg(a - first);
+          } else {
+            STACK_POP5(ISAd, first, last, limit, trlink);
+          }
+        }
+      } else if(limit == -2) {
+        /* tandem repeat copy */
+        a = stack[--ssize].b, b = stack[ssize].c;
+        if(stack[ssize].d == 0) {
+          tr_copy(ISA, SA, first, a, b, last, ISAd - ISA);
+        } else {
+          if(0 <= trlink) { stack[trlink].d = -1; }
+          tr_partialcopy(ISA, SA, first, a, b, last, ISAd - ISA);
+        }
+        STACK_POP5(ISAd, first, last, limit, trlink);
+      } else {
+        /* sorted partition */
+        if(0 <= *first) {
+          a = first;
+          do { ISA[*a] = a - SA; } while((++a < last) && (0 <= *a));
+          first = a;
+        }
+        if(first < last) {
+          a = first; do { *a = ~*a; } while(*++a < 0);
+          next = (ISA[*a] != ISAd[*a]) ? tr_ilg(a - first + 1) : -1;
+          if(++a < last) { for(b = first, v = a - SA - 1; b < a; ++b) { ISA[*b] = v; } }
+
+          /* push */
+          if(trbudget_check(budget, a - first)) {
+            if((a - first) <= (last - a)) {
+              STACK_PUSH5(ISAd, a, last, -3, trlink);
+              ISAd += incr, last = a, limit = next;
+            } else {
+              if(1 < (last - a)) {
+                STACK_PUSH5(ISAd + incr, first, a, next, trlink);
+                first = a, limit = -3;
+              } else {
+                ISAd += incr, last = a, limit = next;
+              }
+            }
+          } else {
+            if(0 <= trlink) { stack[trlink].d = -1; }
+            if(1 < (last - a)) {
+              first = a, limit = -3;
+            } else {
+              STACK_POP5(ISAd, first, last, limit, trlink);
+            }
+          }
+        } else {
+          STACK_POP5(ISAd, first, last, limit, trlink);
+        }
+      }
+      continue;
+    }
+
+    if((last - first) <= TR_INSERTIONSORT_THRESHOLD) {
+      tr_insertionsort(ISAd, first, last);
+      limit = -3;
+      continue;
+    }
+
+    if(limit-- == 0) {
+      tr_heapsort(ISAd, first, last - first);
+      for(a = last - 1; first < a; a = b) {
+        for(x = ISAd[*a], b = a - 1; (first <= b) && (ISAd[*b] == x); --b) { *b = ~*b; }
+      }
+      limit = -3;
+      continue;
+    }
+
+    /* choose pivot */
+    a = tr_pivot(ISAd, first, last);
+    SWAP(*first, *a);
+    v = ISAd[*first];
+
+    /* partition */
+    tr_partition(ISAd, first, first + 1, last, &a, &b, v);
+    if((last - first) != (b - a)) {
+      next = (ISA[*a] != v) ? tr_ilg(b - a) : -1;
+
+      /* update ranks */
+      for(c = first, v = a - SA - 1; c < a; ++c) { ISA[*c] = v; }
+      if(b < last) { for(c = a, v = b - SA - 1; c < b; ++c) { ISA[*c] = v; } }
+
+      /* push */
+      if((1 < (b - a)) && (trbudget_check(budget, b - a))) {
+        if((a - first) <= (last - b)) {
+          if((last - b) <= (b - a)) {
+            if(1 < (a - first)) {
+              STACK_PUSH5(ISAd + incr, a, b, next, trlink);
+              STACK_PUSH5(ISAd, b, last, limit, trlink);
+              last = a;
+            } else if(1 < (last - b)) {
+              STACK_PUSH5(ISAd + incr, a, b, next, trlink);
+              first = b;
+            } else {
+              ISAd += incr, first = a, last = b, limit = next;
+            }
+          } else if((a - first) <= (b - a)) {
+            if(1 < (a - first)) {
+              STACK_PUSH5(ISAd, b, last, limit, trlink);
+              STACK_PUSH5(ISAd + incr, a, b, next, trlink);
+              last = a;
+            } else {
+              STACK_PUSH5(ISAd, b, last, limit, trlink);
+              ISAd += incr, first = a, last = b, limit = next;
+            }
+          } else {
+            STACK_PUSH5(ISAd, b, last, limit, trlink);
+            STACK_PUSH5(ISAd, first, a, limit, trlink);
+            ISAd += incr, first = a, last = b, limit = next;
+          }
+        } else {
+          if((a - first) <= (b - a)) {
+            if(1 < (last - b)) {
+              STACK_PUSH5(ISAd + incr, a, b, next, trlink);
+              STACK_PUSH5(ISAd, first, a, limit, trlink);
+              first = b;
+            } else if(1 < (a - first)) {
+              STACK_PUSH5(ISAd + incr, a, b, next, trlink);
+              last = a;
+            } else {
+              ISAd += incr, first = a, last = b, limit = next;
+            }
+          } else if((last - b) <= (b - a)) {
+            if(1 < (last - b)) {
+              STACK_PUSH5(ISAd, first, a, limit, trlink);
+              STACK_PUSH5(ISAd + incr, a, b, next, trlink);
+              first = b;
+            } else {
+              STACK_PUSH5(ISAd, first, a, limit, trlink);
+              ISAd += incr, first = a, last = b, limit = next;
+            }
+          } else {
+            STACK_PUSH5(ISAd, first, a, limit, trlink);
+            STACK_PUSH5(ISAd, b, last, limit, trlink);
+            ISAd += incr, first = a, last = b, limit = next;
+          }
+        }
+      } else {
+        if((1 < (b - a)) && (0 <= trlink)) { stack[trlink].d = -1; }
+        if((a - first) <= (last - b)) {
+          if(1 < (a - first)) {
+            STACK_PUSH5(ISAd, b, last, limit, trlink);
+            last = a;
+          } else if(1 < (last - b)) {
+            first = b;
+          } else {
+            STACK_POP5(ISAd, first, last, limit, trlink);
+          }
+        } else {
+          if(1 < (last - b)) {
+            STACK_PUSH5(ISAd, first, a, limit, trlink);
+            first = b;
+          } else if(1 < (a - first)) {
+            last = a;
+          } else {
+            STACK_POP5(ISAd, first, last, limit, trlink);
+          }
+        }
+      }
+    } else {
+      if(trbudget_check(budget, last - first)) {
+        limit = tr_ilg(last - first), ISAd += incr;
+      } else {
+        if(0 <= trlink) { stack[trlink].d = -1; }
+        STACK_POP5(ISAd, first, last, limit, trlink);
+      }
+    }
+  }
+#undef STACK_SIZE
+}
+
+
+
+/*---------------------------------------------------------------------------*/
+
+/* Tandem repeat sort */
+static
+void
+trsort(int *ISA, int *SA, int n, int depth) {
+  int *ISAd;
+  int *first, *last;
+  trbudget_t budget;
+  int t, skip, unsorted;
+
+  trbudget_init(&budget, tr_ilg(n) * 2 / 3, n);
+/*  trbudget_init(&budget, tr_ilg(n) * 3 / 4, n); */
+  for(ISAd = ISA + depth; -n < *SA; ISAd += ISAd - ISA) {
+    first = SA;
+    skip = 0;
+    unsorted = 0;
+    do {
+      if((t = *first) < 0) { first -= t; skip += t; }
+      else {
+        if(skip != 0) { *(first + skip) = skip; skip = 0; }
+        last = SA + ISA[t] + 1;
+        if(1 < (last - first)) {
+          budget.count = 0;
+          tr_introsort(ISA, ISAd, SA, first, last, &budget);
+          if(budget.count != 0) { unsorted += budget.count; }
+          else { skip = first - last; }
+        } else if((last - first) == 1) {
+          skip = -1;
+        }
+        first = last;
+      }
+    } while(first < (SA + n));
+    if(skip != 0) { *(first + skip) = skip; }
+    if(unsorted == 0) { break; }
+  }
+}
+
+
+/*---------------------------------------------------------------------------*/
+
+/* Sorts suffixes of type B*. */
+static
+int
+sort_typeBstar(const unsigned char *T, int *SA,
+               int *bucket_A, int *bucket_B,
+               int n) {
+  int *PAb, *ISAb, *buf;
+#ifdef _OPENMP
+  int *curbuf;
+  int l;
+#endif
+  int i, j, k, t, m, bufsize;
+  int c0, c1;
+#ifdef _OPENMP
+  int d0, d1;
+  int tmp;
+#endif
+
+  /* Initialize bucket arrays. */
+  for(i = 0; i < BUCKET_A_SIZE; ++i) { bucket_A[i] = 0; }
+  for(i = 0; i < BUCKET_B_SIZE; ++i) { bucket_B[i] = 0; }
+
+  /* Count the number of occurrences of the first one or two characters of each
+     type A, B and B* suffix. Moreover, store the beginning position of all
+     type B* suffixes into the array SA. */
+  for(i = n - 1, m = n, c0 = T[n - 1]; 0 <= i;) {
+    /* type A suffix. */
+    do { ++BUCKET_A(c1 = c0); } while((0 <= --i) && ((c0 = T[i]) >= c1));
+    if(0 <= i) {
+      /* type B* suffix. */
+      ++BUCKET_BSTAR(c0, c1);
+      SA[--m] = i;
+      /* type B suffix. */
+      for(--i, c1 = c0; (0 <= i) && ((c0 = T[i]) <= c1); --i, c1 = c0) {
+        ++BUCKET_B(c0, c1);
+      }
+    }
+  }
+  m = n - m;
+/*
+note:
+  A type B* suffix is lexicographically smaller than a type B suffix that
+  begins with the same first two characters.
+*/
+
+  /* Calculate the index of start/end point of each bucket. */
+  for(c0 = 0, i = 0, j = 0; c0 < ALPHABET_SIZE; ++c0) {
+    t = i + BUCKET_A(c0);
+    BUCKET_A(c0) = i + j; /* start point */
+    i = t + BUCKET_B(c0, c0);
+    for(c1 = c0 + 1; c1 < ALPHABET_SIZE; ++c1) {
+      j += BUCKET_BSTAR(c0, c1);
+      BUCKET_BSTAR(c0, c1) = j; /* end point */
+      i += BUCKET_B(c0, c1);
+    }
+  }
+
+  if(0 < m) {
+    /* Sort the type B* suffixes by their first two characters. */
+    PAb = SA + n - m; ISAb = SA + m;
+    for(i = m - 2; 0 <= i; --i) {
+      t = PAb[i], c0 = T[t], c1 = T[t + 1];
+      SA[--BUCKET_BSTAR(c0, c1)] = i;
+    }
+    t = PAb[m - 1], c0 = T[t], c1 = T[t + 1];
+    SA[--BUCKET_BSTAR(c0, c1)] = m - 1;
+
+    /* Sort the type B* substrings using sssort. */
+#ifdef _OPENMP
+    tmp = omp_get_max_threads();
+    buf = SA + m, bufsize = (n - (2 * m)) / tmp;
+    c0 = ALPHABET_SIZE - 2, c1 = ALPHABET_SIZE - 1, j = m;
+#pragma omp parallel default(shared) private(curbuf, k, l, d0, d1, tmp)
+    {
+      tmp = omp_get_thread_num();
+      curbuf = buf + tmp * bufsize;
+      k = 0;
+      for(;;) {
+        #pragma omp critical(sssort_lock)
+        {
+          if(0 < (l = j)) {
+            d0 = c0, d1 = c1;
+            do {
+              k = BUCKET_BSTAR(d0, d1);
+              if(--d1 <= d0) {
+                d1 = ALPHABET_SIZE - 1;
+                if(--d0 < 0) { break; }
+              }
+            } while(((l - k) <= 1) && (0 < (l = k)));
+            c0 = d0, c1 = d1, j = k;
+          }
+        }
+        if(l == 0) { break; }
+        sssort(T, PAb, SA + k, SA + l,
+               curbuf, bufsize, 2, n, *(SA + k) == (m - 1));
+      }
+    }
+#else
+    buf = SA + m, bufsize = n - (2 * m);
+    for(c0 = ALPHABET_SIZE - 2, j = m; 0 < j; --c0) {
+      for(c1 = ALPHABET_SIZE - 1; c0 < c1; j = i, --c1) {
+        i = BUCKET_BSTAR(c0, c1);
+        if(1 < (j - i)) {
+          sssort(T, PAb, SA + i, SA + j,
+                 buf, bufsize, 2, n, *(SA + i) == (m - 1));
+        }
+      }
+    }
+#endif
+
+    /* Compute ranks of type B* substrings. */
+    for(i = m - 1; 0 <= i; --i) {
+      if(0 <= SA[i]) {
+        j = i;
+        do { ISAb[SA[i]] = i; } while((0 <= --i) && (0 <= SA[i]));
+        SA[i + 1] = i - j;
+        if(i <= 0) { break; }
+      }
+      j = i;
+      do { ISAb[SA[i] = ~SA[i]] = j; } while(SA[--i] < 0);
+      ISAb[SA[i]] = j;
+    }
+
+    /* Construct the inverse suffix array of type B* suffixes using trsort. */
+    trsort(ISAb, SA, m, 1);
+
+    /* Set the sorted order of tyoe B* suffixes. */
+    for(i = n - 1, j = m, c0 = T[n - 1]; 0 <= i;) {
+      for(--i, c1 = c0; (0 <= i) && ((c0 = T[i]) >= c1); --i, c1 = c0) { }
+      if(0 <= i) {
+        t = i;
+        for(--i, c1 = c0; (0 <= i) && ((c0 = T[i]) <= c1); --i, c1 = c0) { }
+        SA[ISAb[--j]] = ((t == 0) || (1 < (t - i))) ? t : ~t;
+      }
+    }
+
+    /* Calculate the index of start/end point of each bucket. */
+    BUCKET_B(ALPHABET_SIZE - 1, ALPHABET_SIZE - 1) = n; /* end point */
+    for(c0 = ALPHABET_SIZE - 2, k = m - 1; 0 <= c0; --c0) {
+      i = BUCKET_A(c0 + 1) - 1;
+      for(c1 = ALPHABET_SIZE - 1; c0 < c1; --c1) {
+        t = i - BUCKET_B(c0, c1);
+        BUCKET_B(c0, c1) = i; /* end point */
+
+        /* Move all type B* suffixes to the correct position. */
+        for(i = t, j = BUCKET_BSTAR(c0, c1);
+            j <= k;
+            --i, --k) { SA[i] = SA[k]; }
+      }
+      BUCKET_BSTAR(c0, c0 + 1) = i - BUCKET_B(c0, c0) + 1; /* start point */
+      BUCKET_B(c0, c0) = i; /* end point */
+    }
+  }
+
+  return m;
+}
+
+/* Constructs the suffix array by using the sorted order of type B* suffixes. */
+static
+void
+construct_SA(const unsigned char *T, int *SA,
+             int *bucket_A, int *bucket_B,
+             int n, int m) {
+  int *i, *j, *k;
+  int s;
+  int c0, c1, c2;
+
+  if(0 < m) {
+    /* Construct the sorted order of type B suffixes by using
+       the sorted order of type B* suffixes. */
+    for(c1 = ALPHABET_SIZE - 2; 0 <= c1; --c1) {
+      /* Scan the suffix array from right to left. */
+      for(i = SA + BUCKET_BSTAR(c1, c1 + 1),
+          j = SA + BUCKET_A(c1 + 1) - 1, k = NULL, c2 = -1;
+          i <= j;
+          --j) {
+        if(0 < (s = *j)) {
+          assert(T[s] == c1);
+          assert(((s + 1) < n) && (T[s] <= T[s + 1]));
+          assert(T[s - 1] <= T[s]);
+          *j = ~s;
+          c0 = T[--s];
+          if((0 < s) && (T[s - 1] > c0)) { s = ~s; }
+          if(c0 != c2) {
+            if(0 <= c2) { BUCKET_B(c2, c1) = k - SA; }
+            k = SA + BUCKET_B(c2 = c0, c1);
+          }
+          assert(k < j);
+          *k-- = s;
+        } else {
+          assert(((s == 0) && (T[s] == c1)) || (s < 0));
+          *j = ~s;
+        }
+      }
+    }
+  }
+
+  /* Construct the suffix array by using
+     the sorted order of type B suffixes. */
+  k = SA + BUCKET_A(c2 = T[n - 1]);
+  *k++ = (T[n - 2] < c2) ? ~(n - 1) : (n - 1);
+  /* Scan the suffix array from left to right. */
+  for(i = SA, j = SA + n; i < j; ++i) {
+    if(0 < (s = *i)) {
+      assert(T[s - 1] >= T[s]);
+      c0 = T[--s];
+      if((s == 0) || (T[s - 1] < c0)) { s = ~s; }
+      if(c0 != c2) {
+        BUCKET_A(c2) = k - SA;
+        k = SA + BUCKET_A(c2 = c0);
+      }
+      assert(i < k);
+      *k++ = s;
+    } else {
+      assert(s < 0);
+      *i = ~s;
+    }
+  }
+}
+
+/* Constructs the burrows-wheeler transformed string directly
+   by using the sorted order of type B* suffixes. */
+static
+int
+construct_BWT(const unsigned char *T, int *SA,
+              int *bucket_A, int *bucket_B,
+              int n, int m) {
+  int *i, *j, *k, *orig;
+  int s;
+  int c0, c1, c2;
+
+  if(0 < m) {
+    /* Construct the sorted order of type B suffixes by using
+       the sorted order of type B* suffixes. */
+    for(c1 = ALPHABET_SIZE - 2; 0 <= c1; --c1) {
+      /* Scan the suffix array from right to left. */
+      for(i = SA + BUCKET_BSTAR(c1, c1 + 1),
+          j = SA + BUCKET_A(c1 + 1) - 1, k = NULL, c2 = -1;
+          i <= j;
+          --j) {
+        if(0 < (s = *j)) {
+          assert(T[s] == c1);
+          assert(((s + 1) < n) && (T[s] <= T[s + 1]));
+          assert(T[s - 1] <= T[s]);
+          c0 = T[--s];
+          *j = ~((int)c0);
+          if((0 < s) && (T[s - 1] > c0)) { s = ~s; }
+          if(c0 != c2) {
+            if(0 <= c2) { BUCKET_B(c2, c1) = k - SA; }
+            k = SA + BUCKET_B(c2 = c0, c1);
+          }
+          assert(k < j);
+          *k-- = s;
+        } else if(s != 0) {
+          *j = ~s;
+#ifndef NDEBUG
+        } else {
+          assert(T[s] == c1);
+#endif
+        }
+      }
+    }
+  }
+
+  /* Construct the BWTed string by using
+     the sorted order of type B suffixes. */
+  k = SA + BUCKET_A(c2 = T[n - 1]);
+  *k++ = (T[n - 2] < c2) ? ~((int)T[n - 2]) : (n - 1);
+  /* Scan the suffix array from left to right. */
+  for(i = SA, j = SA + n, orig = SA; i < j; ++i) {
+    if(0 < (s = *i)) {
+      assert(T[s - 1] >= T[s]);
+      c0 = T[--s];
+      *i = c0;
+      if((0 < s) && (T[s - 1] < c0)) { s = ~((int)T[s - 1]); }
+      if(c0 != c2) {
+        BUCKET_A(c2) = k - SA;
+        k = SA + BUCKET_A(c2 = c0);
+      }
+      assert(i < k);
+      *k++ = s;
+    } else if(s != 0) {
+      *i = ~s;
+    } else {
+      orig = i;
+    }
+  }
+
+  return orig - SA;
+}
+
+
+/*---------------------------------------------------------------------------*/
+
+/*- Function -*/
+
+int
+divsufsort(const unsigned char *T, int *SA, int n) {
+  int *bucket_A, *bucket_B;
+  int m;
+  int err = 0;
+
+  /* Check arguments. */
+  if((T == NULL) || (SA == NULL) || (n < 0)) { return -1; }
+  else if(n == 0) { return 0; }
+  else if(n == 1) { SA[0] = 0; return 0; }
+  else if(n == 2) { m = (T[0] < T[1]); SA[m ^ 1] = 0, SA[m] = 1; return 0; }
+
+  bucket_A = (int *)malloc(BUCKET_A_SIZE * sizeof(int));
+  bucket_B = (int *)malloc(BUCKET_B_SIZE * sizeof(int));
+
+  /* Suffixsort. */
+  if((bucket_A != NULL) && (bucket_B != NULL)) {
+    m = sort_typeBstar(T, SA, bucket_A, bucket_B, n);
+    construct_SA(T, SA, bucket_A, bucket_B, n, m);
+  } else {
+    err = -2;
+  }
+
+  free(bucket_B);
+  free(bucket_A);
+
+  return err;
+}
+
+int
+divbwt(const unsigned char *T, unsigned char *U, int *A, int n) {
+  int *B;
+  int *bucket_A, *bucket_B;
+  int m, pidx, i;
+
+  /* Check arguments. */
+  if((T == NULL) || (U == NULL) || (n < 0)) { return -1; }
+  else if(n <= 1) { if(n == 1) { U[0] = T[0]; } return n; }
+
+  if((B = A) == NULL) { B = (int *)malloc((size_t)(n + 1) * sizeof(int)); }
+  bucket_A = (int *)malloc(BUCKET_A_SIZE * sizeof(int));
+  bucket_B = (int *)malloc(BUCKET_B_SIZE * sizeof(int));
+
+  /* Burrows-Wheeler Transform. */
+  if((B != NULL) && (bucket_A != NULL) && (bucket_B != NULL)) {
+    m = sort_typeBstar(T, B, bucket_A, bucket_B, n);
+    pidx = construct_BWT(T, B, bucket_A, bucket_B, n, m);
+
+    /* Copy to output string. */
+    U[0] = T[n - 1];
+    for(i = 0; i < pidx; ++i) { U[i + 1] = (unsigned char)B[i]; }
+    for(i += 1; i < n; ++i) { U[i] = (unsigned char)B[i]; }
+    pidx += 1;
+  } else {
+    pidx = -2;
+  }
+
+  free(bucket_B);
+  free(bucket_A);
+  if(A == NULL) { free(B); }
+
+  return pidx;
+}
+
+// End divsufsort.c
+
+/////////////////////////////// add ///////////////////////////////////
+
+// Convert non-negative decimal number x to string of at least n digits
+std::string itos(int64_t x, int n=1) {
+  assert(x>=0);
+  assert(n>=0);
+  std::string r;
+  for (; x || n>0; x/=10, --n) r=std::string(1, '0'+x%10)+r;
+  return r;
+}
+
+// E8E9 transform of buf[0..n-1] to improve compression of .exe and .dll.
+// Patterns (E8|E9 xx xx xx 00|FF) at offset i replace the 3 middle
+// bytes with x+i mod 2^24, LSB first, reading backward.
+void e8e9(unsigned char* buf, int n) {
+  for (int i=n-5; i>=0; --i) {
+    if (((buf[i]&254)==0xe8) && ((buf[i+4]+1)&254)==0) {
+      unsigned a=(buf[i+1]|buf[i+2]<<8|buf[i+3]<<16)+i;
+      buf[i+1]=a;
+      buf[i+2]=a>>8;
+      buf[i+3]=a>>16;
+    }
+  }
+}
+
+// Encode inbuf to buf using LZ77. args are as follows:
+// args[0] is log2 buffer size in MB.
+// args[1] is level (1=var. length, 2=byte aligned lz77, 3=bwt) + 4 if E8E9.
+// args[2] is the lz77 minimum match length and context order.
+// args[3] is the lz77 higher context order to search first, or else 0.
+// args[4] is the log2 hash bucket size (number of searches).
+// args[5] is the log2 hash table size. If 21+args[0] then use a suffix array.
+// args[6] is the secondary context look ahead
+// sap is pointer to external suffix array of inbuf or 0. If supplied and
+//   args[0]=5..7 then it is assumed that E8E9 was already applied to
+//   both the input and sap and the input buffer is not modified.
+
+class LZBuffer: public libzpaq::Reader {
+  libzpaq::Array<unsigned> ht;// hash table, confirm in low bits, or SA+ISA
+  const unsigned char* in;    // input pointer
+  const int checkbits;        // hash confirmation size or lg(ISA size)
+  const int level;            // 1=var length LZ77, 2=byte aligned LZ77, 3=BWT
+  const unsigned htsize;      // size of hash table
+  const unsigned n;           // input length
+  unsigned i;                 // current location in in (0 <= i < n)
+  const unsigned minMatch;    // minimum match length
+  const unsigned minMatch2;   // second context order or 0 if not used
+  const unsigned maxMatch;    // longest match length allowed
+  const unsigned maxLiteral;  // longest literal length allowed
+  const unsigned lookahead;   // second context look ahead
+  unsigned h1, h2;            // low, high order context hashes of in[i..]
+  const unsigned bucket;      // number of matches to search per hash - 1
+  const unsigned shift1, shift2;  // how far to shift h1, h2 per hash
+  const int minMatchBoth;     // max(minMatch, minMatch2)
+  const unsigned rb;          // number of level 1 r bits in match code
+  unsigned bits;              // pending output bits (level 1)
+  unsigned nbits;             // number of bits in bits
+  unsigned rpos, wpos;        // read, write pointers
+  unsigned idx;               // BWT index
+  const unsigned* sa;         // suffix array for BWT or LZ77-SA
+  unsigned* isa;              // inverse suffix array for LZ77-SA
+  enum {BUFSIZE=1<<14};       // output buffer size
+  unsigned char buf[BUFSIZE]; // output buffer
+
+  void write_literal(unsigned i, unsigned& lit);
+  void write_match(unsigned len, unsigned off);
+  void fill();  // encode to buf
+
+  // write k bits of x
+  void putb(unsigned x, int k) {
+    x&=(1<<k)-1;
+    bits|=x<<nbits;
+    nbits+=k;
+    while (nbits>7) {
+      assert(wpos<BUFSIZE);
+      buf[wpos++]=bits, bits>>=8, nbits-=8;
+    }
+  }
+
+  // write last byte
+  void flush() {
+    assert(wpos<BUFSIZE);
+    if (nbits>0) buf[wpos++]=bits;
+    bits=nbits=0;
+  }
+
+  // write 1 byte
+  void put(int c) {
+    assert(wpos<BUFSIZE);
+    buf[wpos++]=c;
+  }
+
+public:
+  LZBuffer(StringBuffer& inbuf, int args[], const unsigned* sap=0);
+
+  // return 1 byte of compressed output (overrides Reader)
+  int get() {
+    int c=-1;
+    if (rpos==wpos) fill();
+    if (rpos<wpos) c=buf[rpos++];
+    if (rpos==wpos) rpos=wpos=0;
+    return c;
+  }
+
+  // Read up to p[0..n-1] and return bytes read.
+  int read(char* p, int n);
+};
+
+// LZ/BWT preprocessor for levels 1..3 compression and e8e9 filter.
+// Level 1 uses variable length LZ77 codes like in the lazy compressor:
+//
+//   00,n,L[n] = n literal bytes
+//   mm,mmm,n,ll,r,q (mm > 00) = match 4*n+ll at offset (q<<rb)+r-1
+//
+// where q is written in 8mm+mmm-8 (0..23) bits with an implied leading 1 bit
+// and n is written using interleaved Elias Gamma coding, i.e. the leading
+// 1 bit is implied, remaining bits are preceded by a 1 and terminated by
+// a 0. e.g. abc is written 1,b,1,c,0. Codes are packed LSB first and
+// padded with leading 0 bits in the last byte. r is a number with rb bits,
+// where rb = log2(blocksize) - 24.
+//
+// Level 2 is byte oriented LZ77 with minimum match length m = $4 = args[3]
+// with m in 1..64. Lengths and offsets are MSB first:
+// 00xxxxxx   x+1 (1..64) literals follow
+// yyxxxxxx   y+1 (2..4) offset bytes follow, match length x+m (m..m+63)
+//
+// Level 3 is BWT with the end of string byte coded as 255 and the
+// last 4 bytes giving its position LSB first.
+
+// floor(log2(x)) + 1 = number of bits excluding leading zeros (0..32)
+int lg(unsigned x) {
+  unsigned r=0;
+  if (x>=65536) r=16, x>>=16;
+  if (x>=256) r+=8, x>>=8;
+  if (x>=16) r+=4, x>>=4;
+  assert(x>=0 && x<16);
+  return
+    "\x00\x01\x02\x02\x03\x03\x03\x03\x04\x04\x04\x04\x04\x04\x04\x04"[x]+r;
+}
+
+// return number of 1 bits in x
+int nbits(unsigned x) {
+  int r;
+  for (r=0; x; x>>=1) r+=x&1;
+  return r;
+}
+
+// Read n bytes of compressed output into p and return number of
+// bytes read in 0..n. 0 signals EOF (overrides Reader).
+int LZBuffer::read(char* p, int n) {
+  if (rpos==wpos) fill();
+  int nr=n;
+  if (nr>int(wpos-rpos)) nr=wpos-rpos;
+  if (nr) memcpy(p, buf+rpos, nr);
+  rpos+=nr;
+  assert(rpos<=wpos);
+  if (rpos==wpos) rpos=wpos=0;
+  return nr;
+}
+
+LZBuffer::LZBuffer(StringBuffer& inbuf, int args[], const unsigned* sap):
+    ht((args[1]&3)==3 ? (inbuf.size()+1)*!sap      // for BWT suffix array
+        : args[5]-args[0]<21 ? 1u<<args[5]         // for LZ77 hash table
+        : (inbuf.size()*!sap)+(1u<<17<<args[0])),  // for LZ77 SA and ISA
+    in(inbuf.data()),
+    checkbits(args[5]-args[0]<21 ? 12-args[0] : 17+args[0]),
+    level(args[1]&3),
+    htsize(ht.size()),
+    n(inbuf.size()),
+    i(0),
+    minMatch(args[2]),
+    minMatch2(args[3]),
+    maxMatch(BUFSIZE*3),
+    maxLiteral(BUFSIZE/4),
+    lookahead(args[6]),
+    h1(0), h2(0),
+    bucket((1<<args[4])-1), 
+    shift1(minMatch>0 ? (args[5]-1)/minMatch+1 : 1),
+    shift2(minMatch2>0 ? (args[5]-1)/minMatch2+1 : 0),
+    minMatchBoth(MAX(minMatch, minMatch2+lookahead)+4),
+    rb(args[0]>4 ? args[0]-4 : 0),
+    bits(0), nbits(0), rpos(0), wpos(0),
+    idx(0), sa(0), isa(0) {
+  assert(args[0]>=0);
+  assert(n<=(1u<<20<<args[0]));
+  assert(args[1]>=1 && args[1]<=7 && args[1]!=4);
+  assert(level>=1 && level<=3);
+  if ((minMatch<4 && level==1) || (minMatch<1 && level==2))
+    error("match length $3 too small");
+
+  // e8e9 transform
+  if (args[1]>4 && !sap) e8e9(inbuf.data(), n);
+
+  // build suffix array if not supplied
+  if (args[5]-args[0]>=21 || level==3) {  // LZ77-SA or BWT
+    if (sap)
+      sa=sap;
+    else {
+      assert(ht.size()>=n);
+      assert(ht.size()>0);
+      sa=&ht[0];
+      if (n>0) divsufsort((const unsigned char*)in, (int*)sa, n);
+    }
+    if (level<3) {
+      assert(ht.size()>=(n*(sap==0))+(1u<<17<<args[0]));
+      isa=&ht[n*(sap==0)];
+    }
+  }
+}
+
+// Encode from in to buf until end of input or buf is not empty
+void LZBuffer::fill() {
+
+  // BWT
+  if (level==3) {
+    assert(in || n==0);
+    assert(sa);
+    for (; wpos<BUFSIZE && i<n+5; ++i) {
+      if (i==0) put(n>0 ? in[n-1] : 255);
+      else if (i>n) put(idx&255), idx>>=8;
+      else if (sa[i-1]==0) idx=i, put(255);
+      else put(in[sa[i-1]-1]);
+    }
+    return;
+  }
+
+  // LZ77: scan the input
+  unsigned lit=0;  // number of output literals pending
+  const unsigned mask=(1<<checkbits)-1;
+  while (i<n && wpos*2<BUFSIZE) {
+
+    // Search for longest match, or pick closest in case of tie
+    unsigned blen=minMatch-1;  // best match length
+    unsigned bp=0;  // pointer to best match
+    unsigned blit=0;  // literals before best match
+    int bscore=0;  // best cost
+
+    // Look up contexts in suffix array
+    if (isa) {
+      if (sa[isa[i&mask]]!=i) // rebuild ISA
+        for (unsigned j=0; j<n; ++j)
+          if ((sa[j]&~mask)==(i&~mask))
+            isa[sa[j]&mask]=j;
+      for (unsigned h=0; h<=lookahead; ++h) {
+        unsigned q=isa[(h+i)&mask];  // location of h+i in SA
+        assert(q<n);
+        if (sa[q]!=h+i) continue;
+        for (int j=-1; j<=1; j+=2) {  // search backward and forward
+          for (unsigned k=1; k<=bucket; ++k) {
+            unsigned p;  // match to be tested
+            if (q+j*k<n && (p=sa[q+j*k]-h)<i) {
+              assert(p<n);
+              unsigned l, l1;  // length of match, leading literals
+              for (l=h; i+l<n && l<maxMatch && in[p+l]==in[i+l]; ++l);
+              for (l1=h; l1>0 && in[p+l1-1]==in[i+l1-1]; --l1);
+              int score=int(l-l1)*8-lg(i-p)-4*(lit==0 && l1>0)-11;
+              for (unsigned a=0; a<h; ++a) score=score*5/8;
+              if (score>bscore) blen=l, bp=p, blit=l1, bscore=score;
+              if (l<blen || l<minMatch || l>255) break;
+            }
+          }
+        }
+        if (bscore<=0 || blen<minMatch) break;
+      }
+    }
+
+    // Look up contexts in a hash table.
+    // Try the longest context orders first. If a match is found, then
+    // skip the lower order as a speed optimization.
+    else if (level==1 || minMatch<=64) {
+      if (minMatch2>0) {
+        for (unsigned k=0; k<=bucket; ++k) {
+          unsigned p=ht[h2^k];
+          if (p && (p&mask)==(in[i+3]&mask)) {
+            p>>=checkbits;
+            if (p<i && i+blen<=n && in[p+blen-1]==in[i+blen-1]) {
+              unsigned l;  // match length from lookahead
+              for (l=lookahead; i+l<n && l<maxMatch && in[p+l]==in[i+l]; ++l);
+              if (l>=minMatch2+lookahead) {
+                int l1;  // length back from lookahead
+                for (l1=lookahead; l1>0 && in[p+l1-1]==in[i+l1-1]; --l1);
+                assert(l1>=0 && l1<=int(lookahead));
+                int score=int(l-l1)*8-lg(i-p)-8*(lit==0 && l1>0)-11;
+                if (score>bscore) blen=l, bp=p, blit=l1, bscore=score;
+              }
+            }
+          }
+          if (blen>=128) break;
+        }
+      }
+
+      // Search the lower order context
+      if (!minMatch2 || blen<minMatch2) {
+        for (unsigned k=0; k<=bucket; ++k) {
+          unsigned p=ht[h1^k];
+          if (p && i+3<n && (p&mask)==(in[i+3]&mask)) {
+            p>>=checkbits;
+            if (p<i && i+blen<=n && in[p+blen-1]==in[i+blen-1]) {
+              unsigned l;
+              for (l=0; i+l<n && l<maxMatch && in[p+l]==in[i+l]; ++l);
+              int score=l*8-lg(i-p)-2*(lit>0)-11;
+              if (score>bscore) blen=l, bp=p, blit=0, bscore=score;
+            }
+          }
+          if (blen>=128) break;
+        }
+      }
+    }
+
+    // If match is long enough, then output any pending literals first,
+    // and then the match. blen is the length of the match.
+    assert(i>=bp);
+    const unsigned off=i-bp;  // offset
+    if (off>0 && bscore>0
+        && blen-blit>=minMatch+(level==2)*((off>=(1<<16))+(off>=(1<<24)))) {
+      lit+=blit;
+      write_literal(i+blit, lit);
+      write_match(blen-blit, off);
+    }
+
+    // Otherwise add to literal length
+    else {
+      blen=1;
+      ++lit;
+    }
+
+    // Update index, advance blen bytes
+    if (isa)
+      i+=blen;
+    else {
+      while (blen--) {
+        if (i+minMatchBoth<n) {
+          unsigned ih=((i*1234547)>>19)&bucket;
+          const unsigned p=(i<<checkbits)|(in[i+3]&mask);
+          assert(ih<=bucket);
+          if (minMatch2) {
+            ht[h2^ih]=p;
+            h2=(((h2*9)<<shift2)
+                +(in[i+minMatch2+lookahead]+1)*23456789)&(htsize-1);
+          }
+          ht[h1^ih]=p;
+          h1=(((h1*5)<<shift1)+(in[i+minMatch]+1)*123456791)&(htsize-1);
+        }
+        ++i;
+      }
+    }
+
+    // Write long literals to keep buf from filling up
+    if (lit>=maxLiteral)
+      write_literal(i, lit);
+  }
+
+  // Write pending literals at end of input
+  assert(i<=n);
+  if (i==n) {
+    write_literal(n, lit);
+    flush();
+  }
+}
+
+// Write literal sequence in[i-lit..i-1], set lit=0
+void LZBuffer::write_literal(unsigned i, unsigned& lit) {
+  assert(lit>=0);
+  assert(i>=0 && i<=n);
+  assert(i>=lit);
+  if (level==1) {
+    if (lit<1) return;
+    int ll=lg(lit);
+    assert(ll>=1 && ll<=24);
+    putb(0, 2);
+    --ll;
+    while (--ll>=0) {
+      putb(1, 1);
+      putb((lit>>ll)&1, 1);
+    }
+    putb(0, 1);
+    while (lit) putb(in[i-lit--], 8);
+  }
+  else {
+    assert(level==2);
+    while (lit>0) {
+      unsigned lit1=lit;
+      if (lit1>64) lit1=64;
+      put(lit1-1);
+      for (unsigned j=i-lit; j<i-lit+lit1; ++j) put(in[j]);
+      lit-=lit1;
+    }
+  }
+}
+
+// Write match sequence of given length and offset
+void LZBuffer::write_match(unsigned len, unsigned off) {
+
+  // mm,mmm,n,ll,r,q[mmmmm-8] = match n*4+ll, offset ((q-1)<<rb)+r+1
+  if (level==1) {
+    assert(len>=minMatch && len<=maxMatch);
+    assert(off>0);
+    assert(len>=4);
+    assert(rb>=0 && rb<=8);
+    int ll=lg(len)-1;
+    assert(ll>=2);
+    off+=(1<<rb)-1;
+    int lo=lg(off)-1-rb;
+    assert(lo>=0 && lo<=23);
+    putb((lo+8)>>3, 2);// mm
+    putb(lo&7, 3);     // mmm
+    while (--ll>=2) {  // n
+      putb(1, 1);
+      putb((len>>ll)&1, 1);
+    }
+    putb(0, 1);
+    putb(len&3, 2);    // ll
+    putb(off, rb);     // r
+    putb(off>>rb, lo); // q
+  }
+
+  // x[2]:len[6] off[x-1] 
+  else {
+    assert(level==2);
+    assert(minMatch>=1 && minMatch<=64);
+    --off;
+    while (len>0) {  // Split long matches to len1=minMatch..minMatch+63
+      const unsigned len1=len>minMatch*2+63 ? minMatch+63 :
+          len>minMatch+63 ? len-minMatch : len;
+      assert(wpos<BUFSIZE-5);
+      assert(len1>=minMatch && len1<minMatch+64);
+      if (off<(1<<16)) {
+        put(64+len1-minMatch);
+        put(off>>8);
+        put(off);
+      }
+      else if (off<(1<<24)) {
+        put(128+len1-minMatch);
+        put(off>>16);
+        put(off>>8);
+        put(off);
+      }
+      else {
+        put(192+len1-minMatch);
+        put(off>>24);
+        put(off>>16);
+        put(off>>8);
+        put(off);
+      }
+      len-=len1;
+    }
+  }
+}
+
+// Generate a config file from the method argument with syntax:
+// {0|x|s|i}[N1[,N2]...][{ciamtswf<cfg>}[N1[,N2]]...]...
+std::string makeConfig(const char* method, int args[]) {
+  assert(method);
+  const char type=method[0];
+  assert(type=='x' || type=='s' || type=='0' || type=='i');
+
+  // Read "{x|s|i|0}N1,N2...N9" into args[0..8] ($1..$9)
+  args[0]=0;  // log block size in MiB
+  args[1]=0;  // 0=none, 1=var-LZ77, 2=byte-LZ77, 3=BWT, 4..7 adds E8E9
+  args[2]=0;  // lz77 minimum match length
+  args[3]=0;  // secondary context length
+  args[4]=0;  // log searches
+  args[5]=0;  // lz77 hash table size or SA if args[0]+21
+  args[6]=0;  // secondary context look ahead
+  args[7]=0;  // not used
+  args[8]=0;  // not used
+  if (isdigit(*++method)) args[0]=0;
+  for (int i=0; i<9 && (isdigit(*method) || *method==',' || *method=='.');) {
+    if (isdigit(*method))
+      args[i]=args[i]*10+*method-'0';
+    else if (++i<9)
+      args[i]=0;
+    ++method;
+  }
+
+  // "0..." = No compression
+  if (type=='0')
+    return "comp 0 0 0 0 0 hcomp end\n";
+
+  // Generate the postprocessor
+  std::string hdr, pcomp;
+  const int level=args[1]&3;
+  const bool doe8=args[1]>=4 && args[1]<=7;
+
+  // LZ77+Huffman, with or without E8E9
+  if (level==1) {
+    const int rb=args[0]>4 ? args[0]-4 : 0;
+    hdr="comp 9 16 0 $1+20 ";
+    pcomp=
+    "pcomp lazy2 3 ;\n"
+    " (r1 = state\n"
+    "  r2 = len - match or literal length\n"
+    "  r3 = m - number of offset bits expected\n"
+    "  r4 = ptr to buf\n"
+    "  r5 = r - low bits of offset\n"
+    "  c = bits - input buffer\n"
+    "  d = n - number of bits in c)\n"
+    "\n"
+    "  a> 255 if\n";
+    if (doe8)
+      pcomp+=
+      "    b=0 d=r 4 do (for b=0..d-1, d = end of buf)\n"
+      "      a=b a==d ifnot\n"
+      "        a+= 4 a<d if\n"
+      "          a=*b a&= 254 a== 232 if (e8 or e9?)\n"
+      "            c=b b++ b++ b++ b++ a=*b a++ a&= 254 a== 0 if (00 or ff)\n"
+      "              b-- a=*b\n"
+      "              b-- a<<= 8 a+=*b\n"
+      "              b-- a<<= 8 a+=*b\n"
+      "              a-=b a++\n"
+      "              *b=a a>>= 8 b++\n"
+      "              *b=a a>>= 8 b++\n"
+      "              *b=a b++\n"
+      "            endif\n"
+      "            b=c\n"
+      "          endif\n"
+      "        endif\n"
+      "        a=*b out b++\n"
+      "      forever\n"
+      "    endif\n"
+      "\n";
+    pcomp+=
+    "    (reset state)\n"
+    "    a=0 b=0 c=0 d=0 r=a 1 r=a 2 r=a 3 r=a 4\n"
+    "    halt\n"
+    "  endif\n"
+    "\n"
+    "  a<<=d a+=c c=a               (bits+=a<<n)\n"
+    "  a= 8 a+=d d=a                (n+=8)\n"
+    "\n"
+    "  (if state==0 (expect new code))\n"
+    "  a=r 1 a== 0 if (match code mm,mmm)\n"
+    "    a= 1 r=a 2                 (len=1)\n"
+    "    a=c a&= 3 a> 0 if          (if (bits&3))\n"
+    "      a-- a<<= 3 r=a 3           (m=((bits&3)-1)*8)\n"
+    "      a=c a>>= 2 c=a             (bits>>=2)\n"
+    "      b=r 3 a&= 7 a+=b r=a 3     (m+=bits&7)\n"
+    "      a=c a>>= 3 c=a             (bits>>=3)\n"
+    "      a=d a-= 5 d=a              (n-=5)\n"
+    "      a= 1 r=a 1                 (state=1)\n"
+    "    else (literal, discard 00)\n"
+    "      a=c a>>= 2 c=a             (bits>>=2)\n"
+    "      d-- d--                    (n-=2)\n"
+    "      a= 3 r=a 1                 (state=3)\n"
+    "    endif\n"
+    "  endif\n"
+    "\n"
+    "  (while state==1 && n>=3 (expect match length n*4+ll -> r2))\n"
+    "  do a=r 1 a== 1 if a=d a> 2 if\n"
+    "    a=c a&= 1 a== 1 if         (if bits&1)\n"
+    "      a=c a>>= 1 c=a             (bits>>=1)\n"
+    "      b=r 2 a=c a&= 1 a+=b a+=b r=a 2 (len+=len+(bits&1))\n"
+    "      a=c a>>= 1 c=a             (bits>>=1)\n"
+    "      d-- d--                    (n-=2)\n"
+    "    else\n"
+    "      a=c a>>= 1 c=a             (bits>>=1)\n"
+    "      a=r 2 a<<= 2 b=a           (len<<=2)\n"
+    "      a=c a&= 3 a+=b r=a 2       (len+=bits&3)\n"
+    "      a=c a>>= 2 c=a             (bits>>=2)\n"
+    "      d-- d-- d--                (n-=3)\n";
+    if (rb)
+      pcomp+="      a= 5 r=a 1                 (state=5)\n";
+    else
+      pcomp+="      a= 2 r=a 1                 (state=2)\n";
+    pcomp+=
+    "    endif\n"
+    "  forever endif endif\n"
+    "\n";
+    if (rb) pcomp+=  // save r in r5
+      "  (if state==5 && n>=8) (expect low bits of offset to put in r5)\n"
+      "  a=r 1 a== 5 if a=d a> "+itos(rb-1)+" if\n"
+      "    a=c a&= "+itos((1<<rb)-1)+" r=a 5            (save r in r5)\n"
+      "    a=c a>>= "+itos(rb)+" c=a\n"
+      "    a=d a-= "+itos(rb)+ " d=a\n"
+      "    a= 2 r=a 1                   (go to state 2)\n"
+      "  endif endif\n"
+      "\n";
+    pcomp+=
+    "  (if state==2 && n>=m) (expect m offset bits)\n"
+    "  a=r 1 a== 2 if a=r 3 a>d ifnot\n"
+    "    a=c r=a 6 a=d r=a 7          (save c=bits, d=n in r6,r7)\n"
+    "    b=r 3 a= 1 a<<=b d=a         (d=1<<m)\n"
+    "    a-- a&=c a+=d                (d=offset=bits&((1<<m)-1)|(1<<m))\n";
+    if (rb)
+      pcomp+=  // insert r into low bits of d
+      "    a<<= "+itos(rb)+" d=r 5 a+=d a-= "+itos((1<<rb)-1)+"\n";
+    pcomp+=
+    "    d=a b=r 4 a=b a-=d c=a       (c=p=(b=ptr)-offset)\n"
+    "\n"
+    "    (while len-- (copy and output match d bytes from *c to *b))\n"
+    "    d=r 2 do a=d a> 0 if d--\n"
+    "      a=*c *b=a c++ b++          (buf[ptr++]-buf[p++])\n";
+    if (!doe8) pcomp+=" out\n";
+    pcomp+=
+    "    forever endif\n"
+    "    a=b r=a 4\n"
+    "\n"
+    "    a=r 6 b=r 3 a>>=b c=a        (bits>>=m)\n"
+    "    a=r 7 a-=b d=a               (n-=m)\n"
+    "    a=0 r=a 1                    (state=0)\n"
+    "  endif endif\n"
+    "\n"
+    "  (while state==3 && n>=2 (expect literal length))\n"
+    "  do a=r 1 a== 3 if a=d a> 1 if\n"
+    "    a=c a&= 1 a== 1 if         (if bits&1)\n"
+    "      a=c a>>= 1 c=a              (bits>>=1)\n"
+    "      b=r 2 a&= 1 a+=b a+=b r=a 2 (len+=len+(bits&1))\n"
+    "      a=c a>>= 1 c=a              (bits>>=1)\n"
+    "      d-- d--                     (n-=2)\n"
+    "    else\n"
+    "      a=c a>>= 1 c=a              (bits>>=1)\n"
+    "      d--                         (--n)\n"
+    "      a= 4 r=a 1                  (state=4)\n"
+    "    endif\n"
+    "  forever endif endif\n"
+    "\n"
+    "  (if state==4 && n>=8 (expect len literals))\n"
+    "  a=r 1 a== 4 if a=d a> 7 if\n"
+    "    b=r 4 a=c *b=a\n";
+    if (!doe8) pcomp+=" out\n";
+    pcomp+=
+    "    b++ a=b r=a 4                 (buf[ptr++]=bits)\n"
+    "    a=c a>>= 8 c=a                (bits>>=8)\n"
+    "    a=d a-= 8 d=a                 (n-=8)\n"
+    "    a=r 2 a-- r=a 2 a== 0 if      (if --len<1)\n"
+    "      a=0 r=a 1                     (state=0)\n"
+    "    endif\n"
+    "  endif endif\n"
+    "  halt\n"
+    "end\n";
+  }
+
+  // Byte aligned LZ77, with or without E8E9
+  else if (level==2) {
+    hdr="comp 9 16 0 $1+20 ";
+    pcomp=
+    "pcomp lzpre c ;\n"
+    "  (Decode LZ77: d=state, M=output buffer, b=size)\n"
+    "  a> 255 if (at EOF decode e8e9 and output)\n";
+    if (doe8)
+      pcomp+=
+      "    d=b b=0 do (for b=0..d-1, d = end of buf)\n"
+      "      a=b a==d ifnot\n"
+      "        a+= 4 a<d if\n"
+      "          a=*b a&= 254 a== 232 if (e8 or e9?)\n"
+      "            c=b b++ b++ b++ b++ a=*b a++ a&= 254 a== 0 if (00 or ff)\n"
+      "              b-- a=*b\n"
+      "              b-- a<<= 8 a+=*b\n"
+      "              b-- a<<= 8 a+=*b\n"
+      "              a-=b a++\n"
+      "              *b=a a>>= 8 b++\n"
+      "              *b=a a>>= 8 b++\n"
+      "              *b=a b++\n"
+      "            endif\n"
+      "            b=c\n"
+      "          endif\n"
+      "        endif\n"
+      "        a=*b out b++\n"
+      "      forever\n"
+      "    endif\n";
+    pcomp+=
+    "    b=0 c=0 d=0 a=0 r=a 1 r=a 2 (reset state)\n"
+    "  halt\n"
+    "  endif\n"
+    "\n"
+    "  (in state d==0, expect a new code)\n"
+    "  (put length in r1 and inital part of offset in r2)\n"
+    "  c=a a=d a== 0 if\n"
+    "    a=c a>>= 6 a++ d=a\n"
+    "    a== 1 if (literal?)\n"
+    "      a+=c r=a 1 a=0 r=a 2\n"
+    "    else (3 to 5 byte match)\n"
+    "      d++ a=c a&= 63 a+= $3 r=a 1 a=0 r=a 2\n"
+    "    endif\n"
+    "  else\n"
+    "    a== 1 if (writing literal)\n"
+    "      a=c *b=a b++\n";
+    if (!doe8) pcomp+=" out\n";
+    pcomp+=
+    "      a=r 1 a-- a== 0 if d=0 endif r=a 1 (if (--len==0) state=0)\n"
+    "    else\n"
+    "      a> 2 if (reading offset)\n"
+    "        a=r 2 a<<= 8 a|=c r=a 2 d-- (off=off<<8|c, --state)\n"
+    "      else (state==2, write match)\n"
+    "        a=r 2 a<<= 8 a|=c c=a a=b a-=c a-- c=a (c=i-off-1)\n"
+    "        d=r 1 (d=len)\n"
+    "        do (copy and output d=len bytes)\n"
+    "          a=*c *b=a c++ b++\n";
+    if (!doe8) pcomp+=" out\n";
+    pcomp+=
+    "        d-- a=d a> 0 while\n"
+    "        (d=state=0. off, len don\'t matter)\n"
+    "      endif\n"
+    "    endif\n"
+    "  endif\n"
+    "  halt\n"
+    "end\n";
+  }
+
+  // BWT with or without E8E9
+  else if (level==3) {  // IBWT
+    hdr="comp 9 16 $1+20 $1+20 ";  // 2^$1 = block size in MB
+    pcomp=
+    "pcomp bwtrle c ;\n"
+    "\n"
+    "  (read BWT, index into M, size in b)\n"
+    "  a> 255 ifnot\n"
+    "    *b=a b++\n"
+    "\n"
+    "  (inverse BWT)\n"
+    "  elsel\n"
+    "\n"
+    "    (index in last 4 bytes, put in c and R1)\n"
+    "    b-- a=*b\n"
+    "    b-- a<<= 8 a+=*b\n"
+    "    b-- a<<= 8 a+=*b\n"
+    "    b-- a<<= 8 a+=*b c=a r=a 1\n"
+    "\n"
+    "    (save size in R2)\n"
+    "    a=b r=a 2\n"
+    "\n"
+    "    (count bytes in H[~1..~255, ~0])\n"
+    "    do\n"
+    "      a=b a> 0 if\n"
+    "        b-- a=*b a++ a&= 255 d=a d! *d++\n"
+    "      forever\n"
+    "    endif\n"
+    "\n"
+    "    (cumulative counts: H[~i=0..255] = count of bytes before i)\n"
+    "    d=0 d! *d= 1 a=0\n"
+    "    do\n"
+    "      a+=*d *d=a d--\n"
+    "    d<>a a! a> 255 a! d<>a until\n"
+    "\n"
+    "    (build first part of linked list in H[0..idx-1])\n"
+    "    b=0 do\n"
+    "      a=c a>b if\n"
+    "        d=*b d! *d++ d=*d d-- *d=b\n"
+    "      b++ forever\n"
+    "    endif\n"
+    "\n"
+    "    (rest of list in H[idx+1..n-1])\n"
+    "    b=c b++ c=r 2 do\n"
+    "      a=c a>b if\n"
+    "        d=*b d! *d++ d=*d d-- *d=b\n"
+    "      b++ forever\n"
+    "    endif\n"
+    "\n";
+    if (args[0]<=4) {  // faster IBWT list traversal limited to 16 MB blocks
+      pcomp+=
+      "    (copy M to low 8 bits of H to reduce cache misses in next loop)\n"
+      "    b=0 do\n"
+      "      a=c a>b if\n"
+      "        d=b a=*d a<<= 8 a+=*b *d=a\n"
+      "      b++ forever\n"
+      "    endif\n"
+      "\n"
+      "    (traverse list and output or copy to M)\n"
+      "    d=r 1 b=0 do\n"
+      "      a=d a== 0 ifnot\n"
+      "        a=*d a>>= 8 d=a\n";
+      if (doe8) pcomp+=" *b=*d b++\n";
+      else      pcomp+=" a=*d out\n";
+      pcomp+=
+      "      forever\n"
+      "    endif\n"
+      "\n";
+      if (doe8)  // IBWT+E8E9
+        pcomp+=
+        "    (e8e9 transform to out)\n"
+        "    d=b b=0 do (for b=0..d-1, d = end of buf)\n"
+        "      a=b a==d ifnot\n"
+        "        a+= 4 a<d if\n"
+        "          a=*b a&= 254 a== 232 if\n"
+        "            c=b b++ b++ b++ b++ a=*b a++ a&= 254 a== 0 if\n"
+        "              b-- a=*b\n"
+        "              b-- a<<= 8 a+=*b\n"
+        "              b-- a<<= 8 a+=*b\n"
+        "              a-=b a++\n"
+        "              *b=a a>>= 8 b++\n"
+        "              *b=a a>>= 8 b++\n"
+        "              *b=a b++\n"
+        "            endif\n"
+        "            b=c\n"
+        "          endif\n"
+        "        endif\n"
+        "        a=*b out b++\n"
+        "      forever\n"
+        "    endif\n";
+      pcomp+=
+      "  endif\n"
+      "  halt\n"
+      "end\n";
+    }
+    else {  // slower IBWT list traversal for all sized blocks
+      if (doe8) {  // E8E9 after IBWT
+        pcomp+=
+        "    (R2 = output size without EOS)\n"
+        "    a=r 2 a-- r=a 2\n"
+        "\n"
+        "    (traverse list (d = IBWT pointer) and output inverse e8e9)\n"
+        "    (C = offset = 0..R2-1)\n"
+        "    (R4 = last 4 bytes shifted in from MSB end)\n"
+        "    (R5 = temp pending output byte)\n"
+        "    c=0 d=r 1 do\n"
+        "      a=d a== 0 ifnot\n"
+        "        d=*d\n"
+        "\n"
+        "        (store byte in R4 and shift out to R5)\n"
+        "        b=d a=*b a<<= 24 b=a\n"
+        "        a=r 4 r=a 5 a>>= 8 a|=b r=a 4\n"
+        "\n"
+        "        (if E8|E9 xx xx xx 00|FF in R4:R5 then subtract c from x)\n"
+        "        a=c a> 3 if\n"
+        "          a=r 5 a&= 254 a== 232 if\n"
+        "            a=r 4 a>>= 24 b=a a++ a&= 254 a< 2 if\n"
+        "              a=r 4 a-=c a+= 4 a<<= 8 a>>= 8 \n"
+        "              b<>a a<<= 24 a+=b r=a 4\n"
+        "            endif\n"
+        "          endif\n"
+        "        endif\n"
+        "\n"
+        "        (output buffered byte)\n"
+        "        a=c a> 3 if a=r 5 out endif c++\n"
+        "\n"
+        "      forever\n"
+        "    endif\n"
+        "\n"
+        "    (output up to 4 pending bytes in R4)\n"
+        "    b=r 4\n"
+        "    a=c a> 3 a=b if out endif a>>= 8 b=a\n"
+        "    a=c a> 2 a=b if out endif a>>= 8 b=a\n"
+        "    a=c a> 1 a=b if out endif a>>= 8 b=a\n"
+        "    a=c a> 0 a=b if out endif\n"
+        "\n"
+        "  endif\n"
+        "  halt\n"
+        "end\n";
+      }
+      else {
+        pcomp+=
+        "    (traverse list and output)\n"
+        "    d=r 1 do\n"
+        "      a=d a== 0 ifnot\n"
+        "        d=*d\n"
+        "        b=d a=*b out\n"
+        "      forever\n"
+        "    endif\n"
+        "  endif\n"
+        "  halt\n"
+        "end\n";
+      }
+    }
+  }
+
+  // E8E9 or no preprocessing
+  else if (level==0) {
+    hdr="comp 9 16 0 0 ";
+    if (doe8) { // E8E9?
+      pcomp=
+      "pcomp e8e9 d ;\n"
+      "  a> 255 if\n"
+      "    a=c a> 4 if\n"
+      "      c= 4\n"
+      "    else\n"
+      "      a! a+= 5 a<<= 3 d=a a=b a>>=d b=a\n"
+      "    endif\n"
+      "    do a=c a> 0 if\n"
+      "      a=b out a>>= 8 b=a c--\n"
+      "    forever endif\n"
+      "  else\n"
+      "    *b=b a<<= 24 d=a a=b a>>= 8 a+=d b=a c++\n"
+      "    a=c a> 4 if\n"
+      "      a=*b out\n"
+      "      a&= 254 a== 232 if\n"
+      "        a=b a>>= 24 a++ a&= 254 a== 0 if\n"
+      "          a=b a>>= 24 a<<= 24 d=a\n"
+      "          a=b a-=c a+= 5\n"
+      "          a<<= 8 a>>= 8 a|=d b=a\n"
+      "        endif\n"
+      "      endif\n"
+      "    endif\n"
+      "  endif\n"
+      "  halt\n"
+      "end\n";
+    }
+    else
+      pcomp="end\n";
+  }
+  else
+    error("Unsupported method");
+  
+  // Build context model (comp, hcomp) assuming:
+  // H[0..254] = contexts
+  // H[255..511] = location of last byte i-255
+  // M = last 64K bytes, filling backward
+  // C = pointer to most recent byte
+  // R1 = level 2 lz77 1+bytes expected until next code, 0=init
+  // R2 = level 2 lz77 first byte of code
+  int ncomp=0;  // number of components
+  const int membits=args[0]+20;
+  int sb=5;  // bits in last context
+  std::string comp;
+  std::string hcomp="hcomp\n"
+    "c-- *c=a a+= 255 d=a *d=c\n";
+  if (level==2) {  // put level 2 lz77 parse state in R1, R2
+    hcomp+=
+    "  (decode lz77 into M. Codes:\n"
+    "  00xxxxxx = literal length xxxxxx+1\n"
+    "  xx......, xx > 0 = match with xx offset bytes to follow)\n"
+    "\n"
+    "  a=r 1 a== 0 if (init)\n"
+    "    a= "+itos(111+57*doe8)+" (skip post code)\n"
+    "  else a== 1 if  (new code?)\n"
+    "    a=*c r=a 2  (save code in R2)\n"
+    "    a> 63 if a>>= 6 a++ a++  (match)\n"
+    "    else a++ a++ endif  (literal)\n"
+    "  else (read rest of code)\n"
+    "    a--\n"
+    "  endif endif\n"
+    "  r=a 1  (R1 = 1+expected bytes to next code)\n";
+  }
+
+  // Generate the context model
+  while (*method && ncomp<254) {
+
+    // parse command C[N1[,N2]...] into v = {C, N1, N2...}
+    std::vector<int> v;
+    v.push_back(*method++);
+    if (isdigit(*method)) {
+      v.push_back(*method++-'0');
+      while (isdigit(*method) || *method==',' || *method=='.') {
+        if (isdigit(*method))
+          v.back()=v.back()*10+*method++-'0';
+        else {
+          v.push_back(0);
+          ++method;
+        }
+      }
+    }
+
+    // c: context model
+    // N1%1000: 0=ICM 1..256=CM limit N1-1
+    // N1/1000: number of times to halve memory
+    // N2: 1..255=offset mod N2. 1000..1255=distance to N2-1000
+    // N3...: 0..255=byte mask + 256=lz77 state. 1000+=run of N3-1000 zeros.
+    if (v[0]=='c') {
+      while (v.size()<3) v.push_back(0);
+      comp+=itos(ncomp)+" ";
+      sb=11;  // count context bits
+      if (v[2]<256) sb+=lg(v[2]);
+      else sb+=6;
+      for (unsigned i=3; i<v.size(); ++i)
+        if (v[i]<512) sb+=nbits(v[i])*3/4;
+      if (sb>membits) sb=membits;
+      if (v[1]%1000==0) comp+="icm "+itos(sb-6-v[1]/1000)+"\n";
+      else comp+="cm "+itos(sb-2-v[1]/1000)+" "+itos(v[1]%1000-1)+"\n";
+
+      // special contexts
+      hcomp+="d= "+itos(ncomp)+" *d=0\n";
+      if (v[2]>1 && v[2]<=255) {  // periodic context
+        if (lg(v[2])!=lg(v[2]-1))
+          hcomp+="a=c a&= "+itos(v[2]-1)+" hashd\n";
+        else
+          hcomp+="a=c a%= "+itos(v[2])+" hashd\n";
+      }
+      else if (v[2]>=1000 && v[2]<=1255)  // distance context
+        hcomp+="a= 255 a+= "+itos(v[2]-1000)+
+               " d=a a=*d a-=c a> 255 if a= 255 endif d= "+
+               itos(ncomp)+" hashd\n";
+
+      // Masked context
+      for (unsigned i=3; i<v.size(); ++i) {
+        if (i==3) hcomp+="b=c ";
+        if (v[i]==255)
+          hcomp+="a=*b hashd\n";  // ordinary byte
+        else if (v[i]>0 && v[i]<255)
+          hcomp+="a=*b a&= "+itos(v[i])+" hashd\n";  // masked byte
+        else if (v[i]>=256 && v[i]<512) { // lz77 state or masked literal byte
+          hcomp+=
+          "a=r 1 a> 1 if\n"  // expect literal or offset
+          "  a=r 2 a< 64 if\n"  // expect literal
+          "    a=*b ";
+          if (v[i]<511) hcomp+="a&= "+itos(v[i]-256);
+          hcomp+=" hashd\n"
+          "  else\n"  // expect match offset byte
+          "    a>>= 6 hashd a=r 1 hashd\n"
+          "  endif\n"
+          "else\n"  // expect new code
+          "  a= 255 hashd a=r 2 hashd\n"
+          "endif\n";
+        }
+        else if (v[i]>=1256)  // skip v[i]-1000 bytes
+          hcomp+="a= "+itos(((v[i]-1000)>>8)&255)+" a<<= 8 a+= "
+               +itos((v[i]-1000)&255)+
+          " a+=b b=a\n";
+        else if (v[i]>1000)
+          hcomp+="a= "+itos(v[i]-1000)+" a+=b b=a\n";
+        if (v[i]<512 && i<v.size()-1)
+          hcomp+="b++ ";
+      }
+      ++ncomp;
+    }
+
+    // m,8,24: MIX, size, rate
+    // t,8,24: MIX2, size, rate
+    // s,8,32,255: SSE, size, start, limit
+    if (strchr("mts", v[0]) && ncomp>int(v[0]=='t')) {
+      if (v.size()<=1) v.push_back(8);
+      if (v.size()<=2) v.push_back(24+8*(v[0]=='s'));
+      if (v[0]=='s' && v.size()<=3) v.push_back(255);
+      comp+=itos(ncomp);
+      sb=5+v[1]*3/4;
+      if (v[0]=='m')
+        comp+=" mix "+itos(v[1])+" 0 "+itos(ncomp)+" "+itos(v[2])+" 255\n";
+      else if (v[0]=='t')
+        comp+=" mix2 "+itos(v[1])+" "+itos(ncomp-1)+" "+itos(ncomp-2)
+            +" "+itos(v[2])+" 255\n";
+      else // s
+        comp+=" sse "+itos(v[1])+" "+itos(ncomp-1)+" "+itos(v[2])+" "
+            +itos(v[3])+"\n";
+      if (v[1]>8) {
+        hcomp+="d= "+itos(ncomp)+" *d=0 b=c a=0\n";
+        for (; v[1]>=16; v[1]-=8) {
+          hcomp+="a<<= 8 a+=*b";
+          if (v[1]>16) hcomp+=" b++";
+          hcomp+="\n";
+        }
+        if (v[1]>8)
+          hcomp+="a<<= 8 a+=*b a>>= "+itos(16-v[1])+"\n";
+        hcomp+="a<<= 8 *d=a\n";
+      }
+      ++ncomp;
+    }
+
+    // i: ISSE chain with order increasing by N1,N2...
+    if (v[0]=='i' && ncomp>0) {
+      assert(sb>=5);
+      hcomp+="d= "+itos(ncomp-1)+" b=c a=*d d++\n";
+      for (unsigned i=1; i<v.size() && ncomp<254; ++i) {
+        for (int j=0; j<v[i]%10; ++j) {
+          hcomp+="hash ";
+          if (i<v.size()-1 || j<v[i]%10-1) hcomp+="b++ ";
+          sb+=6;
+        }
+        hcomp+="*d=a";
+        if (i<v.size()-1) hcomp+=" d++";
+        hcomp+="\n";
+        if (sb>membits) sb=membits;
+        comp+=itos(ncomp)+" isse "+itos(sb-6-v[i]/10)+" "+itos(ncomp-1)+"\n";
+        ++ncomp;
+      }
+    }
+
+    // a24,0,0: MATCH. N1=hash multiplier. N2,N3=halve buf, table.
+    if (v[0]=='a') {
+      if (v.size()<=1) v.push_back(24);
+      while (v.size()<4) v.push_back(0);
+      comp+=itos(ncomp)+" match "+itos(membits-v[3]-2)+" "
+          +itos(membits-v[2])+"\n";
+      hcomp+="d= "+itos(ncomp)+" a=*d a*= "+itos(v[1])
+           +" a+=*c a++ *d=a\n";
+      sb=5+(membits-v[2])*3/4;
+      ++ncomp;
+    }
+
+    // w1,65,26,223,20,0: ICM-ISSE chain of length N1 with word contexts,
+    // where a word is a sequence of c such that c&N4 is in N2..N2+N3-1.
+    // Word is hashed by: hash := hash*N5+c+1
+    // Decrease memory by 2^-N6.
+    if (v[0]=='w') {
+      if (v.size()<=1) v.push_back(1);
+      if (v.size()<=2) v.push_back(65);
+      if (v.size()<=3) v.push_back(26);
+      if (v.size()<=4) v.push_back(223);
+      if (v.size()<=5) v.push_back(20);
+      if (v.size()<=6) v.push_back(0);
+      comp+=itos(ncomp)+" icm "+itos(membits-6-v[6])+"\n";
+      for (int i=1; i<v[1]; ++i)
+        comp+=itos(ncomp+i)+" isse "+itos(membits-6-v[6])+" "
+            +itos(ncomp+i-1)+"\n";
+      hcomp+="a=*c a&= "+itos(v[4])+" a-= "+itos(v[2])+" a&= 255 a< "
+           +itos(v[3])+" if\n";
+      for (int i=0; i<v[1]; ++i) {
+        if (i==0) hcomp+="  d= "+itos(ncomp);
+        else hcomp+="  d++";
+        hcomp+=" a=*d a*= "+itos(v[5])+" a+=*c a++ *d=a\n";
+      }
+      hcomp+="else\n";
+      for (int i=v[1]-1; i>0; --i)
+        hcomp+="  d= "+itos(ncomp+i-1)+" a=*d d++ *d=a\n";
+      hcomp+="  d= "+itos(ncomp)+" *d=0\n"
+           "endif\n";
+      ncomp+=v[1]-1;
+      sb=membits-v[6];
+      ++ncomp;
+    }
+  }
+  return hdr+itos(ncomp)+"\n"+comp+hcomp+"halt\n"+pcomp;
+}
+
+// Compress from in to out in 1 segment in 1 block using the algorithm
+// descried in method. If method begins with a digit then choose
+// a method depending on type. Save filename and comment
+// in the segment header. If comment is 0 then the default is the input size
+// as a decimal string, plus " jDC\x01" for a journaling method (method[0]
+// is not 's'). Write the generated method to methodOut if not 0.
+void compressBlock(StringBuffer* in, Writer* out, const char* method_,
+                   const char* filename, const char* comment, bool dosha1) {
+  assert(in);
+  assert(out);
+  assert(method_);
+  assert(method_[0]);
+  std::string method=method_;
+  const unsigned n=in->size();  // input size
+  const int arg0=MAX(lg(n+4095)-20, 0);  // block size
+  assert((1u<<(arg0+20))>=n+4096);
+
+  // Get type from method "LB,R,t" where L is level 0..5, B is block
+  // size 0..11, R is redundancy 0..255, t = 0..3 = binary, text, exe, both.
+  unsigned type=0;
+  if (isdigit(method[0])) {
+    int commas=0, arg[4]={0};
+    for (int i=1; i<int(method.size()) && commas<4; ++i) {
+      if (method[i]==',' || method[i]=='.') ++commas;
+      else if (isdigit(method[i])) arg[commas]=arg[commas]*10+method[i]-'0';
+    }
+    if (commas==0) type=512;
+    else type=arg[1]*4+arg[2];
+  }
+
+  // Get hash of input
+  libzpaq::SHA1 sha1;
+  const char* sha1ptr=0;
+#ifdef DEBUG
+  if (true) {
+#else
+  if (dosha1) {
+#endif
+    sha1.write(in->c_str(), n);
+    sha1ptr=sha1.result();
+  }
+
+  // Expand default methods
+  if (isdigit(method[0])) {
+    const int level=method[0]-'0';
+    assert(level>=0 && level<=9);
+
+    // build models
+    const int doe8=(type&2)*2;
+    method="x"+itos(arg0);
+    std::string htsz=","+itos(19+arg0+(arg0<=6));  // lz77 hash table size
+    std::string sasz=","+itos(21+arg0);            // lz77 suffix array size
+
+    // store uncompressed
+    if (level==0)
+      method="0"+itos(arg0)+",0";
+
+    // LZ77, no model. Store if hard to compress
+    else if (level==1) {
+      if (type<40) method+=",0";
+      else {
+        method+=","+itos(1+doe8)+",";
+        if      (type<80)  method+="4,0,1,15";
+        else if (type<128) method+="4,0,2,16";
+        else if (type<256) method+="4,0,2"+htsz;
+        else if (type<960) method+="5,0,3"+htsz;
+        else               method+="6,0,3"+htsz;
+      }
+    }
+
+    // LZ77 with longer search
+    else if (level==2) {
+      if (type<32) method+=",0";
+      else {
+        method+=","+itos(1+doe8)+",";
+        if (type<64) method+="4,0,3"+htsz;
+        else method+="4,0,7"+sasz+",1";
+      }
+    }
+
+    // LZ77 with CM depending on redundancy
+    else if (level==3) {
+      if (type<20)  // store if not compressible
+        method+=",0";
+      else if (type<48)  // fast LZ77 if barely compressible
+        method+=","+itos(1+doe8)+",4,0,3"+htsz;
+      else if (type>=640 || (type&1))  // BWT if text or highly compressible
+        method+=","+itos(3+doe8)+"ci1";
+      else  // LZ77 with O0-1 compression of up to 12 literals
+        method+=","+itos(2+doe8)+",12,0,7"+sasz+",1c0,0,511i2";
+    }
+
+    // LZ77+CM, fast CM, or BWT depending on type
+    else if (level==4) {
+      if (type<12)
+        method+=",0";
+      else if (type<24)
+        method+=","+itos(1+doe8)+",4,0,3"+htsz;
+      else if (type<48)
+        method+=","+itos(2+doe8)+",5,0,7"+sasz+"1c0,0,511";
+      else if (type<900) {
+        method+=","+itos(doe8)+"ci1,1,1,1,2a";
+        if (type&1) method+="w";
+        method+="m";
+      }
+      else
+        method+=","+itos(3+doe8)+"ci1";
+    }
+
+    // Slow CM with lots of models
+    else {  // 5..9
+
+      // Model text files
+      method+=","+itos(doe8);
+      if (type&1) method+="w2c0,1010,255i1";
+      else method+="w1i1";
+      method+="c256ci1,1,1,1,1,1,2a";
+
+      // Analyze the data
+      const int NR=1<<12;
+      int pt[256]={0};  // position of last occurrence
+      int r[NR]={0};    // count repetition gaps of length r
+      const unsigned char* p=in->data();
+      if (level>0) {
+        for (unsigned i=0; i<n; ++i) {
+          const int k=i-pt[p[i]];
+          if (k>0 && k<NR) ++r[k];
+          pt[p[i]]=i;
+        }
+      }
+
+      // Add periodic models
+      int n1=n-r[1]-r[2]-r[3];
+      for (int i=0; i<2; ++i) {
+        int period=0;
+        double score=0;
+        int t=0;
+        for (int j=5; j<NR && t<n1; ++j) {
+          const double s=r[j]/(256.0+n1-t);
+          if (s>score) score=s, period=j;
+          t+=r[j];
+        }
+        if (period>4 && score>0.1) {
+          method+="c0,0,"+itos(999+period)+",255i1";
+          if (period<=255)
+            method+="c0,"+itos(period)+"i1";
+          n1-=r[period];
+          r[period]=0;
+        }
+        else
+          break;
+      }
+      method+="c0,2,0,255i1c0,3,0,0,255i1c0,4,0,0,0,255i1mm16ts19t0";
+    }
+  }
+
+  // Compress
+  std::string config;
+  int args[9]={0};
+  config=makeConfig(method.c_str(), args);
+  assert(n<=(0x100000u<<args[0])-4096);
+  libzpaq::Compressor co;
+  co.setOutput(out);
+#ifdef DEBUG
+  co.setVerify(true);
+#endif
+  StringBuffer pcomp_cmd;
+  co.writeTag();
+  co.startBlock(config.c_str(), args, &pcomp_cmd);
+  std::string cs=itos(n);
+  if (comment) cs=cs+" "+comment;
+  co.startSegment(filename, cs.c_str());
+  if (args[1]>=1 && args[1]<=7 && args[1]!=4) {  // LZ77 or BWT
+    LZBuffer lz(*in, args);
+    co.setInput(&lz);
+    co.compress();
+  }
+  else {  // compress with e8e9 or no preprocessing
+    if (args[1]>=4 && args[1]<=7)
+      e8e9(in->data(), in->size());
+    co.setInput(in);
+    co.compress();
+  }
+#ifdef DEBUG  // verify pre-post processing are inverses
+  int64_t outsize;
+  const char* sha1result=co.endSegmentChecksum(&outsize, dosha1);
+  assert(sha1result);
+  assert(sha1ptr);
+  if (memcmp(sha1result, sha1ptr, 20)!=0)
+    error("Pre/post-processor test failed");
+#else
+  co.endSegment(sha1ptr);
+#endif
+  co.endBlock();
 }
 
 }  // end namespace libzpaq

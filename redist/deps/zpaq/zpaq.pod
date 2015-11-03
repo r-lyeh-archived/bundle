@@ -1,0 +1,570 @@
+#   zpaq.pod - zpaq v7.04 man page source
+#
+#   Copyright
+#
+#       Released to public domain by Matt Mahoney in 2015.
+#
+#   Description
+#
+#	To learn what TOP LEVEL section to use in manual pages,
+#	see POSIX/Susv standard and "Utility Description Defaults" at
+#	http://www.opengroup.org/onlinepubs/009695399/utilities/xcu_chap01.html#tag_01_11
+#
+#	This is manual page in Perl POD format. Read more at
+#	http://perldoc.perl.org/perlpod.html or run command:
+#
+#	    perldoc perlpod | less
+#
+#	To check the syntax:
+#
+#	    podchecker *.pod
+#
+#	Create manual page with command:
+#
+#	    pod2man PAGE.N.pod > PAGE.N
+
+=pod
+
+=head1 NAME
+
+zpaq - Journaling archiver for incremental backups.
+
+=head1 SYNOPSIS
+
+zpaq I<command> I<archive>[C<.zpaq>] [I<files>]... [-I<options>]...
+
+=head1 DESCRIPTION
+
+I<zpaq> manages journaling archives for incremental user-level backups
+that conform to I<The ZPAQ Open Standard Format for Highly Compressed Data>
+(see I<AVAILABILITY>). The format supports encrypted, deduplicated, and
+compressed archives with rollback capability.
+It supports archives as large as 1000 times available memory or up to
+250 TB and 4 billion files, interoperable between Windows
+and Unix/Linux/OS X.
+
+A ZPAQ journaling archive is a sequence of timestamped updates,
+each listing the files and directories that have been added, changed, or
+deleted since the previous transacted update, normally based on changes to the
+last-modified dates. Each new or modified file is first deduplicated
+by splitting into fragments along
+content-dependent boundaries determined by a rolling hash function.
+The fragment SHA-1 hashes are computed and compared with previously stored
+fragments. Unmatched fragments are then grouped by file type and
+packed into blocks which are compressed or decompressed independently
+in parallel by separate threads. The fragment sizes and hashes and the file
+names with their
+last-modified dates, attributes, and fragment pointer lists are stored
+in a separate index at the end of each update, allowing this information
+to be read quickly in large archives by skipping over the data blocks.
+
+Blocks are compressed using LZ77, BWT, or context
+mixing with filters, depending on the compression level selected and on
+statistics collected during fragmentation. Already compressed data is
+detected and stored without further compression.
+The decompression algorithms are saved in the block
+headers using a sandboxed
+virtual machine language called ZPAQL. This allows older versions of C<zpaq>
+to read archives produced by newer versions when improved compression
+algorithms are developed. On x86 and x86-64 hardware, ZPAQL is translated
+into machine code and executed as an optimization.
+On other hardware, it is interpreted.
+
+To support remote backups, archives may be split into separate updates
+plus a small, local index file containing a copy of the history of
+file names, dates, and fragment hashes, but without any compressed data.
+If the archive is moved offsite,
+then you can still list, compare, and create updates with just the index.
+
+Archives are divided into blocks protected by scannable headers, SHA-1
+hashes, and redundant copies of fragment size lists to detect damage and
+allow partial recovery. Updates are transacted so they can be interrupted
+safely. No temporary files are created.
+
+Archives may be encrypted with AES-256 in CTR mode, providing
+secrecy but not tamper resistance. The key is strengthened by
+Scrypt(SHA-256(password), salt, N=16384, r=8, p=1) using
+a 32 byte random salt that is prefixed to the archive. This slows
+down brute force password searches by requiring over 206 million
+32-bit operations and 16 MiB memory per test. Multi-part archives
+are encrypted with a single keystream as if concatenated. The index,
+if present, is encrypted with the same password but a different
+salt and keystream.
+
+=head1 COMMANDS
+
+I<command> is one of C<add>, C<extract>, C<list>, or C<test>.
+Commands may be abbreviated to one letter.
+
+I<archive> is assumed to have a C<.zpaq> extension if no extension is
+specified. Wildcards C<*> or C<?> in I<archive> specify a multi-part archive
+to support remote backups. C<*> and C<?> are replaced with part numbers
+or single digits of the part number, respectively. Parts 1
+and higher are interpreted as if they were concatenated in consecutive
+numerical order. Part 0 is an optional index containing a copy of the archive
+except for file contents. For example, C<part??> would refer
+to C<part00.zpaq> (index), C<part01.zpaq> (first update), C<part02.zpaq>
+(second update), etc. The index is only needed if the other parts
+are removed. Otherwise it is ignored.
+
+=over
+
+=item a
+
+=item add
+
+Append changes in I<files> to I<archive>, or create I<archive> if it does not
+exist. I<files> is a list of file and directory names separated by spaces. If a
+name is a directory, then it recursively includes all
+files and subdirectories within. In Windows, I<files> may contain
+wildcards C<*> and C<?> in the last component of the path (after the last slash).
+C<*> matches any string and C<?> matches any character. In Unix/Linux, wildcards
+are expanded by the shell, which has the same effect.
+
+A change is an addition, update, or deletion of any file or directory in
+I<files> or any of its subdirectories to any depth. A file or directory is
+considered changed if its size or last-modified date (with 1 second resolution),
+or Windows attributes or Unix/Linux permissions (if saved) and
+differ between the internal
+and external versions. File contents are not compared. If the attributes
+but not the date has changed, then the attributes are updated in the
+archive with the assumption that the file contents have not changed.
+
+For each added or updated file or directory, the following information is saved
+in the archive: the compressed contents, the file or directory name as it
+appears in I<files> plus any trailing path, the last-modified
+date with 1 second resolution, and the Unix/Linux permissions or Windows
+attributes. Other metadata such as owner, group, ACLs,
+last access time, etc. are not saved. Symbolic links are not saved or followed.
+Hard links are followed as if they were ordinary files. Special file types
+such as devices, named pipes, and named sockets are not saved.
+The 64 bit Windows version will save alternate data streams.
+
+If any file cannot be read (e.g. permission denied), then it is skipped and
+an error is reported. However, other files are still added and the update
+is still valid.
+
+Updates are transacted. If C<zpaq> is interrupted before completing
+the update, then the partially appended data is ignored and overwritten on the
+next update. This is accomplished by first appending a temporary update header,
+appending the compressed data and index, then updating the header as the
+last step.
+
+If I<archive>
+contains wildcards indicating a multi-part archive, then C<zpaq> will create
+a new part using the next available part number starting with 1.
+If an index (part 0) is present, then it is also checked for consistency (number
+of versions and archive size) and updated. An index is created only if
+part 1 is also created. Thus, if you do not intend to move the archive parts
+to a remote server then you may safely delete the index and it will not
+be re-created.
+
+If the index is present but part 1 is not, then it is assumed that all
+of the parts have been moved.
+The number of versions in the index is counted and a new part is created
+using the next available version number, and the index is updated.
+In Unix/Linux, wildcards must be quoted or escaped to protect them from
+the shell.
+
+If I<archive> is C<""> (a quoted empty string), then C<zpaq> compresses
+I<files> as if creating a new archive, but discards the output without
+writing to disk.
+
+As the archive is updated, the program will report the percent complete, estimated
+time remaining, the name and size of the file preceded by C<+> if the file
+is being added, C<#> if updated, or C<-> if deleted. If the file
+is deduplicated, then the new size after deduplication but before
+compression is shown.
+
+As each block is compressed, the program reports the range of fragments,
+input block size, and complete compression method like 
+C<-method 14,179,1>,
+where the first number is the level and block size, the second number
+is the estimated compressibility (0..255, where 0 means random),
+and the third is the detected type (1 for text, 2 for x86, 3 for both,
+or 0 for neither).
+
+=item e
+
+=item x
+
+=item extract I<archive>
+
+Extract I<files> (including the contents of directories), or extract
+the whole archive contents if I<files> is omitted.
+The file names, last-modified date,
+and permissions or attributes are set as saved in the archive.
+If there are multiple versions of a file stored, then only the latest
+version is extracted. If a stored file has been marked as deleted,
+then it is not extracted.
+
+Existing files are skipped without being overwritten. (Use C<-force>
+to overwrite).
+
+As files are extracted, the fragment SHA-1 hashes are computed and compared
+with the stored hashes. The program reports an error in case of mismatches.
+Blocks are only decompressed up to the last used fragment. Thus, the block
+SHA-1 hash is not normally checked.
+If the archive is damaged, then C<zpaq> will extract as much as possible
+from the undamaged blocks.
+
+As files are extracted, the program reports the percent completed,
+estimated time remaining, and the name of the file preceded by ">"
+if the file is created or overwritten (with C<-force>), C<?> if
+the file is skipped because it already exists, or C<=> if decompression is
+skipped with C<-force> because the contents were compared and
+found to be identical. The date and attributes are still
+extracted in this case.
+
+=item l
+
+=item list I<archive>
+
+List the archive contents. With I<files>, list only the specified
+files and directories and compare them with files on disk.
+For each file or directory, show the comparison result,
+last modified date, uncompressed size,
+Windows attributes or Unix/Linux permissions,
+and the saved name. If the internal and external
+versions of the file differ, then show both.
+
+The comparison result is reported in the first column as C<=> if the
+last-modified date, attributes (if saved), and size are identical,
+C<#> if different, C<-> if the external file does not exist, or
+C<+> if the internal file does not exist. With C<-force>, the
+contents are compared, but not the dates or attributes. Contents
+are compared by reading the files, computing SHA-1 hashes and comparing
+with the stored hashes. In either
+case, replacing C<list> with C<add> will show exactly what changes
+would be made to the archive.
+
+In Unix/Linux, permissions are listed as a file type C<d> for directory
+or blank for a regular file, followed by a 4 digit octal number as
+per C<chmod(1)>. In Windows, attributes are listed from the set
+C<RHS DAdFTprCoIEivs> where the character is present if
+the corresponding bit 0..17 is set as returned by GetFileAttributes().
+The meanings are as follows: C<R>ead-only, C<H>idden,
+C<S>ystem, unused (blank), C<D>irectory, C<A>rchive, C<d>evice,
+normal C<F>ile, C<T>emporary, sC<p>arse file, C<r>eparse point,
+C<C>ompressed, C<o>ffline, not content C<I>indexed, C<E>ncrypted,
+C<i>ntegrity stream, C<v>irtual, no C<s>crub data.
+
+If I<archive> is multi-part (like C<part??.zpaq>), then parts 1 and higher
+are listed, ignoring the index. To list the index (C<part00.zpaq>),
+specify the index file (like C<zpaq list part00>). This should give the same
+result if the index is correct.
+
+I<archive> may be "", which is equivalent to comparing with an empty
+archive.
+
+=back
+
+=head1 OPTIONS
+
+Options may be abbreviated as long as it is not ambiguous.
+
+=over
+
+=item -all [I<N>]
+
+With C<list>, list all saved versions and not just the latest version,
+including versions where the file is marked as deleted. Each version
+is shown in a separate numbered directory beginning with C<0001/>.
+Absolute paths are first converted to relative paths. In Windows, the C<:>
+on the drive letter is removed. For example, C<foo> and C</foo> are
+shown as C<0001/foo>. C<C:/foo> and C<C:foo> are shown as C<0001/C/foo>.
+
+The date shown on the root directory of each version is the date of the
+update. The root directory listing also shows the number of updates
+and deletions in that version and the compressed size. 
+
+When a file is deleted, it is shown with the dates and attributes
+blank with size 0. 
+
+With C<extract>, extract the files in each version as shown with C<list -all>.
+
+I<N> selects the number of digits in the directory name. The default is 4.
+More digits will be used when necessary. For example:
+
+    zpaq list archive -all 2 -not ??/?*
+
+will show the dates when the archive was updated as C<01/>, C<02/>,
+etc. but not their contents.
+
+=item -force
+
+With C<add>, attempt to add files even if the last-modified date has
+not changed. Files are added only if they really are different, based
+on comparing the computed and stored SHA-1 hashes
+
+With C<extract>, overwrite existing output files. If the
+contents differ (tested by comparing SHA-1 hashes), then the file is
+decompressed and extracted. If the dates or attributes/permissions
+differ, then they are set to match those stored in the archive.
+
+With C<list>, compare files by computing SHA-1 fragment hashes
+and comparing with stored hashes. Ignore differences in dates and
+attributes.
+
+=item -fragment I<N>
+
+Set the dedupe fragment size range from 64 2^I<N> to 8128 2^I<N>
+bytes with an average size of 1024 2^I<N> bytes. The default is 6
+(range 4096..520192, average 65536). Smaller fragment sizes can
+improve compression through deduplication of similar files, but
+require more memory and more overhead. Each fragment adds about 28 bytes
+to the archive and requires about 40 bytes of memory. For the default,
+this is less than 0.1% of the archive size.
+
+Values other than 6 conform to the ZPAQ specification and will decompress
+correctly by all versions, but do not conform to the recommendation
+for best deduplication. Adding identical files with different values
+of I<N> will not deduplicate because the fragment boundaries will differ.
+C<list -summary> will not identify these files as identical for
+the same reason.
+
+=item -key [I<password>]
+
+This option is required for all commands operating on an encrypted archive.
+When creating a new archive with C<add>, the new archive will be encrypted
+with I<password> and all subsequent operations will require the same
+password. A password may contain multiple words separated by single spaces
+provided no word begins with "-" indicating the start of the next option.
+
+If I<password> is omitted then C<zpaq> will prompt for it without echoing
+to the screen. When creating a new archive, it will prompt until
+the same password is entered twice in a row.
+
+An archive is encrypted with AES-256 in CTR mode. The password is
+strengthened using Scrypt(SHA-256(password), salt, N=16384, r=8, p=1).
+When creating a new archive, a 32 byte salt is generated
+using CryptGenRandom() in Windows or from /dev/urandom in Unix/Linux,
+such that the first byte is different from the normal header
+of an unencrypted archive (C<z> or C<7>). A multi-part archive
+is encrypted with a single keystream as if the parts were concatenated.
+The index is encrypted with the same password, where the first byte
+of the salt is modified by XOR with ('z' XOR '7').
+
+=item -method I<level>[I<blocksize>]
+
+With C<add>, select a compression level (0..5 or i) and optionally, a
+block size (0..11). The two numbers are written together. The
+default is C<-method 14> selecting level 1 and block size 4.
+For levels 2 and higher, the default I<blocksize> is 6.
+
+I<level> selects the compression ratio where higher numbers
+compress better but slower. Level 0 means to deduplicate with no
+further compression. Level 2 compresses slower but decompresses
+just as fast as 1. It is recommended for archives that will be
+compressed once and decompressed often. Level 1 is best for backups,
+which are compressed often but decompressed rarely. Levels 3 and
+higher compress and decompress slower.
+
+Files are compressed by splitting into fragments and packed into
+blocks of at most 2^I<blocksize> MiB. Blocks are compressed and
+decompressed in parallel by separate threads. Larger blocks
+compress better but require more memory and may be slower because
+there may be fewer blocks than threads. The recommended available
+memory is 8 times the block size per thread for levels up to 4 and 16 times
+block size per thread for level 5.
+
+If the level is C<i>, then create or update an index. An index stores
+a history of file names, dates, attributes, and fragment hashes, but
+no compressed data. It is like the index of a multi-part archive, but
+without the other parts. It is an error to update a regular archive
+with C<-method i>, or an index with a method other than C<i>.
+
+=item -noattributes
+
+With C<add>, do not save Windows attributes or Unix/Linux permissions
+to the archive. With <extract>, ignore the saved values and extract using
+default values. With C<list>, do not list or compare attributes.
+
+=item -nodelete
+
+With C<add>, do not mark files in the archive as deleted when the
+corresponding external file does not exist. This makes C<zpaq>
+consistent with the behavior of most non-journaling archivers.
+
+=item -not [I<file>]...
+
+=item -not =[#+-?^]...
+
+In the first form, do not add, extract, or list files that match any I<file>
+by name. I<file> may contain
+wildcards C<*> and C<?> that match any string or character respectively,
+including C</>. A match to a directory also matches all of
+its contents. In Windows, matches are not case sensitive, and C<\>
+matches C</>. In Unix/Linux, arguments with wildcards must be quoted
+to protect them from the shell.
+
+When comparing with C<list> I<files>, C<-not => means do not list identical
+files. Additonally it is possible to suppress listing of
+differences with C<#>, missing external files with C<->, missing
+internal files with C<+>, and duplicates (C<list -summary>) with C<^>.
+
+=item -only I<file>...
+
+Do not add, extract, or list any files unless they match
+at least one argument. The rules for matching wildcards are the
+same as C<-not>. The default is C<*> which matches everything.
+
+=item -summary [I<N>]
+
+With C<list>, sort by decreasing size and show only the N (default 20)
+largest files and directories. Label duplicates of the previous
+file with C<^>. A file is a duplicate if its contents are identical
+(based on stored hashes)
+although the name, dates, and attributes may differ. If I<files>
+is specified, then these are included in the listing but not compared
+with internal files or each other.
+Internal and external files are labeled with C<-> and C<+> respectively.
+
+With C<add> and C<extract>, show percent completed and estimated
+time remaining on a 1 line display, but do not list files as they are
+added or extracted. I<N> has no effect.
+
+=item -test
+
+With C<add> and C<extract>, do not write to disk, but perform all
+other operations normally. C<add> will report the compressed size and
+time, but not update the archive. C<extract> will decompress, compute
+the SHA-1 hashes of the output, report if it differs from the stored
+value, but not compare, create or update any files.
+
+=item -threads I<N>
+
+Add or extract at most I<N> blocks in parallel. The default
+is the number of processor cores, except not more than 2 when when C<zpaq>
+is compiled to 32-bit code. Selecting fewer threads will reduce memory
+usage but run slower. Selecting more threads than cores does not help.
+
+=item -to I<name>...
+
+With C<add> and C<list> rename external I<files> to respective
+internal I<names>. With C<extract>, rename internal I<files>
+to external I<names>. When I<files> is empty, prefix the extracted
+files with the first name> in I<names>, inserting C</> if needed
+and removing C<:> from drive letters. For example:
+
+    zpaq extract archive file dir -to newfile newdir
+
+extracts C<file> as C<newfile> and C<dir> as C<newdir>.
+
+    zpaq extract archive -to tmp
+
+will extract C<foo> or C</foo> as C<tmp/foo> and extract C<C:/foo>
+or C<C:foo> as C<tmp/C/foo>.
+
+    zpaq add archive dir -to newdir
+
+will save C<dir/file> as C<newdir/file>, and so on.
+
+    zpaq list archive dir -to newdir
+
+will compare external C<dir> with internal C<newdir>.
+
+The C<-only> and C<-not> options apply prior to renaming.
+
+=item -until I<date> | [-]I<version>
+
+Ignore any part of the archive updated after I<date> or after I<version>
+updates or -I<version>s from the end if negative.
+Additionally, C<add> will truncate the archive at
+this point before appending the next update. When a date is specified,
+the update will be timestamped with I<date> rather than the current date.
+
+A date is specified as a 4 digit year (1900 to 2999), 2 digit month (01 to 12),
+2 digit day (01 to 31), optional 2 digit hour (00 to 23, default 23),
+optional 2 digit minute (00 to 59, default 59), and optional 2 digit
+seconds (00 to 59, default 59). Dates and times are always universal
+time zone (UT), not local time. Numbers up to 9999999 are interpreted
+as version numbers rather than dates. Dates may contain spaces and
+punctuation characters for readability but are ignored. For example:
+
+    zpaq list backup -until 3
+
+shows the archive as it existed after the first 3 updates.
+
+    zpaq add backup files -until 2014/04/30 11:30
+
+truncates any data added after April 30, 2014 at 11:30:59 universal time,
+then appends the update as if this were the current time. (It does
+not matter if any files are dated in the future).
+
+    zpaq add backup files -until 0
+
+deletes backup.zpaq and creates a new archive.
+
+With comparing two archives, C<-until> rolls back both archives to
+the indicated date or version. If the version is negative, it means
+the number of versions from the end of the first archive.
+
+If an archive contains a mix of file compressed in journaling and
+streaming format (C<-method s>...), then any streaming files are
+considered to be part of the previous journaling update.
+
+Truncating and appending an encrypted archive with C<add -until>
+(even C<-until 0>)
+does not change the salt or keystream. Thus, it is possible for an attacker
+with the old and new versions to obtain the XOR of the trailing
+plaintexts without a password. If this is a concern, then the
+attack can be prevented by changing the keystream after updating using
+C<zpaq extract backup -to new_backup.zpaq -all -key -newkey>
+(same password is OK) and securely deleting C<backup.zpaq>.
+
+=back
+
+=head1 EXIT STATUS
+
+Returns 0 if successful or 1 in case of an error.
+
+=head1 ENVIRONMENT
+
+In Windows, the default number of threads (set by C<-threads>) is
+%NUMBER_OF_PROCESSORS%. In Linux, the number of lines of the
+form "Processor : 0", "Processor : 1",... in F</cpu/procinfo>
+is used instead.
+
+=head1 STANDARDS
+
+The archive format is described in
+I<The ZPAQ Open Standard Format for Highly Compressed Data>
+(see I<AVAILABILITY>).
+
+=head1 AVAILABILITY
+
+http://mattmahoney.net/zpaq/
+
+=head1 BUGS
+
+There is no GUI.
+
+The archive format does not save sufficient information for backing
+up and restoring the operating system.
+
+=head1 SEE ALSO
+
+C<bzip2(1)>
+C<gzip(1)>
+C<lrzip(1)>
+C<lzop(1)>
+C<lzma(1)>
+C<p7zip(1)>
+C<rzip(1)>
+C<unace(1)>
+C<unrar(1)>
+C<unzip(1)>
+C<zip(1)>
+
+=head1 AUTHORS
+
+C<zpaq> and C<libzpaq> are written by Matt Mahoney and released to the
+public domain in 2015. C<libzpaq> contains
+I<libdivsufsort-lite> v2.01, copyright (C) 2003-2008,
+Yuta Mori. It is licensed under the MIT license. See the source
+code for license text. The AES code is
+modified from libtomcrypt by Tom St Denis (public domain).
+The salsa20/8 code in Scrypt() is by D. J. Bernstein (public domain).
+
+=cut

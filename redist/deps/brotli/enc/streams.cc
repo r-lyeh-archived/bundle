@@ -23,12 +23,12 @@
 
 namespace brotli {
 
-BrotliMemOut::BrotliMemOut(void* buf, int len)
+BrotliMemOut::BrotliMemOut(void* buf, size_t len)
     : buf_(buf),
       len_(len),
       pos_(0) {}
 
-void BrotliMemOut::Reset(void* buf, int len) {
+void BrotliMemOut::Reset(void* buf, size_t len) {
   buf_ = buf;
   len_ = len;
   pos_ = 0;
@@ -44,13 +44,13 @@ bool BrotliMemOut::Write(const void *buf, size_t n) {
   return true;
 }
 
-BrotliStringOut::BrotliStringOut(std::string* buf, int max_size)
+BrotliStringOut::BrotliStringOut(std::string* buf, size_t max_size)
     : buf_(buf),
       max_size_(max_size) {
   assert(buf->empty());
 }
 
-void BrotliStringOut::Reset(std::string* buf, int max_size) {
+void BrotliStringOut::Reset(std::string* buf, size_t max_size) {
   buf_ = buf;
   max_size_ = max_size;
 }
@@ -63,12 +63,12 @@ bool BrotliStringOut::Write(const void *buf, size_t n) {
   return true;
 }
 
-BrotliMemIn::BrotliMemIn(const void* buf, int len)
+BrotliMemIn::BrotliMemIn(const void* buf, size_t len)
     : buf_(buf),
       len_(len),
       pos_(0) {}
 
-void BrotliMemIn::Reset(const void* buf, int len) {
+void BrotliMemIn::Reset(const void* buf, size_t len) {
   buf_ = buf;
   len_ = len;
   pos_ = 0;
@@ -89,18 +89,14 @@ const void* BrotliMemIn::Read(size_t n, size_t* output) {
 
 BrotliFileIn::BrotliFileIn(FILE* f, size_t max_read_size)
     : f_(f),
-      buf_(malloc(max_read_size)),
-      buf_size_(max_read_size) {}
+      buf_(new char[max_read_size]),
+      buf_size_(max_read_size) { }
 
 BrotliFileIn::~BrotliFileIn() {
-  if (buf_) free(buf_);
+  delete[] buf_;
 }
 
 const void* BrotliFileIn::Read(size_t n, size_t* bytes_read) {
-  if (buf_ == NULL) {
-    *bytes_read = 0;
-    return NULL;
-  }
   if (n > buf_size_) {
     n = buf_size_;
   } else if (n == 0) {

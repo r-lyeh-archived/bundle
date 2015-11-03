@@ -1,8 +1,6 @@
-/*
- * Simple compression interface.
- * Copyright (c) 2013, 2014, 2015, Mario 'rlyeh' Rodriguez
- *
- * Distributed under the zlib/libpng license
+/* Simple compression interface.
+ * Copyright (c) 2013, 2014, 2015, r-lyeh.
+ * ZLIB/libPNG licensed.
 
  * - rlyeh ~~ listening to Boris / Missing Pieces
  */
@@ -10,15 +8,10 @@
 #ifndef BUNDLE_HPP
 #define BUNDLE_HPP
 
-#if ( defined(_MSC_VER) && _MSC_VER >= 1800 ) || __cplusplus >= 201103L
-#define BUNDLE_CXX11 1
-#else
-#define BUNDLE_CXX11 0
-#endif
-
-#define BUNDLE_VERSION "1.0.2" /* (2015/10/29) Skip extra copy during archive decompression; add extra archive meta-info
+#define BUNDLE_VERSION "2.0.0" /* (2015/11/03) Add BCM,ZLING,MCM,Tangelo,ZMolly,ZSTDf support; Change archive format /!\
+#define BUNDLE_VERSION "1.0.2" // (2015/10/29) Skip extra copy during archive decompression; add extra archive meta-info
 #define BUNDLE_VERSION "1.0.1" // (2015/10/10) Shrink to fit during measures() function
-#define BUNDLE_VERSION "1.0.0" // (2015/10/09) Change benchmark API to sort multiples values as well
+#define BUNDLE_VERSION "1.0.0" // (2015/10/09) Change benchmark API to sort multiples values as well /!\
 #define BUNDLE_VERSION "0.9.8" // (2015/10/07) Remove confusing bundle::string variant class from API
 #define BUNDLE_VERSION "0.9.7" // (2015/10/07) Add license configuration directives { BUNDLE_NO_BSD2, BUNDLE_NO_BSD3, ... }
 #define BUNDLE_VERSION "0.9.6" // (2015/10/03) Add library configuration directives { BUNDLE_NO_ZSTD, BUNDLE_NO_CSC, ... }
@@ -45,6 +38,20 @@
 #define BUNDLE_VERSION "0.1.0" // (2014/05/13) Add high-level API, iOS support
 #define BUNDLE_VERSION "0.0.0" // (2014/05/09) Initial commit */
 
+#if ( defined(_MSC_VER) && _MSC_VER >= 1800 ) || __cplusplus >= 201103L
+#define BUNDLE_USE_CXX11 1
+#else
+#define BUNDLE_USE_CXX11 0
+#endif
+
+#if BUNDLE_USE_CXX11
+#include <chrono>
+#endif
+
+#if BUNDLE_USE_OMP_TIMER
+#include <omp.h>
+#endif
+
 #include <cassert>
 #include <cstdio>
 #include <cstring>
@@ -53,26 +60,18 @@
 #include <iostream>
 #include <limits>
 #include <map>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
 
-#if BUNDLE_CXX11
-#include <chrono>
-#endif
-
-#ifdef BUNDLE_USE_OMP_TIMER
-#include <omp.h>
-#endif
-
 namespace bundle
 {
-    // libraries and/or encoders
-    enum { RAW, SHOCO, LZ4F, MINIZ, LZIP, LZMA20, ZPAQ, LZ4, BROTLI9, ZSTD, LZMA25, BSC, BROTLI11, SHRINKER, CSC20 }; /* archival: BZIP2, LZFX, LZHAM, LZP1, FSE, BLOSC, YAPPY */
-    // some algorithm aliases
-    enum { UNDEFINED = RAW, ASCII = SHOCO, BINARY = MINIZ, LZ77 = LZ4, DEFLATE = MINIZ, LZMA = LZMA20, CM = ZPAQ }; /* archival: BWT = BZIP2 */
-    // speed/ratio aliases
-    enum { NONE = RAW, UNCOMPRESSED = RAW, VERY_FAST = LZ4F, FAST = LZ4, DEFAULT = MINIZ, OVER = LZMA20, EXTRA = LZMA25, UBER = ZPAQ, AUTO = ~0u };
+    // libraries and/or encoders 
+    enum { RAW, SHOCO, LZ4F, MINIZ, LZIP, LZMA20, ZPAQ,         //  0..6
+           LZ4, BROTLI9, ZSTD, LZMA25, BSC, BROTLI11, SHRINKER, //  7..13
+           CSC20, ZSTDF, BCM, ZLING, MCM, TANGELO, ZMOLLY       // 14..20
+    };
 
     // algorithm properties
     const char *const name_of( unsigned q );
@@ -80,9 +79,6 @@ namespace bundle
     const char *const ext_of( unsigned q );
     size_t unc_payload( unsigned q );
     size_t bound( unsigned q, size_t len );
-
-    // dont compress if compression ratio is below 5%
-    enum { NO_COMPRESSION_TRESHOLD = 5 };
 
     // low level API (raw pointers)
 
@@ -152,8 +148,8 @@ namespace bundle
 
         if( is_packed( input ) ) {
             // decapsulate
-            unsigned Q = input[1] & 0x0F;
-            const char *ptr = (const char *)&input[2];
+            unsigned Q = input[2];
+            const char *ptr = (const char *)&input[3];
             size_t size1 = vlebit(ptr);
             size_t size2 = vlebit(ptr);
 
@@ -194,7 +190,7 @@ namespace bundle
                 output.resize( zlen );
 
                 // encapsulate
-                std::string header = std::string() + char(0) + char(0x70 | (q & 0x0F)) + vlebit(input.size()) + vlebit(output.size());
+                std::string header = std::string() + char(0) + char(0x70) + char(q) + vlebit(input.size()) + vlebit(output.size());
                 unsigned header_len = header.size();
                 output.resize( zlen + header_len );
                 memmove( &output[header_len], &output[0], zlen );
@@ -229,7 +225,7 @@ namespace bundle
     static inline std::vector<unsigned> fast_encodings() {
         static std::vector<unsigned> all;
         if( all.empty() ) {
-            all.push_back( NONE );
+            all.push_back( RAW );
             all.push_back( LZ4F );
             all.push_back( SHOCO );
             all.push_back( MINIZ );
@@ -242,6 +238,11 @@ namespace bundle
             all.push_back( BROTLI9 );
             all.push_back( SHRINKER );
             all.push_back( CSC20 );
+            all.push_back( BCM );
+            all.push_back( ZLING );
+            all.push_back( MCM );
+            all.push_back( ZMOLLY );
+            all.push_back( ZSTDF );
 #if 0
             // for archival purposes
             all.push_back( BZIP2 );
@@ -256,31 +257,49 @@ namespace bundle
         return all;
     }
 
+    static inline std::vector<unsigned> slow_encodings() {
+        static std::vector<unsigned> all;
+        if( all.empty() ) {
+            all.push_back( BROTLI11 );
+            all.push_back( ZPAQ );
+            all.push_back( TANGELO );
+        }
+        return all;
+    }
+
     static inline std::vector<unsigned> encodings() {
         static std::vector<unsigned> all;
         if( all.empty() ) {
             all = fast_encodings();
             all.push_back( BROTLI11 );
             all.push_back( ZPAQ );
+            all.push_back( TANGELO );
         }
         return all;
     }
 
-#if BUNDLE_CXX11
+#if BUNDLE_USE_CXX11
 
     // measures for all given encodings
     template<typename T>
     struct measure {
-        unsigned q = NONE;
+        unsigned q = RAW;
+        bool pass = 0;
         double ratio = 0;
         double enctime = 0;
         double dectime = 0;
         double memusage = 0;
-        bool pass = 0;
-        T packed /*, unpacked */;
+        unsigned long long bytes = 0;
+        T packed;
         std::string str() const {
+            double mbytes = bytes / 1024.0 / 1024.0;
+            auto secs = []( double x ) { return x / 1000000.0; };
+            auto encspeed = mbytes / secs(enctime > 0.0 ? enctime : 1.0);
+            auto decspeed = mbytes / secs(dectime > 0.0 ? dectime : 1.0);
+            auto avgspeed = 0.5 * (encspeed + decspeed);
             std::stringstream ss;
             ss << ( pass ? "[ OK ] " : "[FAIL] ") << name_of(q) << ": ratio=" << ratio << "% enctime=" << int(enctime) << "us dectime=" << int(dectime) << "us (zlen=" << packed.size() << " bytes)";
+            ss << "(enc:" << encspeed << " MB/s,dec:" << decspeed << " MB/s,avg:" << avgspeed << " MB/s)";
             return ss.str();
         }
     };
@@ -288,6 +307,7 @@ namespace bundle
     template< class T, bool do_enc = true, bool do_dec = true, bool do_verify = true >
     std::vector< measure<T> > measures( const T& original, const std::vector<unsigned> &use_encodings = encodings() ) {
         std::vector< measure<T> > results;
+        auto bytes = original.size();
 
         for( auto encoding : use_encodings ) {
             //std::cout << name_of(encoding) << std::endl;
@@ -295,6 +315,7 @@ namespace bundle
             auto &r = results.back();
             r.q = encoding;
             r.pass = true;
+            r.bytes = bytes;
 
             if( r.pass && do_enc ) {
 #ifdef BUNDLE_USE_OMP_TIMER
@@ -310,7 +331,7 @@ namespace bundle
                 r.enctime = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
 #endif
                 r.ratio = 100 - 100 * ( double( r.packed.size() ) / original.size() );
-                if( encoding != NONE )
+                if( encoding != RAW )
                 r.pass = r.pass && is_packed(r.packed);
             }
 
@@ -326,7 +347,7 @@ namespace bundle
                 auto end = std::chrono::steady_clock::now();
                 r.dectime = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
 #endif
-                if( encoding != NONE )
+                if( encoding != RAW )
                 r.pass = r.pass && (do_verify ? original == unpacked : r.pass);
             }
 
@@ -341,49 +362,56 @@ namespace bundle
     // sort_* functions return sorted slot indices (as seen order in measures vector)
 
     template< class T >
-    std::vector<unsigned> sort_smallest_encoders( const std::vector< measure<T> > &measures, double no_compression_treshold = NO_COMPRESSION_TRESHOLD ) {
-        std::map<double,unsigned,std::greater<double>> q;
+    std::vector<unsigned> sort_smallest_encoders( const std::vector< measure<T> > &measures, double pct_treshold_to_skip_compression = 0 ) {
+        std::map<double,std::set<unsigned>,std::greater<double>> q;
         for( auto end = measures.size(), it = end - end; it < end; ++it ) {
             auto &r = measures[ it ];
-            if( r.pass && r.q != NONE && r.ratio >= no_compression_treshold ) {
-                q[ r.ratio ] = it;
+            // skip compression results if compression ratio is below % (like <5%). default: 0 (do not skip)
+            if( r.pass && r.q != RAW && r.ratio >= pct_treshold_to_skip_compression ) {
+                q[ r.ratio ].insert( it );
             }
         }
         std::vector<unsigned> v;
-        for( auto &it : q ) {
-            v.push_back( it.second );
+        for( auto &set : q ) {
+            for( auto &enc : set.second ) {
+                v.push_back( enc );
+            }
         }
         return v;
     }
 
     template< class T >
     std::vector<unsigned> sort_fastest_encoders( const std::vector< measure<T> > &measures ) {
-        std::map<double,unsigned> q;
+        std::map<double,std::set<unsigned>> q;
         for( auto end = measures.size(), it = end - end; it < end; ++it ) {
             auto &r = measures[ it ];
-            if( r.pass && r.q != NONE ) {
-                q[ r.enctime ] = it;
+            if( r.pass && r.q != RAW ) {
+                q[ r.enctime ].insert( it );
             }
         }
         std::vector<unsigned> v;
-        for( auto &it : q ) {
-            v.push_back( it.second );
+        for( auto &set : q ) {
+            for( auto &enc : set.second ) {
+                v.push_back( enc );
+            }
         }
         return v;
     }
 
     template< class T >
     std::vector<unsigned> sort_fastest_decoders( const std::vector< measure<T> > &measures ) {
-        std::map<double,unsigned> q;
+        std::map<double,std::set<unsigned>> q;
         for( auto end = measures.size(), it = end - end; it < end; ++it ) {
             auto &r = measures[ it ];
-            if( r.pass && r.q != NONE ) {
-                q[ r.dectime ] = it;
+            if( r.pass && r.q != RAW ) {
+                q[ r.dectime ].insert( it );
             }
         }
         std::vector<unsigned> v;
-        for( auto &it : q ) {
-            v.push_back( it.second );
+        for( auto &set : q ) {
+            for( auto &dec : set.second ) {
+                v.push_back( dec );
+            }
         }
         return v;
     }
@@ -391,9 +419,9 @@ namespace bundle
     // find_* functions return sorted encoding enums (as slot indices are traversed from measures vector)
 
     template< class T >
-    std::vector<unsigned> find_smallest_encoders( const std::vector< measure<T> > &measures, double no_compression_treshold = NO_COMPRESSION_TRESHOLD ) {
+    std::vector<unsigned> find_smallest_encoders( const std::vector< measure<T> > &measures, double pct_treshold_to_skip_compression = 0 ) {
         std::vector<unsigned> v;
-        for( auto &slot : sort_smallest_encoders( measures, no_compression_treshold ) ) {
+        for( auto &slot : sort_smallest_encoders( measures, pct_treshold_to_skip_compression ) ) {
             v.push_back( type_of( measures[slot].packed ) );
         }
         return v;
@@ -464,15 +492,19 @@ namespace bundle
     {
         public:
 
-        enum container { ZIP } type;
+        enum type { BND, ZIP };
 
-        explicit
-        archive( const container &type = ZIP ) : type(type)
-        {}
+        // .bnd binary serialization
+        bool bnd( const std::string &binary );
+        std::string bnd() const;
 
-        // binary serialization
-        bool bin( const std::string &binary );
-        std::string bin( unsigned q = EXTRA ) const;
+        // .zip binary serialization
+        bool zip( const std::string &binary );
+        std::string zip( unsigned level ) const; /* level [0(store)..100(max)] */
+
+        // generic serialization
+        bool bin( int type, const std::string &binary );
+        std::string bin( int type, unsigned level ) const;
 
         // inspection (json doc)
         std::string toc() const {

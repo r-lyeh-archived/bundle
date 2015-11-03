@@ -1,19 +1,33 @@
 // LZ4 streaming API example : ring buffer
-// Copyright : Takayuki Matsuoka
+// Based on sample code from Takayuki Matsuoka
 
 
-#define _CRT_SECURE_NO_WARNINGS // for MSVC
-#include "lz4.h"
+/**************************************
+ * Compiler Options
+ **************************************/
+#ifdef _MSC_VER    /* Visual Studio */
+#  define _CRT_SECURE_NO_WARNINGS // for MSVC
+#  define snprintf sprintf_s
+#endif
+#ifdef __GNUC__
+#  pragma GCC diagnostic ignored "-Wmissing-braces"   /* GCC bug 53119 : doesn't accept { 0 } as initializer (https://gcc.gnu.org/bugzilla/show_bug.cgi?id=53119) */
+#endif
 
+
+/**************************************
+ * Includes
+ **************************************/
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include "lz4.h"
+
 
 enum {
     MESSAGE_MAX_BYTES   = 1024,
-    RING_BUFFER_BYTES   = 1024 * 256 + MESSAGE_MAX_BYTES,
-    DICT_BYTES          = 65536,
+    RING_BUFFER_BYTES   = 1024 * 8 + MESSAGE_MAX_BYTES,
+    DECODE_RING_BUFFER  = RING_BUFFER_BYTES + MESSAGE_MAX_BYTES   // Intentionally larger, to test unsynchronized ring buffers
 };
 
 
@@ -69,7 +83,7 @@ void test_compress(FILE* outFp, FILE* inpFp)
 
 void test_decompress(FILE* outFp, FILE* inpFp)
 {
-    static char decBuf[RING_BUFFER_BYTES];
+    static char decBuf[DECODE_RING_BUFFER];
     int   decOffset    = 0;
     LZ4_streamDecode_t lz4StreamDecode_body = { 0 };
     LZ4_streamDecode_t* lz4StreamDecode = &lz4StreamDecode_body;
@@ -95,7 +109,7 @@ void test_decompress(FILE* outFp, FILE* inpFp)
             write_bin(outFp, decPtr, decBytes);
 
             // Wraparound the ringbuffer offset
-            if(decOffset >= RING_BUFFER_BYTES - MESSAGE_MAX_BYTES) decOffset = 0;
+            if(decOffset >= DECODE_RING_BUFFER - MESSAGE_MAX_BYTES) decOffset = 0;
         }
     }
 }

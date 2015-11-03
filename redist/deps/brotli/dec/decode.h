@@ -150,8 +150,10 @@ BrotliResult BrotliDecompressBufferStreaming(size_t* available_in,
 void BrotliSetCustomDictionary(
     size_t size, const uint8_t* dict, BrotliState* s);
 
+
 /* Escalate internal functions visibility; for testing purposes only. */
-void InverseMoveToFrontTransformForTesting(uint8_t* v, int l, BrotliState* s);
+void InverseMoveToFrontTransformForTesting(
+    uint8_t* v, uint32_t l, BrotliState* s);
 
 #if defined(__cplusplus) || defined(c_plusplus)
 } /* extern "C" */

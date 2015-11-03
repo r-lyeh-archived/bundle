@@ -17,21 +17,15 @@
 #ifndef BROTLI_ENC_LITERAL_COST_H_
 #define BROTLI_ENC_LITERAL_COST_H_
 
-#include <stddef.h>
-#include <stdint.h>
+#include "./types.h"
 
 namespace brotli {
 
 // Estimates how many bits the literals in the interval [pos, pos + len) in the
 // ringbuffer (data, mask) will take entropy coded and writes these estimates
-// to the ringbuffer (cost, mask).
+// to the cost[0..len) array.
 void EstimateBitCostsForLiterals(size_t pos, size_t len, size_t mask,
-                                 size_t cost_mask, const uint8_t *data,
-                                 float *cost);
-
-void EstimateBitCostsForLiteralsUTF8(size_t pos, size_t len, size_t mask,
-                                     size_t cost_mask, const uint8_t *data,
-                                     float *cost);
+                                 const uint8_t *data, float *cost);
 
 }  // namespace brotli
 

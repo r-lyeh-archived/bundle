@@ -1,3 +1,7 @@
+try:
+    import setuptools
+except:
+    pass
 import distutils
 from distutils.core import setup, Extension
 from distutils.command.build_ext import build_ext
@@ -9,23 +13,10 @@ import re
 
 CURR_DIR = os.path.abspath(os.path.dirname(os.path.realpath(__file__)))
 
-# when compiling for Windows Python 2.7, force distutils to use Visual Studio
-# 2010 instead of 2008, as the latter doesn't support c++0x
-if platform.system() == 'Windows':
-    try:
-        import distutils.msvc9compiler
-    except distutils.errors.DistutilsPlatformError:
-        pass  # importing msvc9compiler raises when running under MinGW
-    else:
-        orig_find_vcvarsall = distutils.msvc9compiler.find_vcvarsall
-        def patched_find_vcvarsall(version):
-            return orig_find_vcvarsall(version if version != 9.0 else 10.0)
-        distutils.msvc9compiler.find_vcvarsall = patched_find_vcvarsall
-
 
 def get_version():
-    """ Return BROTLI_VERSION string as defined in 'brotlimodule.cc' file. """
-    brotlimodule = os.path.join(CURR_DIR, 'python', 'brotlimodule.cc')
+    """ Return BROTLI_VERSION string as defined in 'tools/version.h' file. """
+    brotlimodule = os.path.join(CURR_DIR, 'tools', 'version.h')
     with open(brotlimodule, 'r') as f:
         for line in f:
             m = re.match(r'#define\sBROTLI_VERSION\s"(.*)"', line)
@@ -144,8 +135,10 @@ brotli = Extension("brotli",
                         "enc/metablock.cc",
                         "enc/static_dict.cc",
                         "enc/streams.cc",
+                        "enc/utf8_util.cc",
                         "dec/bit_reader.c",
                         "dec/decode.c",
+                        "dec/dictionary.c",
                         "dec/huffman.c",
                         "dec/streams.c",
                         "dec/state.c",
@@ -175,6 +168,8 @@ brotli = Extension("brotli",
                         "enc/static_dict_lut.h",
                         "enc/streams.h",
                         "enc/transform.h",
+                        "enc/types.h",
+                        "enc/utf8_util.h",
                         "enc/write_bits.h",
                         "dec/bit_reader.h",
                         "dec/context.h",
@@ -199,6 +194,31 @@ setup(
     author="Khaled Hosny",
     author_email="khaledhosny@eglug.org",
     license="Apache 2.0",
+    classifiers=[
+        'Development Status :: 4 - Beta',
+        'Environment :: Console',
+        'Intended Audience :: Developers',
+        'License :: OSI Approved :: Apache Software License',
+        'Operating System :: MacOS :: MacOS X',
+        'Operating System :: Microsoft :: Windows',
+        'Operating System :: POSIX :: Linux',
+        'Programming Language :: C',
+        'Programming Language :: C++',
+        'Programming Language :: Python',
+        'Programming Language :: Python :: 2',
+        'Programming Language :: Python :: 2.7',
+        'Programming Language :: Python :: 3',
+        'Programming Language :: Python :: 3.3',
+        'Programming Language :: Python :: 3.4',
+        'Programming Language :: Python :: 3.5',
+        'Programming Language :: Unix Shell',
+        'Topic :: Software Development :: Libraries',
+        'Topic :: Software Development :: Libraries :: Python Modules',
+        'Topic :: System :: Archiving',
+        'Topic :: System :: Archiving :: Compression',
+        'Topic :: Text Processing :: Fonts',
+        'Topic :: Utilities',
+        ],
     ext_modules=[brotli],
     cmdclass={
         'build_ext': BuildExt,

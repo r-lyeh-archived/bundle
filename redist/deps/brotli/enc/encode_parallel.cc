@@ -31,84 +31,23 @@
 #include "./fast_log.h"
 #include "./hash.h"
 #include "./histogram.h"
-#include "./literal_cost.h"
 #include "./prefix.h"
+#include "./utf8_util.h"
 #include "./write_bits.h"
 
 namespace brotli {
 
 namespace {
 
-int ParseAsUTF8(int* symbol, const uint8_t* input, int size) {
-  // ASCII
-  if ((input[0] & 0x80) == 0) {
-    *symbol = input[0];
-    if (*symbol > 0) {
-      return 1;
-    }
-  }
-  // 2-byte UTF8
-  if (size > 1 &&
-      (input[0] & 0xe0) == 0xc0 &&
-      (input[1] & 0xc0) == 0x80) {
-    *symbol = (((input[0] & 0x1f) << 6) |
-               (input[1] & 0x3f));
-    if (*symbol > 0x7f) {
-      return 2;
-    }
-  }
-  // 3-byte UFT8
-  if (size > 2 &&
-      (input[0] & 0xf0) == 0xe0 &&
-      (input[1] & 0xc0) == 0x80 &&
-      (input[2] & 0xc0) == 0x80) {
-    *symbol = (((input[0] & 0x0f) << 12) |
-               ((input[1] & 0x3f) << 6) |
-               (input[2] & 0x3f));
-    if (*symbol > 0x7ff) {
-      return 3;
-    }
-  }
-  // 4-byte UFT8
-  if (size > 3 &&
-      (input[0] & 0xf8) == 0xf0 &&
-      (input[1] & 0xc0) == 0x80 &&
-      (input[2] & 0xc0) == 0x80 &&
-      (input[3] & 0xc0) == 0x80) {
-    *symbol = (((input[0] & 0x07) << 18) |
-               ((input[1] & 0x3f) << 12) |
-               ((input[2] & 0x3f) << 6) |
-               (input[3] & 0x3f));
-    if (*symbol > 0xffff && *symbol <= 0x10ffff) {
-      return 4;
-    }
-  }
-  // Not UTF8, emit a special symbol above the UTF8-code space
-  *symbol = 0x110000 | input[0];
-  return 1;
-}
-
-// Returns true if at least min_fraction of the data is UTF8-encoded.
-bool IsMostlyUTF8(const uint8_t* data, size_t length, double min_fraction) {
-  size_t size_utf8 = 0;
-  for (size_t pos = 0; pos < length; ) {
-    int symbol;
-    int bytes_read = ParseAsUTF8(&symbol, data + pos, length - pos);
-    pos += bytes_read;
-    if (symbol < 0x110000) size_utf8 += bytes_read;
-  }
-  return size_utf8 > min_fraction * length;
-}
-
-void RecomputeDistancePrefixes(std::vector<Command>* cmds,
+void RecomputeDistancePrefixes(Command* cmds, size_t num_commands,
                                int num_direct_distance_codes,
                                int distance_postfix_bits) {
   if (num_direct_distance_codes == 0 &&
       distance_postfix_bits == 0) {
     return;
   }
-  for (int i = 0; i < cmds->size(); ++i) {
-    Command* cmd = &(*cmds)[i];
+  for (size_t i = 0; i < num_commands; ++i) {
+    Command* cmd = &cmds[i];
     if (cmd->copy_len_ > 0 && cmd->cmd_prefix_ >= 128) {
       PrefixEncodeCopyDistance(cmd->DistanceCode(),
                                num_direct_distance_codes,
@@ -151,50 +90,44 @@ bool WriteMetaBlockParallel(const BrotliParams& params,
 
   // Decide about UTF8 mode.
   static const double kMinUTF8Ratio = 0.75;
-  bool utf8_mode = IsMostlyUTF8(&input[input_pos], input_size, kMinUTF8Ratio);
-
-  // Compute literal costs. The 4 bytes at the end are there to cover for an
-  // over-read past the end of input, but not past the mask, in
-  // CreateBackwardReferences.
-  std::vector<float> literal_cost(prefix_size + input_size + 4);
-  if (utf8_mode) {
-    EstimateBitCostsForLiteralsUTF8(input_pos, input_size, mask, mask,
-                                    &input[0], &literal_cost[0]);
-  } else {
-    EstimateBitCostsForLiterals(input_pos, input_size, mask, mask,
-                                &input[0], &literal_cost[0]);
-  }
+  bool utf8_mode = IsMostlyUTF8(&input[0], input_pos, mask, input_size,
+                                kMinUTF8Ratio);
 
   // Initialize hashers.
   int hash_type = std::min(9, params.quality);
-  std::unique_ptr<Hashers> hashers(new Hashers());
+  Hashers* hashers = new Hashers();
   hashers->Init(hash_type);
 
   // Compute backward references.
   int last_insert_len = 0;
-  int num_commands = 0;
+  size_t num_commands = 0;
   int num_literals = 0;
   int max_backward_distance = (1 << params.lgwin) - 16;
   int dist_cache[4] = { -4, -4, -4, -4 };
-  std::vector<Command> commands((input_size + 1) >> 1);
+  Command* commands = static_cast<Command*>(
+      malloc(sizeof(Command) * ((input_size + 1) >> 1)));
+  if (commands == 0) {
+    delete hashers;
+    return false;
+  }
   CreateBackwardReferences(
       input_size, input_pos,
       &input[0], mask,
-      &literal_cost[0], mask,
       max_backward_distance,
       params.quality,
-      hashers.get(),
+      hashers,
       hash_type,
       dist_cache,
       &last_insert_len,
-      &commands[0],
+      commands,
       &num_commands,
       &num_literals);
-  commands.resize(num_commands);
+  delete hashers;
   if (last_insert_len > 0) {
-    commands.push_back(Command(last_insert_len));
+    commands[num_commands++] = Command(last_insert_len);
     num_literals += last_insert_len;
   }
+  assert(num_commands != 0);
 
   // Build the meta-block.
   MetaBlockSplit mb;
@@ -202,17 +135,17 @@ bool WriteMetaBlockParallel(const BrotliParams& params,
       params.mode == BrotliParams::MODE_FONT ? 12 : 0;
   int distance_postfix_bits = params.mode == BrotliParams::MODE_FONT ? 1 : 0;
   int literal_context_mode = utf8_mode ? CONTEXT_UTF8 : CONTEXT_SIGNED;
-  RecomputeDistancePrefixes(&commands,
+  RecomputeDistancePrefixes(commands, num_commands,
                             num_direct_distance_codes,
                             distance_postfix_bits);
   if (params.quality <= 9) {
     BuildMetaBlockGreedy(&input[0], input_pos, mask,
-                         commands.data(), commands.size(),
+                         commands, num_commands,
                          &mb);
   } else {
     BuildMetaBlock(&input[0], input_pos, mask,
                    prev_byte, prev_byte2,
-                   commands.data(), commands.size(),
+                   commands, num_commands,
                    literal_context_mode,
                    &mb);
   }
@@ -234,7 +167,7 @@ bool WriteMetaBlockParallel(const BrotliParams& params,
       first_byte_bits = 4;
     }
   }
-  storage[0] = first_byte;
+  storage[0] = static_cast<uint8_t>(first_byte);
   int storage_ix = first_byte_bits;
 
   // Store the meta-block to the temporary output.
@@ -244,11 +177,13 @@ bool WriteMetaBlockParallel(const BrotliParams& params,
                       num_direct_distance_codes,
                       distance_postfix_bits,
                       literal_context_mode,
-                      commands.data(), commands.size(),
+                      commands, num_commands,
                       mb,
                       &storage_ix, &storage[0])) {
+    free(commands);
     return false;
   }
+  free(commands);
 
   // If this is not the last meta-block, store an empty metadata
   // meta-block so that the meta-block will end at a byte boundary.
@@ -260,7 +195,7 @@ bool WriteMetaBlockParallel(const BrotliParams& params,
   // meta-block.
   size_t output_size = storage_ix >> 3;
   if (input_size + 4 < output_size) {
-    storage[0] = first_byte;
+    storage[0] = static_cast<uint8_t>(first_byte);
     storage_ix = first_byte_bits;
     if (!StoreUncompressedMetaBlock(is_last, &input[0], input_pos, mask,
                                     input_size,
@@ -318,7 +253,7 @@ int BrotliCompressBufferParallel(BrotliParams params,
   // Compress block-by-block independently.
   for (size_t pos = 0; pos < input_size; ) {
     size_t input_block_size = std::min(max_input_block_size, input_size - pos);
-    size_t out_size = 1.2 * input_block_size + 1024;
+    size_t out_size = input_block_size + (input_block_size >> 3) + 1024;
     std::vector<uint8_t> out(out_size);
     if (!WriteMetaBlockParallel(params,
                                 input_block_size,
@@ -338,7 +273,7 @@ int BrotliCompressBufferParallel(BrotliParams params,
 
   // Piece together the output.
   size_t out_pos = 0;
-  for (int i = 0; i < compressed_pieces.size(); ++i) {
+  for (size_t i = 0; i < compressed_pieces.size(); ++i) {
     const std::vector<uint8_t>& out = compressed_pieces[i];
     if (out_pos + out.size() > *encoded_size) {
       return false;

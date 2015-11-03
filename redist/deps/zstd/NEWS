@@ -1,3 +1,33 @@
-r0
-initial release
+v0.3.2
+Fixed Visual Studio
+
+v0.3.1 :
+Small compression ratio improvement
+
+v0.3
+HC mode : compression levels 2-26
+
+v0.2.2
+Fix : Visual Studio 2013 & 2015 release compilation, by Christophe Chevalier
+
+v0.2.1
+Fix : Read errors, advanced fuzzer tests, by Hanno Böck 
+
+v0.2.0
+**Breaking format change**
+Faster decompression speed
+Can still decode v0.1 format
+
+v0.1.3
+fix uninitialization warning, reported by Evan Nemerson
+
+v0.1.2
+frame concatenation support
+
+v0.1.1
+fix compression bug
+detects write-flush errors
+
+v0.1.0
+first release
 

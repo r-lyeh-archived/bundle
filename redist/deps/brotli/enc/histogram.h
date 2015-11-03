@@ -17,17 +17,18 @@
 #ifndef BROTLI_ENC_HISTOGRAM_H_
 #define BROTLI_ENC_HISTOGRAM_H_
 
-#include <stdint.h>
 #include <string.h>
+#include <limits>
 #include <vector>
 #include <utility>
 #include "./command.h"
 #include "./fast_log.h"
 #include "./prefix.h"
+#include "./types.h"
 
 namespace brotli {
 
-class BlockSplit;
+struct BlockSplit;
 
 // A simple container for histograms of data in blocks.
 template<int kDataSize>
@@ -38,6 +39,7 @@ struct Histogram {
   void Clear() {
     memset(data_, 0, sizeof(data_));
     total_count_ = 0;
+    bit_cost_ = std::numeric_limits<double>::infinity();
   }
   void Add(int val) {
     ++data_[val];
@@ -49,7 +51,7 @@ struct Histogram {
   }
   template<typename DataType>
   void Add(const DataType *p, size_t n) {
-    total_count_ += n;
+    total_count_ += static_cast<int>(n);
     n += 1;
     while(--n) ++data_[*p++];
   }

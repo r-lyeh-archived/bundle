@@ -32,16 +32,18 @@
 # ################################################################
 
 # Version numbers
-VERSION?= 0
 LIBVER_MAJOR=`sed -n '/define ZSTD_VERSION_MAJOR/s/.*[[:blank:]]\([0-9][0-9]*\).*/\1/p' < zstd.h`
 LIBVER_MINOR=`sed -n '/define ZSTD_VERSION_MINOR/s/.*[[:blank:]]\([0-9][0-9]*\).*/\1/p' < zstd.h`
 LIBVER_PATCH=`sed -n '/define ZSTD_VERSION_RELEASE/s/.*[[:blank:]]\([0-9][0-9]*\).*/\1/p' < zstd.h`
 LIBVER  = $(LIBVER_MAJOR).$(LIBVER_MINOR).$(LIBVER_PATCH)
+VERSION?= $(LIBVER)
 
 DESTDIR?=
-PREFIX ?= /usr
+PREFIX ?= /usr/local
+CPPFLAGS= -I. -I./legacy -DZSTD_LEGACY_SUPPORT=1
 CFLAGS ?= -O3
-CFLAGS += -I. -std=c99 -Wall -Wextra -Wundef -Wshadow -Wcast-align -Wstrict-prototypes
+CFLAGS += -std=c99 -Wall -Wextra -Wundef -Wshadow -Wcast-qual -Wcast-align -Wstrict-prototypes
+FLAGS   = $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) $(MOREFLAGS)
 
 LIBDIR ?= $(PREFIX)/lib
 INCLUDEDIR=$(PREFIX)/include
@@ -65,12 +67,12 @@ default: libzstd
 
 all: libzstd
 
-libzstd: zstd.c
+libzstd: zstd.c huff0.c fse.c
 	@echo compiling static library
-	@$(CC) $(CPPFLAGS) $(CFLAGS) -c $^
-	@$(AR) rcs libzstd.a zstd.o
+	@$(CC) $(FLAGS) -c $^
+	@$(AR) rcs libzstd.a zstd.o huff0.o fse.o
 	@echo compiling dynamic library $(LIBVER)
-	@$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -shared $^ -fPIC $(SONAME_FLAGS) -o $@.$(SHARED_EXT_VER)
+	@$(CC) $(FLAGS) -shared $^ -fPIC $(SONAME_FLAGS) -o $@.$(SHARED_EXT_VER)
 	@echo creating versioned links
 	@ln -sf $@.$(SHARED_EXT_VER) $@.$(SHARED_EXT_MAJOR)
 	@ln -sf $@.$(SHARED_EXT_VER) $@.$(SHARED_EXT)

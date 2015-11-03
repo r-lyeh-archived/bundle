@@ -1,6 +1,7 @@
 # ##########################################################################
 # LZ4 examples - Makefile
 # Copyright (C) Yann Collet 2011-2014
+#
 # GPL v2 License
 #
 # This program is free software; you can redistribute it and/or modify
@@ -21,29 +22,18 @@
 #  - LZ4 source repository : http://code.google.com/p/lz4/
 #  - LZ4 forum froup : https://groups.google.com/forum/#!forum/lz4c
 # ##########################################################################
-# lz4 : Command Line Utility, supporting gzip-like arguments
-# lz4c  : CLU, supporting also legacy lz4demo arguments
-# lz4c32: Same as lz4c, but forced to compile in 32-bits mode
-# fuzzer  : Test tool, to check lz4 integrity on target platform
-# fuzzer32: Same as fuzzer, but forced to compile in 32-bits mode
-# fullbench  : Precisely measure speed for each LZ4 function variant
-# fullbench32: Same as fullbench, but forced to compile in 32-bits mode
+# This makefile compile and test
+# example programs, using (mostly) LZ4 streaming library,
+# kindly provided by Takayuki Matsuoka
 # ##########################################################################
 
-CC     := $(CC)
 CFLAGS ?= -O3
-CFLAGS += -std=c99 -Wall -Wextra -Wundef -Wshadow -Wstrict-prototypes -Wno-missing-braces   # Wno-missing-braces required due to GCC <4.8.3 bug
-FLAGS   = -I.. $(CPPFLAGS) $(CFLAGS) $(LDFLAGS)
+CFLAGS += -std=c99 -Wall -Wextra -Wundef -Wshadow -Wcast-align -Wstrict-prototypes
+FLAGS  := -I../lib $(CPPFLAGS) $(CFLAGS) $(LDFLAGS)
 
 TESTFILE= Makefile
-LZ4DIR=..
-
-
-# Minimize test target for Travis CI's Build Matrix
-ifeq ($(LZ4_TRAVIS_CI_ENV),-m32)
-CFLAGS += -m32
-else ifeq ($(LZ4_TRAVIS_CI_ENV),-m64)
-endif
+LZ4DIR := ../lib
+LZ4 = ../programs/lz4
 
 
 # Define *.exe as extension for Windows systems
@@ -58,7 +48,7 @@ endif
 
 default: all
 
-all: printVersion doubleBuffer ringBuffer lineCompress
+all: printVersion doubleBuffer ringBuffer ringBufferHC lineCompress frameCompress
 
 printVersion: $(LZ4DIR)/lz4.c printVersion.c
 	$(CC)      $(FLAGS) $^ -o $@$(EXT)
@@ -69,17 +59,27 @@ doubleBuffer: $(LZ4DIR)/lz4.c blockStreaming_doubleBuffer.c
 ringBuffer  : $(LZ4DIR)/lz4.c blockStreaming_ringBuffer.c
 	$(CC)      $(FLAGS) $^ -o $@$(EXT)
 
+ringBufferHC: $(LZ4DIR)/lz4.c $(LZ4DIR)/lz4hc.c HCStreaming_ringBuffer.c
+	$(CC)      $(FLAGS) $^ -o $@$(EXT)
+
 lineCompress: $(LZ4DIR)/lz4.c blockStreaming_lineByLine.c
 	$(CC)      $(FLAGS) $^ -o $@$(EXT)
+
+frameCompress: frameCompress.c
+	$(CC)      $(FLAGS) $^ -o $@$(EXT) -L$(LZ4DIR) -llz4
 
 test : all
 	./printVersion$(EXT)
 	./doubleBuffer$(EXT) $(TESTFILE)
 	./ringBuffer$(EXT)   $(TESTFILE)
+	./ringBufferHC$(EXT) $(TESTFILE)
 	./lineCompress$(EXT) $(TESTFILE)
+	LD_LIBRARY_PATH=$(LZ4DIR) ./frameCompress$(EXT) $(TESTFILE)
+	$(LZ4) -vt $(TESTFILE).lz4
 
 clean:
-	@rm -f core *.o *.dec *-0 *-8192 *.lz4s \
-        printVersion$(EXT) doubleBuffer$(EXT) ringBuffer$(EXT) lineCompress$(EXT)
+	@rm -f core *.o *.dec *-0 *-9 *-8192 *.lz4s *.lz4 \
+	 printVersion$(EXT) doubleBuffer$(EXT) ringBuffer$(EXT) ringBufferHC$(EXT) \
+	 lineCompress$(EXT) frameCompress$(EXT)
 	@echo Cleaning completed
 

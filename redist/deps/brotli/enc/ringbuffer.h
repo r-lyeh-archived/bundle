@@ -17,10 +17,9 @@
 #ifndef BROTLI_ENC_RINGBUFFER_H_
 #define BROTLI_ENC_RINGBUFFER_H_
 
-#include <stddef.h>
-#include <stdint.h>
 
 #include "./port.h"
+#include "./types.h"
 
 namespace brotli {
 
@@ -37,7 +36,7 @@ class RingBuffer {
         tail_size_(1 << tail_bits),
         pos_(0) {
     static const int kSlackForEightByteHashingEverywhere = 7;
-    const int buflen = (1 << window_bits_) + tail_size_;
+    const size_t buflen = (1 << window_bits_) + tail_size_;
     buffer_ = new uint8_t[buflen + kSlackForEightByteHashingEverywhere];
     for (int i = 0; i < kSlackForEightByteHashingEverywhere; ++i) {
       buffer_[buflen + i] = 0;
@@ -53,7 +52,7 @@ class RingBuffer {
     // The length of the writes is limited so that we do not need to worry
     // about a write
     WriteTail(bytes, n);
-    if (PREDICT_TRUE(masked_pos + n <= (1 << window_bits_))) {
+    if (PREDICT_TRUE(masked_pos + n <= (1U << window_bits_))) {
       // A single write fits.
       memcpy(&buffer_[masked_pos], bytes, n);
     } else {

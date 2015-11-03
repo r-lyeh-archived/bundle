@@ -17,10 +17,11 @@
 #include "./literal_cost.h"
 
 #include <math.h>
-#include <stdint.h>
 #include <algorithm>
 
 #include "./fast_log.h"
+#include "./types.h"
+#include "./utf8_util.h"
 
 namespace brotli {
 
@@ -45,7 +46,7 @@ static int DecideMultiByteStatsLevel(size_t pos, size_t len, size_t mask,
   int max_utf8 = 1;  // should be 2, but 1 compresses better.
   int last_c = 0;
   int utf8_pos = 0;
-  for (int i = 0; i < len; ++i) {
+  for (size_t i = 0; i < len; ++i) {
     int c = data[(pos + i) & mask];
     utf8_pos = UTF8Position(last_c, c, 2);
     ++counts[utf8_pos];
@@ -61,15 +62,14 @@ static int DecideMultiByteStatsLevel(size_t pos, size_t len, size_t mask,
 }
 
 void EstimateBitCostsForLiteralsUTF8(size_t pos, size_t len, size_t mask,
-                                     size_t cost_mask, const uint8_t *data,
-                                     float *cost) {
+                                     const uint8_t *data, float *cost) {
 
   // max_utf8 is 0 (normal ascii single byte modeling),
   // 1 (for 2-byte utf-8 modeling), or 2 (for 3-byte utf-8 modeling).
   const int max_utf8 = DecideMultiByteStatsLevel(pos, len, mask, data);
   int histogram[3][256] = { { 0 } };
   int window_half = 495;
-  int in_window = std::min(static_cast<size_t>(window_half), len);
+  int in_window = std::min(window_half, static_cast<int>(len));
   int in_window_utf8[3] = { 0 };
 
   // Bootstrap histograms.
@@ -84,7 +84,7 @@ void EstimateBitCostsForLiteralsUTF8(size_t pos, size_t len, size_t mask,
   }
 
   // Compute bit costs with sliding window.
-  for (int i = 0; i < len; ++i) {
+  for (int i = 0; i < static_cast<int>(len); ++i) {
     if (i - window_half >= 0) {
       // Remove a byte in the past.
       int c = (i - window_half - 1) < 0 ?
@@ -95,12 +95,10 @@ void EstimateBitCostsForLiteralsUTF8(size_t pos, size_t len, size_t mask,
       --histogram[utf8_pos2][data[(pos + i - window_half) & mask]];
       --in_window_utf8[utf8_pos2];
     }
-    if (i + window_half < len) {
+    if (i + window_half < static_cast<int>(len)) {
       // Add a byte in the future.
-      int c = (i + window_half - 1) < 0 ?
-          0 : data[(pos + i + window_half - 1) & mask];
-      int last_c = (i + window_half - 2) < 0 ?
-          0 : data[(pos + i + window_half - 2) & mask];
+      int c = data[(pos + i + window_half - 1) & mask];
+      int last_c = data[(pos + i + window_half - 2) & mask];
       int utf8_pos2 = UTF8Position(last_c, c, max_utf8);
       ++histogram[utf8_pos2][data[(pos + i + window_half) & mask]];
       ++in_window_utf8[utf8_pos2];
@@ -108,12 +106,12 @@ void EstimateBitCostsForLiteralsUTF8(size_t pos, size_t len, size_t mask,
     int c = i < 1 ? 0 : data[(pos + i - 1) & mask];
     int last_c = i < 2 ? 0 : data[(pos + i - 2) & mask];
     int utf8_pos = UTF8Position(last_c, c, max_utf8);
-    int masked_pos = (pos + i) & mask;
+    size_t masked_pos = (pos + i) & mask;
     int histo = histogram[utf8_pos][data[masked_pos]];
     if (histo == 0) {
       histo = 1;
     }
-    float lit_cost = FastLog2(in_window_utf8[utf8_pos]) - FastLog2(histo);
+    double lit_cost = FastLog2(in_window_utf8[utf8_pos]) - FastLog2(histo);
     lit_cost += 0.02905;
     if (lit_cost < 1.0) {
       lit_cost *= 0.5;
@@ -126,16 +124,19 @@ void EstimateBitCostsForLiteralsUTF8(size_t pos, size_t len, size_t mask,
     if (i < 2000) {
       lit_cost += 0.7 - ((2000 - i) / 2000.0 * 0.35);
     }
-    cost[(pos + i) & cost_mask] = lit_cost;
+    cost[i] = static_cast<float>(lit_cost);
   }
 }
 
 void EstimateBitCostsForLiterals(size_t pos, size_t len, size_t mask,
-                                 size_t cost_mask, const uint8_t *data,
-                                 float *cost) {
+                                 const uint8_t *data, float *cost) {
+  if (IsMostlyUTF8(data, pos, mask, len, kMinUTF8Ratio)) {
+    EstimateBitCostsForLiteralsUTF8(pos, len, mask, data, cost);
+    return;
+  }
   int histogram[256] = { 0 };
   int window_half = 2000;
-  int in_window = std::min(static_cast<size_t>(window_half), len);
+  int in_window = std::min(window_half, static_cast<int>(len));
 
   // Bootstrap histogram.
   for (int i = 0; i < in_window; ++i) {
@@ -143,13 +144,13 @@ void EstimateBitCostsForLiterals(size_t pos, size_t len, size_t mask,
   }
 
   // Compute bit costs with sliding window.
-  for (int i = 0; i < len; ++i) {
+  for (int i = 0; i < static_cast<int>(len); ++i) {
     if (i - window_half >= 0) {
       // Remove a byte in the past.
       --histogram[data[(pos + i - window_half) & mask]];
       --in_window;
     }
-    if (i + window_half < len) {
+    if (i + window_half < static_cast<int>(len)) {
       // Add a byte in the future.
       ++histogram[data[(pos + i + window_half) & mask]];
       ++in_window;
@@ -158,13 +159,13 @@ void EstimateBitCostsForLiterals(size_t pos, size_t len, size_t mask,
     if (histo == 0) {
       histo = 1;
     }
-    float lit_cost = FastLog2(in_window) - FastLog2(histo);
+    double lit_cost = FastLog2(in_window) - FastLog2(histo);
     lit_cost += 0.029;
     if (lit_cost < 1.0) {
       lit_cost *= 0.5;
       lit_cost += 0.5;
     }
-    cost[(pos + i) & cost_mask] = lit_cost;
+    cost[i] = static_cast<float>(lit_cost);
   }
 }
 

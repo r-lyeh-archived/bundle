@@ -60,6 +60,7 @@
 #  include <sys/time.h>   /* gettimeofday */
 #endif
 
+#include "mem.h"
 #include "zstd.h"
 #include "fse_static.h"
 #include "datagen.h"
@@ -75,28 +76,9 @@
 
 
 /**************************************
-*  Basic Types
-**************************************/
-#if defined (__STDC_VERSION__) && __STDC_VERSION__ >= 199901L   /* C99 */
-# include <stdint.h>
-  typedef uint8_t  BYTE;
-  typedef uint16_t U16;
-  typedef uint32_t U32;
-  typedef  int32_t S32;
-  typedef uint64_t U64;
-#else
-  typedef unsigned char       BYTE;
-  typedef unsigned short      U16;
-  typedef unsigned int        U32;
-  typedef   signed int        S32;
-  typedef unsigned long long  U64;
-#endif
-
-
-/**************************************
 *  Constants
 **************************************/
-#define PROGRAM_DESCRIPTION "zStandard speed analyzer"
+#define PROGRAM_DESCRIPTION "Zstandard speed analyzer"
 #ifndef ZSTD_VERSION
 #  define ZSTD_VERSION ""
 #endif
@@ -227,11 +209,10 @@ typedef struct
 } blockProperties_t;
 
 static size_t g_cSize = 0;
+static U32 g_litCtx[40 * 1024];
 
 extern size_t ZSTD_getcBlockSize(const void* src, size_t srcSize, blockProperties_t* bpPtr);
-extern size_t ZSTD_decodeLiteralsBlock(void* ctx, void* dst, size_t maxDstSize, const BYTE** litPtr, const void* src, size_t srcSize);
-extern size_t ZSTD_decodeSeqHeaders(size_t* lastLLPtr, const BYTE** dumpsPtr, void* DTableLL, void* DTableML, void* DTableOffb, const void* src, size_t srcSize);
-
+extern size_t ZSTD_decodeSeqHeaders(int* nbSeq, const BYTE** dumpsPtr, size_t* dumpsLengthPtr, FSE_DTable* DTableLL, FSE_DTable* DTableML, FSE_DTable* DTableOffb, const void* src, size_t srcSize);
 
 size_t local_ZSTD_compress(void* dst, size_t dstSize, void* buff2, const void* src, size_t srcSize)
 {
@@ -245,29 +226,28 @@ size_t local_ZSTD_decompress(void* dst, size_t dstSize, void* buff2, const void*
     return ZSTD_decompress(dst, dstSize, buff2, g_cSize);
 }
 
+extern size_t ZSTD_decodeLiteralsBlock(void* ctx, const void* src, size_t srcSize);
 size_t local_ZSTD_decodeLiteralsBlock(void* dst, size_t dstSize, void* buff2, const void* src, size_t srcSize)
 {
-    U32 ctx[1<<12];
-    const BYTE* ll;
-    (void)src; (void)srcSize;
-    ZSTD_decodeLiteralsBlock(ctx, dst, dstSize, &ll, buff2, g_cSize);
-    return (const BYTE*)dst + dstSize - ll;
+    (void)src; (void)srcSize; (void)dst; (void)dstSize;
+    return ZSTD_decodeLiteralsBlock(g_litCtx, buff2, g_cSize);
 }
 
 size_t local_ZSTD_decodeSeqHeaders(void* dst, size_t dstSize, void* buff2, const void* src, size_t srcSize)
 {
     U32 DTableML[1<<11], DTableLL[1<<10], DTableOffb[1<<9];
     const BYTE* dumps;
-    size_t lastllSize;
+    size_t length;
+    int nbSeq;
     (void)src; (void)srcSize; (void)dst; (void)dstSize;
-    return ZSTD_decodeSeqHeaders(&lastllSize, &dumps, DTableLL, DTableML, DTableOffb, buff2, g_cSize);
+    return ZSTD_decodeSeqHeaders(&nbSeq, &dumps, &length, DTableLL, DTableML, DTableOffb, buff2, g_cSize);
 }
 
 size_t local_conditionalNull(void* dst, size_t dstSize, void* buff2, const void* src, size_t srcSize)
 {
     U32 i;
     size_t total = 0;
-    BYTE* data = buff2;
+    BYTE* data = (BYTE*)buff2;
 
     (void)dst; (void)dstSize; (void)src;
     for (i=0; i < srcSize; i++)
@@ -332,8 +312,8 @@ size_t benchMem(void* src, size_t srcSize, U32 benchNb)
 
     /* Allocation */
     dstBuffSize = ZSTD_compressBound(srcSize);
-    dstBuff = malloc(dstBuffSize);
-    buff2 = malloc(dstBuffSize);
+    dstBuff = (BYTE*)malloc(dstBuffSize);
+    buff2 = (BYTE*)malloc(dstBuffSize);
     if ((!dstBuff) || (!buff2))
     {
         DISPLAY("\nError: not enough memory!\n");
@@ -350,8 +330,8 @@ size_t benchMem(void* src, size_t srcSize, U32 benchNb)
     case 31:  /* ZSTD_decodeLiteralsBlock */
         {
             blockProperties_t bp;
-            ZSTD_compress(dstBuff, dstBuffSize, src, srcSize);
-            ZSTD_getcBlockSize(dstBuff+4, dstBuffSize, &bp);   // Get first block compressed size
+            g_cSize = ZSTD_compress(dstBuff, dstBuffSize, src, srcSize);
+            ZSTD_getcBlockSize(dstBuff+4, dstBuffSize, &bp);   // Get first block type
             if (bp.blockType != bt_compressed)
             {
                 DISPLAY("ZSTD_decodeLiteralsBlock : impossible to test on this sample (not compressible)\n");
@@ -359,9 +339,7 @@ size_t benchMem(void* src, size_t srcSize, U32 benchNb)
                 free(buff2);
                 return 0;
             }
-            g_cSize = ZSTD_getcBlockSize(dstBuff+7, dstBuffSize, &bp) + 3;
-            memcpy(buff2, dstBuff+7, g_cSize);
-            //srcSize = benchFunction(dstBuff, dstBuffSize, buff2, src, srcSize);   // real speed
+            memcpy(buff2, dstBuff+7, g_cSize-7);
             srcSize = srcSize > 128 KB ? 128 KB : srcSize;   // relative to block
             break;
         }
@@ -373,7 +351,7 @@ size_t benchMem(void* src, size_t srcSize, U32 benchNb)
             size_t blockSize;
             ZSTD_compress(dstBuff, dstBuffSize, src, srcSize);
             ip += 4;   // Jump magic Number
-            blockSize = ZSTD_getcBlockSize(ip, dstBuffSize, &bp);   // Get first block compressed size
+            blockSize = ZSTD_getcBlockSize(ip, dstBuffSize, &bp);   // Get first block type
             if (bp.blockType != bt_compressed)
             {
                 DISPLAY("ZSTD_decodeSeqHeaders : impossible to test on this sample (not compressible)\n");
@@ -383,7 +361,7 @@ size_t benchMem(void* src, size_t srcSize, U32 benchNb)
             }
             iend = ip + 3 + blockSize;   // Get end of first block
             ip += 3;   // jump first block header
-            ip += ZSTD_getcBlockSize(ip, iend - ip, &bp) + 3;   // jump literal sub block and its header
+            ip += ZSTD_decodeLiteralsBlock(g_litCtx, ip, iend-ip);  // jump literal sub block and its header
             g_cSize = iend-ip;
             memcpy(buff2, ip, g_cSize);   // copy rest of block (starting with SeqHeader)
             srcSize = srcSize > 128 KB ? 128 KB : srcSize;   // speed relative to block
@@ -616,7 +594,7 @@ int main(int argc, char** argv)
 
                     /* Modify Nb Iterations */
                 case 'i':
-                    if ((argument[1] >='1') && (argument[1] <='9'))
+                    if ((argument[1] >='0') && (argument[1] <='9'))
                     {
                         int iters = argument[1] - '0';
                         BMK_SetNbIterations(iters);
@@ -653,7 +631,7 @@ int main(int argc, char** argv)
         result = benchSample(benchNb);
     else result = benchFiles(argv+filenamesStart, argc-filenamesStart, benchNb);
 
-    if (main_pause) { printf("press enter...\n"); getchar(); }
+    if (main_pause) { int unused; printf("press enter...\n"); unused = getchar(); (void)unused; }
 
     return result;
 }

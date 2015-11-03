@@ -2,14 +2,14 @@
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <vector>
 
 #include "bundle.hpp"
 
-int main( int argc, char **argv )
-{
+void zip_tests() {
     std::string binary;
 
-    if( const bool saving_test = true )
+    if( const bool zip_saving_test = true )
     {
         bundle::archive pak;
 
@@ -23,18 +23,18 @@ int main( int argc, char **argv )
 
         std::cout << "zipping files..." << std::endl;
 
-        // save zip archive to memory string (then optionally to disk)
-        binary = pak.bin();
+        // save .zip archive to memory string (then optionally to disk)
+        binary = pak.zip(60); // compression level = 60 (of 100)
 
         std::cout << "saving test:\n" << pak.toc() << std::endl;
     }
 
-    if( const bool loading_test = true )
+    if( const bool zip_loading_test = true )
     {
         std::cout << "unzipping files..." << std::endl;
 
         bundle::archive pak;
-        pak.bin( binary );
+        pak.zip( binary );
 
         std::cout << "loading test:\n" << pak.toc() << std::endl;
 
@@ -46,61 +46,60 @@ int main( int argc, char **argv )
         assert( pak[1]["name"] == "test2.txt" );
         assert( pak[1]["data"] == "1337" );
     }
+}
 
-    if( const bool compression_tests = true )
+void bnd_tests() {
+    std::string binary;
+
+    if( const bool bnd_saving_test = true )
     {
-        using namespace bundle;
-
-        // 55 mb dataset
-        std::string original( "There's a lady who's sure all that glitters is gold" );
-        for (int i = 0; i < 20; ++i) original += original + std::string( i + 1, 32 + i );
-
-        if( argc > 1 ) {
-            std::ifstream ifs( argv[1], std::ios::binary );
-            std::stringstream ss;
-            ss << ifs.rdbuf();
-            original = ss.str();
-        }
-
-        std::cout << "benchmarking compression of " << original.size() << " bytes..." << std::endl;
-
-        // some benchmarks
-        auto data = measures( original ); // , fast_encodings() );
-        for( auto &in : data ) {
-            std::cout << in.str() << std::endl;
-        }
-
-        std::string rank = "fastest encoders: ";
-        for( auto &R : find_fastest_encoders(data) )
-            std::cout << rank << name_of( R ), rank = ',';
-        std::cout << std::endl;
-
-        rank = "fastest decoders: ";
-        for( auto &R : find_fastest_decoders(data) )
-            std::cout << rank << name_of( R ), rank = ',';
-        std::cout << std::endl;
-
-        rank = "minimum encoders: ";
-        for( auto &R : find_smallest_encoders(data) )
-            std::cout << rank << name_of( R ), rank = ',';
-        std::cout << std::endl;
-
         bundle::archive pak;
+        pak.resize(2);
 
-        for( auto &result : data ) {
-            if( result.pass ) {
-                pak.push_back( bundle::file() );
-                pak.back()["name"] = std::string() + name_of(result.q);
-                pak.back()["type"] = std::string() + ext_of(result.q);
-                pak.back()["data"] = result.packed;
-            }
-        }
+        pak[0]["name"] = "test_lz4.txt";
+        pak[0]["data"] = "hellohellohellohellohellohello";
+        pak[0]["data"] = bundle::pack( bundle::LZ4, pak[0]["data"] );
 
-        std::cout << "toc:\n" << pak.toc() << std::endl;
+        pak[1]["name"] = "test_shoco.txt";
+        pak[1]["data"] = "hellohellohellohellohellohello";
+        pak[1]["data"] = bundle::pack( bundle::SHOCO, pak[1]["data"] );
 
-        std::ofstream ofs( "test.zip", std::ios::binary );
-        ofs << pak.bin();
+        std::cout << "packing files..." << std::endl;
+
+        // save .bnd archive to memory string (then optionally to disk)
+        binary = pak.bnd();
+
+        std::cout << "saving test:\n" << pak.toc() << std::endl;
     }
 
+    if( const bool bnd_loading_test = true )
+    {
+        std::cout << "unpacking files..." << std::endl;
+
+        bundle::archive pak;
+        pak.bnd( binary );
+
+        std::cout << "loading test:\n" << pak.toc() << std::endl;
+
+        assert( pak.size() == 2 );
+
+        pak[0]["data"] = bundle::unpack( pak[0]["data"] );
+        pak[1]["data"] = bundle::unpack( pak[1]["data"] );
+
+        std::cout << pak[0]["data"] << std::endl;
+
+        assert( pak[0]["name"] == "test_lz4.txt" );
+        assert( pak[1]["data"] == "hellohellohellohellohellohello" );
+
+        assert( pak[1]["name"] == "test_shoco.txt" );
+        assert( pak[1]["data"] == "hellohellohellohellohellohello" );
+
+        std::cout << pak.toc() << std::endl;
+    }
+}
+
+int main() {
+    zip_tests();
+    bnd_tests();
     std::cout << "All ok." << std::endl;
 }

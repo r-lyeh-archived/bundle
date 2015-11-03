@@ -25,8 +25,15 @@ extern "C" {
 
 void BrotliStateInit(BrotliState* s) {
   s->state = BROTLI_STATE_UNINITED;
-  s->sub0_state = BROTLI_STATE_SUB0_NONE;
-  s->sub1_state = BROTLI_STATE_SUB1_NONE;
+  s->substate_metablock_header = BROTLI_STATE_METABLOCK_HEADER_NONE;
+  s->substate_tree_group = BROTLI_STATE_TREE_GROUP_NONE;
+  s->substate_context_map = BROTLI_STATE_CONTEXT_MAP_NONE;
+  s->substate_uncompressed = BROTLI_STATE_UNCOMPRESSED_NONE;
+  s->substate_huffman = BROTLI_STATE_HUFFMAN_NONE;
+  s->substate_decode_uint8 = BROTLI_STATE_DECODE_UINT8_NONE;
+
+  s->loop_counter = 0;
+  s->pos = 0;
 
   s->block_type_trees = NULL;
   s->block_len_trees = NULL;
@@ -45,10 +52,11 @@ void BrotliStateInit(BrotliState* s) {
   s->distance_hgroup.codes = NULL;
   s->distance_hgroup.htrees = NULL;
 
+
   s->custom_dict = NULL;
   s->custom_dict_size = 0;
 
-  s->input_end = 0;
+  s->is_last_metablock = 0;
   s->window_bits = 0;
   s->max_distance = 0;
   s->dist_rb[0] = 16;
@@ -98,18 +106,9 @@ void BrotliStateMetablockBegin(BrotliState* s) {
 }
 
 void BrotliStateCleanupAfterMetablock(BrotliState* s) {
-  if (s->context_modes != 0) {
-    free(s->context_modes);
-    s->context_modes = NULL;
-  }
-  if (s->context_map != 0) {
-    free(s->context_map);
-    s->context_map = NULL;
-  }
-  if (s->dist_context_map != 0) {
-    free(s->dist_context_map);
-    s->dist_context_map = NULL;
-  }
+  BROTLI_FREE(s->context_modes);
+  BROTLI_FREE(s->context_map);
+  BROTLI_FREE(s->dist_context_map);
 
   BrotliHuffmanTreeGroupRelease(&s->literal_hgroup);
   BrotliHuffmanTreeGroupRelease(&s->insert_copy_hgroup);
@@ -123,25 +122,16 @@ void BrotliStateCleanupAfterMetablock(BrotliState* s) {
 }
 
 void BrotliStateCleanup(BrotliState* s) {
-  if (s->context_modes != 0) {
-    free(s->context_modes);
-  }
-  if (s->context_map != 0) {
-    free(s->context_map);
-  }
-  if (s->dist_context_map != 0) {
-    free(s->dist_context_map);
-  }
+  BROTLI_FREE(s->context_modes);
+  BROTLI_FREE(s->context_map);
+  BROTLI_FREE(s->dist_context_map);
+
   BrotliHuffmanTreeGroupRelease(&s->literal_hgroup);
   BrotliHuffmanTreeGroupRelease(&s->insert_copy_hgroup);
   BrotliHuffmanTreeGroupRelease(&s->distance_hgroup);
 
-  if (s->ringbuffer != 0) {
-    free(s->ringbuffer);
-  }
-  if (s->block_type_trees != 0) {
-    free(s->block_type_trees);
-  }
+  BROTLI_FREE(s->ringbuffer);
+  BROTLI_FREE(s->block_type_trees);
 }
 
 #if defined(__cplusplus) || defined(c_plusplus)

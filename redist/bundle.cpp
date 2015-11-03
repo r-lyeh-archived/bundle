@@ -1,9 +1,7 @@
-/*
- * Simple compression interface.
- * Copyright (c) 2013, 2014, 2015, Mario 'rlyeh' Rodriguez
- *
- * Distributed under the zlib/libpng license
-
+/* Simple compression interface.
+ * Copyright (c) 2013, 2014, 2015, r-lyeh.
+ * ZLIB/libPNG licensed.
+ 
  * - rlyeh ~~ listening to Boris / Missing Pieces
  */
 
@@ -21,10 +19,22 @@
 #include <algorithm>
 
 #include "bundle.hpp"
-#include "deps/giant/giant.hpp"
 
 namespace {
+
     /* callbacks for streamed input and output */
+
+    struct membuf : std::streambuf {
+        membuf( const char* base, std::ptrdiff_t n ) {
+            this->setg( (char *)base, (char *)base, (char *)base + n );
+        }
+        membuf( char* base, std::ptrdiff_t n ) {
+            this->setp( base, base + n );
+        }
+        size_t position() const {
+            return this->pptr() - this->pbase();
+        }
+    };
 
     struct wrbuf {
         size_t pos;
@@ -62,6 +72,85 @@ namespace {
         }
     };
 }
+
+#ifndef BUNDLE_NO_ZLING
+// zling interface
+namespace zling {
+
+    struct MemInputter : public baidu::zling::Inputter {
+        const unsigned char *begin, *ptr, *end;
+        MemInputter( const unsigned char *mem, size_t len ) 
+        : begin(mem), ptr(mem), end(mem + len) 
+        {}
+        size_t GetData(unsigned char* buf, size_t len) {
+            len = ptr + len >= end ? end - ptr : len; 
+            memcpy( buf, ptr, len );
+            ptr += len;
+            return len;
+        }
+        bool IsEnd() {
+            return ptr >= end;
+        }
+        bool IsErr() {
+            return 0;
+        }
+        size_t GetInputSize() const { 
+            return ptr - begin;
+        }
+    };
+
+    struct MemOutputter : public baidu::zling::Outputter {
+        unsigned char *begin, *ptr, *end;
+        MemOutputter( unsigned char *mem, size_t len ) 
+        : begin(mem), ptr(mem), end(mem + len) 
+        {}
+        size_t PutData(unsigned char* buf, size_t len) {
+            len = ptr + len >= end ? end - ptr : len; 
+            memcpy( ptr, buf, len );
+            ptr += len;
+            return len;
+        }
+        bool IsErr() {
+            return 0;
+        }
+        size_t GetOutputSize() const { 
+            return ptr - begin;
+        }
+    };
+
+    struct ActionHandler: baidu::zling::ActionHandler {
+        MemInputter*  inputter;
+        MemOutputter* outputter;
+
+        ActionHandler() : inputter(0), outputter(0) 
+        {}
+
+        void OnInit() {
+            inputter  = dynamic_cast<MemInputter*>(GetInputter());
+            outputter = dynamic_cast<MemOutputter*>(GetOutputter());
+        }
+
+        void OnDone() {
+        }
+
+        void OnProcess(unsigned char* orig_data, size_t orig_size) { /*
+            const char* encode_direction;
+            uint64_t isize;
+            uint64_t osize;
+
+            if (IsEncode()) {
+                encode_direction = "=>";
+                isize = inputter->GetInputSize();
+                osize = outputter->GetOutputSize();
+            } else {
+                encode_direction = "<=";
+                isize = outputter->GetOutputSize();
+                osize = inputter->GetInputSize();
+            }
+        */ }
+    };
+}
+#endif
 
 // easylzma interface
 #ifndef BUNDLE_NO_LZIP
@@ -193,7 +282,7 @@ namespace
         In rd( data, size );
         Out wr( new_data, *out_sizep );
 
-        libzpaq::compress(&rd, &wr, 3);  // level [1..3]
+        libzpaq::compress(&rd, &wr, "5");  // "0".."5" = faster..better
         *out_sizep = wr.pos;
 
         return wr.pos;
@@ -280,7 +369,7 @@ namespace bundle {
 
     bool is_packed( const void *mem, size_t size ) {
         unsigned char *mem8 = (unsigned char *)mem;
-        return mem8 && size >= 2 && 0 == mem8[0] && mem8[1] >= 0x70 && mem8[1] <= 0x7F;
+        return mem8 && (size >= 3) && (0 == mem8[0]) && (0x70 == mem8[1]) && (mem8[2] <= bundle::ZMOLLY);
     }
     bool is_unpacked( const void *mem, size_t size ) {
         return !is_packed( mem, size );
@@ -288,7 +377,7 @@ namespace bundle {
 
     const char *const name_of( unsigned q ) {
         switch( q ) {
-            break; default : return "NONE";
+            break; default : return "RAW";
             break; case LZ4F: return "LZ4F";
             break; case MINIZ: return "MINIZ";
             break; case SHOCO: return "SHOCO";
@@ -299,11 +388,16 @@ namespace bundle {
             break; case LZ4: return "LZ4";
             break; case BROTLI9: return "BROTLI9";
             break; case BROTLI11: return "BROTLI11";
-            break; case AUTO: return "AUTO";
             break; case ZSTD: return "ZSTD";
+            break; case ZSTDF: return "ZSTDF";
             break; case BSC: return "BSC";
             break; case SHRINKER: return "SHRINKER";
             break; case CSC20: return "CSC20";
+            break; case BCM: return "BCM";
+            break; case ZLING: return "ZLING";
+            break; case MCM: return "MCM";
+            break; case ZMOLLY: return "ZMOLLY";
+            break; case TANGELO: return "TANGELO";
 #if 0
             // for archival purposes
             break; case BZIP2: return "BZIP2";
@@ -325,20 +419,25 @@ namespace bundle {
         switch( q ) {
             break; default : return "";
             break; case LZ4F: return "lz4";
-            break; case MINIZ: return "zip";
-            break; case SHOCO: return "shoco";
+            break; case MINIZ: return "defl";
+            break; case SHOCO: return "sho";
             break; case LZIP: return "lz";
             break; case LZMA20: return "lzma";
             break; case LZMA25: return "lzma";
             break; case ZPAQ: return "zpaq";
             break; case LZ4: return "lz4";
-            break; case BROTLI9: return "brotli";
-            break; case BROTLI11: return "brotli";
-            break; case AUTO: return "auto";
+            break; case BROTLI9: return "bro";
+            break; case BROTLI11: return "bro";
             break; case ZSTD: return "zstd";
+            break; case ZSTDF: return "zstd";
             break; case BSC: return "bsc";
             break; case SHRINKER: return "shk";
             break; case CSC20: return "csc";
+            break; case BCM: return "bcm";
+            break; case ZLING: return "zli";
+            break; case MCM: return "mcm";
+            break; case ZMOLLY: return "zmo";
+            break; case TANGELO: return "tan";
 #if 0
             // for archival purposes
             break; case BZIP2: return "bz2";
@@ -359,34 +458,34 @@ namespace bundle {
         if( size >= 4 && mem && mem[0] == 'L' && mem[1] == 'Z' && mem[2] == 'I' && mem[3] == 'P' ) return LZIP;
         if( size >= 1 && mem && mem[0] == 0xEC ) return MINIZ;
         if( size >= 1 && mem && mem[0] >= 0xF0 ) return LZ4F;
-        return NONE;
+        return RAW;
     }
 
     unsigned type_of( const void *mem, size_t size ) {
-        const char *ptr = (const char *)mem + 1;
-        return (*ptr) & 0x0F;
+        const char *ptr = (const char *)mem + 2;
+        return (*ptr);
     }
 
     size_t len( const void *mem, size_t len ) {
         if( !is_packed(mem, len) ) return 0;
-        const char *ptr = (const char *)mem + 2;
+        const char *ptr = (const char *)mem + 3;
         return vlebit(ptr);
     }
 
     size_t zlen( const void *mem, size_t len ) {
         if( !is_packed(mem, len) ) return 0;
-        const char *ptr = (const char *)mem + 2;
+        const char *ptr = (const char *)mem + 3;
         return vlebit(ptr), vlebit(ptr);
     }
 
     const void *zptr( const void *mem, size_t len ) {
         if( !is_packed(mem, len) ) return 0;
-        const char *ptr = (const char *)mem + 2;
+        const char *ptr = (const char *)mem + 3;
         return vlebit(ptr), vlebit(ptr), (const void *)ptr;
     }
 
     size_t bound( unsigned q, size_t len ) {
-        enum { MAX_BUNDLE_HEADERS = 1 + 1 + (16 + 1) + (16 + 1) }; // up to 128-bit length sized streams
+        enum { MAX_BUNDLE_HEADERS = 1 + 1 + 1 + (16 + 1) + (16 + 1) }; // up to 128-bit length sized streams
         size_t zlen = len;
         switch( q ) {
             break; default : zlen = zlen * 2;
@@ -397,11 +496,11 @@ namespace bundle {
             break; case MINIZ: zlen = mz_compressBound(len);
 #endif
 #ifndef BUNDLE_NO_ZSTD
-            break; case ZSTD: zlen = ZSTD_compressBound(len);
+            break; case ZSTD:  zlen = ZSTD_compressBound(len);
+            break; case ZSTDF: zlen = ZSTD_compressBound(len);
 #endif
 #if 0
             // for archival purposes
-
             break; case LZP1: zlen = lzp_bound_compress((int)(len));
             //break; case FSE: zlen = FSE_compressBound((int)len);
 #endif
@@ -420,10 +519,31 @@ namespace bundle {
         return payload;
     }
 
-      // for archival purposes:
-      // const bool pre_init = (Yappy_FillTables(), true);
+    bool init() {
+#ifndef BUNDLE_NO_BSC
+        static const bool init_bsc = (bsc_init(0), true);
+#endif
+#ifndef BUNDLE_NO_MCM
+        static const bool init_mcm = (CompressorFactories::init(), true);
+#endif
+#if 0
+        // for archival purposes:
+        static const bool init_yappy = (Yappy_FillTables(), true);
+        static struct raii {
+            raii() {
+                blosc_init();
+                blosc_set_nthreads(1);
+            }
+            ~raii() {
+                blosc_destroy();
+            }
+        } init_blosc;
+#endif
+        return true;
+    }
 
-      bool pack( unsigned q, const void *in, size_t inlen, void *out, size_t &outlen ) {
+    bool pack( unsigned q, const void *in, size_t inlen, void *out, size_t &outlen ) {
+        static const bool crt0 = init();
         bool ok = false;
         if( in && inlen && out && outlen >= inlen ) {
             ok = true;
@@ -434,7 +554,7 @@ namespace bundle {
                 break; case LZ4: outlen = LZ4_compressHC2( (const char *)in, (char *)out, inlen, 16 );
 #endif
 #ifndef BUNDLE_NO_MINIZ
-                break; case MINIZ: case AUTO: outlen = tdefl_compress_mem_to_mem( out, outlen, in, inlen, TDEFL_MAX_PROBES_MASK ); // TDEFL_DEFAULT_MAX_PROBES );
+                break; case MINIZ: outlen = tdefl_compress_mem_to_mem( out, outlen, in, inlen, TDEFL_MAX_PROBES_MASK ); // TDEFL_DEFAULT_MAX_PROBES );
 #endif
 #ifndef BUNDLE_NO_SHOCO
                 break; case SHOCO: outlen = shoco_compress( (const char *)in, inlen, (char *)out, outlen );
@@ -470,7 +590,7 @@ namespace bundle {
 #endif
                         if( ok ) {
                             // serialize outsize as well (classic 13-byte LZMA header)
-                            uint64_t x = giant::htole( (uint64_t)outlen );
+                            uint64_t x = htole64( (uint64_t)outlen );
                             memcpy( &((unsigned char *)out)[LZMA_PROPS_SIZE], (unsigned char *)&x, 8 );
                             outlen = outlen + LZMA_PROPS_SIZE + 8;
                         }
@@ -502,7 +622,8 @@ namespace bundle {
                 }
 #endif
 #ifndef BUNDLE_NO_ZSTD
-                break; case ZSTD: outlen = ZSTD_compress( out, outlen, in, inlen ); if( ZSTD_isError(outlen) ) outlen = 0;
+                break; case ZSTD:  outlen = ZSTD_HC_compress( out, outlen, in, inlen, 13 /*1..26*/ ); if( ZSTD_isError(outlen) ) outlen = 0;
+                break; case ZSTDF: outlen = ZSTD_compress( out, outlen, in, inlen ); if( ZSTD_isError(outlen) ) outlen = 0;
 #endif
 #ifndef BUNDLE_NO_BSC
                 break; case BSC: outlen = bsc_compress((const unsigned char *)in, (unsigned char *)out, inlen, LIBBSC_DEFAULT_LZPHASHSIZE, LIBBSC_DEFAULT_LZPMINLEN, LIBBSC_DEFAULT_BLOCKSORTER, LIBBSC_CODER_QLFC_ADAPTIVE, LIBBSC_FEATURE_FASTMODE | 0);
@@ -543,6 +664,78 @@ namespace bundle {
                         delete osss.wr, osss.wr = 0;
                 }
 #endif
+#ifndef BUNDLE_NO_ZLING
+            break; case ZLING: {
+                //try {
+                    zling::MemInputter  inputter((const unsigned char *)in, inlen);
+                    zling::MemOutputter outputter((unsigned char *)out, outlen);
+                    //zling::ActionHandler handler;
+                    bool ok = 0 == baidu::zling::Encode(&inputter, &outputter, 0/*&handler*/, 4 /*0..4*/);
+                    outlen = outputter.GetOutputSize();
+                /*} catch (const std::runtime_error& e) {
+                    fprintf(stderr, "zling: runtime error: %s\n", e.what());
+                } catch (const std::bad_alloc& e) {
+                    fprintf(stderr, "zling: allocation failed.");
+                }*/
+            }
+#endif
+#ifndef BUNDLE_NO_ZMOLLY
+            break; case ZMOLLY: {
+                    enum { zmolly_blocksize = 1048576 * 16 };  /*x1..99*/
+                    membuf inbuf((const char *)in, inlen);
+                    membuf outbuf((char *)out, outlen);
+                    std::istream is( &inbuf );
+                    std::ostream os( &outbuf );
+                    bool ok = 0 == zmolly_encode( is, os, zmolly_blocksize );
+                    os.flush();
+                    if (ok) {
+                        outlen = outbuf.position();
+                    }
+            }
+#endif
+#ifndef BUNDLE_NO_TANGELO
+            break; case TANGELO: {
+                    membuf inbuf((const char *)in, inlen);
+                    membuf outbuf((char *)out, outlen);
+                    std::istream is( &inbuf );
+                    std::ostream os( &outbuf );
+                    tangelo::Encoder<1> en(is, os);
+                    for( int i = 0; i < inlen; i++ ) {
+                        en.compress(is.get());
+                    }
+                    en.flush();
+                    outlen = outbuf.position();
+            }
+#endif
+#ifndef BUNDLE_NO_BCM
+            break; case BCM: {
+                    membuf inbuf((const char *)in, inlen);
+                    membuf outbuf((char *)out, outlen);
+                    std::istream is( &inbuf );
+                    std::ostream os( &outbuf );
+                    if( bcm::compress(is, os, inlen) ) {
+                        outlen = outbuf.position();
+                    }
+            }
+#endif
+#ifndef BUNDLE_NO_MCM
+            break; case MCM: {
+                    ReadMemoryStream is((byte*)in, (byte*)in+inlen);
+                    WriteMemoryStream os((byte*)out);
+                    CompressionOptions options;
+                    /*
+                    options.comp_level_ = CompressionOptions::kCompLevelMid; //kModeCompress;
+                    options.mem_usage_ = CompressionOptions::kDefaultMemUsage; //6;
+                    options.lzp_type_ = CompressionOptions::kLZPTypeAuto;
+                    options.filter_type_ = CompressionOptions::kFilterTypeAuto;
+                    */
+                    {
+                        Archive archive(&os, options);
+                        archive.compress(&is);
+                    }
+                    outlen = os.tell();
+            }
+#endif
 #if 0
                 // for archival purposes:
                 break; case YAPPY: outlen = Yappy_Compress( (const unsigned char *)in, (unsigned char *)out, inlen ) - out;
@@ -571,7 +764,6 @@ namespace bundle {
                         }
                    }
 #endif
-
             }
             // std::cout << name_of( type_of( out, outlen ) ) << std::endl;
         }
@@ -581,18 +773,7 @@ namespace bundle {
       }
 
     bool unpack( unsigned q, const void *in, size_t inlen, void *out, size_t &outlen ) {
-        if( q == AUTO ) {
-            size_t outlen2;
-            if( outlen2 = outlen, unpack(LZ4F, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
-            if( outlen2 = outlen, unpack(MINIZ, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
-            if( outlen2 = outlen, unpack(BROTLI9, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
-            if( outlen2 = outlen, unpack(LZMA20, in, inlen, out, outlen2 ) ) return outlen = outlen2, true; // LZMA25 enters here too
-            if( outlen2 = outlen, unpack(LZIP, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
-            if( outlen2 = outlen, unpack(SHOCO, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
-            if( outlen2 = outlen, unpack(ZSTD, in, inlen, out, outlen2 ) ) return outlen = outlen2, true;
-            //if( outlen2 = outlen, unpack(ZPAQ, in, inlen, out, outlen ) ) return outlen = outlen2, true; // ignored (returns true always)
-            return false;
-        }
+        static const bool crt0 = init();
         bool ok = false;
         size_t bytes_read = 0;
         if( in && inlen && out && outlen ) {
@@ -626,7 +807,8 @@ namespace bundle {
                 break; case BROTLI9: case BROTLI11: if( 1 == BrotliDecompressBuffer(inlen, (const uint8_t *)in, &outlen, (uint8_t *)out ) ) bytes_read = inlen;
 #endif
 #ifndef BUNDLE_NO_ZSTD
-                break; case ZSTD: bytes_read = ZSTD_decompress( out, outlen, in, inlen ); if( !ZSTD_isError(bytes_read) ) bytes_read = inlen;
+                break; case ZSTD:  bytes_read = ZSTD_decompress( out, outlen, in, inlen ); if( !ZSTD_isError(bytes_read) ) bytes_read = inlen;
+                break; case ZSTDF: bytes_read = ZSTD_decompress( out, outlen, in, inlen ); if( !ZSTD_isError(bytes_read) ) bytes_read = inlen;
 #endif
 #ifndef BUNDLE_NO_BSC
                 break; case BSC: bsc_decompress((const unsigned char *)in, inlen, (unsigned char *)out, outlen, /*LIBBSC_FEATURE_FASTMODE | */0); bytes_read = inlen;
@@ -655,6 +837,71 @@ namespace bundle {
                     delete osss.wr, osss.wr = 0;
                 }
 #endif
+#ifndef BUNDLE_NO_ZLING
+            break; case ZLING: {
+                //try {
+                    zling::MemInputter  inputter((const unsigned char *)in, inlen);
+                    zling::MemOutputter outputter((unsigned char *)out, outlen);
+                    zling::ActionHandler handler;
+                    bool ok = 0 == baidu::zling::Decode(&inputter, &outputter, &handler);
+                    if( ok ) bytes_read = inlen;
+                /*} catch (const std::runtime_error& e) {
+                    fprintf(stderr, "zling: runtime error: %s\n", e.what());
+                } catch (const std::bad_alloc& e) {
+                    fprintf(stderr, "zling: allocation failed.");
+                }*/
+            }
+#endif
+#ifndef BUNDLE_NO_ZMOLLY
+            break; case ZMOLLY: {
+                    membuf inbuf((const char *)in, inlen);
+                    membuf outbuf((char *)out, outlen);
+                    std::istream is( &inbuf );
+                    std::ostream os( &outbuf );
+                    bool ok = 0 == zmolly_decode(is, os);
+                    os.flush();
+                    if( ok ) {
+                        bytes_read = inlen;
+                    }
+            }
+#endif
+#ifndef BUNDLE_NO_TANGELO
+            break; case TANGELO: {
+                    membuf inbuf((const char *)in, inlen);
+                    membuf outbuf((char *)out, outlen);
+                    std::istream is( &inbuf );
+                    std::ostream os( &outbuf );
+                    tangelo::Encoder<0> en( is, os );
+                    for( int i = 0; i < outlen; i++ ) {
+                        os.put( en.decompress() );
+                    }
+                    bytes_read = inlen;
+            }
+#endif
+#ifndef BUNDLE_NO_BCM
+            break; case BCM: {
+                    membuf inbuf((const char *)in, inlen);
+                    membuf outbuf((char *)out, outlen);
+                    std::istream is( &inbuf );
+                    std::ostream os( &outbuf );
+                    if( bcm::decompress(is, os) ) {
+                        bytes_read = inlen;
+                    }
+            }
+#endif
+#ifndef BUNDLE_NO_MCM
+            break; case MCM: {
+                    ReadMemoryStream is((byte*)in, (byte*)in+inlen);
+                    WriteMemoryStream os((byte*)out);
+                    Archive archive(&is);
+                    const auto& header = archive.getHeader();
+                    if ( header.isArchive() && header.isSameVersion()) {
+                        archive.decompress(&os);
+                        bytes_read = inlen;
+                    }
+            }
+#endif
+
 #if 0
                 // for archival purposes:
                 break; case EASYLZMA: if( lzma_decompress<0>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen ) ) bytes_read = inlen;
@@ -691,7 +938,6 @@ namespace bundle {
 namespace bundle
 {
     // public API
-
     std::string vlebit( size_t i ) {
         std::string out;
         do {
@@ -712,13 +958,16 @@ namespace bundle
 
 namespace bundle
 {
+    enum archives {
+        ZIP, BND
+    };
+
     bool file::has( const std::string &property ) const {
         return this->find( property ) != this->end();
     }
 
     // binary serialization
-
-    bool archive::bin( const std::string &binary )
+    bool archive::bin( int type, const std::string &binary )
     {
         this->clear();
         std::vector<file> &result = *this;
@@ -726,7 +975,7 @@ namespace bundle
         if( !binary.size() )
             return true; // :)
 
-        if( type == ZIP )
+        if( type == ZIP || type == BND )
         {
 #ifndef BUNDLE_NO_MINIZ
             // Try to open the archive.
@@ -765,34 +1014,24 @@ namespace bundle
                 if( const bool decode = true )
                 {
                     // Try to extract file to the heap.
-                    size_t uncomp_size;
-                    void *p = mz_zip_reader_extract_file_to_heap(&zip_archive, file_stat.m_filename, &uncomp_size, 0);
+                    size_t uncomp_size = file_stat.m_uncomp_size;
+                    back["data"].resize( uncomp_size );
+                    mz_bool ok = mz_zip_reader_extract_file_to_mem(&zip_archive, file_stat.m_filename, &back["data"][0], uncomp_size, 0);
 
-                    if( !p ) {
+                    // Make sure the extraction really succeeded.
+                    if( !ok ) {
                         mz_zip_reader_end(&zip_archive);
                         //assert( !"mz_zip_reader_extract_file_to_heap() failed!" );
                         return false;
                     }
 
-                    // Make sure the extraction really succeeded.
-                    if( uncomp_size != file_stat.m_uncomp_size ) {
-                        free(p);
-                        mz_zip_reader_end(&zip_archive);
-                        // assert( !"mz_zip_reader_extract_file_to_heap() failed to extract the proper data" );
-                        return false;
-                    }
-
-                    back["data"].resize( uncomp_size );
-                    memcpy( (void *)back["data"].data(), p, uncomp_size );
-
-                    if( bundle::is_packed(p, uncomp_size) ) {
+                    const void *p = &back["data"][0];
+                    if( type == BND && bundle::is_packed(p, uncomp_size) ) {
                         back["type"] = bundle::name_of( bundle::type_of(p, uncomp_size) );
                         back["size"] = bundle::itoa( bundle::len( p, uncomp_size ) );
                     } else {
                         back["type"] = "ZIP";
                     }
-
-                    free(p);
                 }
             }
 
@@ -808,11 +1047,11 @@ namespace bundle
         return true;
     }
 
-    std::string archive::bin( unsigned q ) const
+    std::string archive::bin( int type, unsigned level ) const
     {
         std::string result;
 
-        if( type == ZIP )
+        if( type == ZIP || type == BND )
         {
 #ifndef BUNDLE_NO_MINIZ
             mz_zip_archive zip_archive;
@@ -834,16 +1073,21 @@ namespace bundle
                 if( filename != it->end() && content != it->end() ) {
                     const size_t bufsize = content->second.size();
 
-                    int quality = q;
-                    if( it->find("comp") != it->end() ) {
-                        std::stringstream ss( it->find("comp")->second );
-                        if( !(ss >> quality) ) quality = q;
+                    int quality;
+                    if( type == ZIP ) {
+                        quality = level;
+                        if( it->find("comp") != it->end() ) {
+                            std::stringstream ss( it->find("comp")->second );
+                            if( !(ss >> quality) ) quality = level;
+                        }
+                        /**/ if( level >= 80 ) quality = MZ_BEST_COMPRESSION;
+                        else if( level >= 50 ) quality = MZ_DEFAULT_LEVEL;
+                        else if( level >= 10 ) quality = MZ_BEST_SPEED;
+                        else                 quality = MZ_NO_COMPRESSION;
                     }
-                    switch( quality ) {
-                        break; case DEFAULT: default: quality = MZ_DEFAULT_LEVEL;
-                        break; case UNCOMPRESSED: quality = MZ_NO_COMPRESSION;
-                        break; case FAST: case ASCII: quality = MZ_BEST_SPEED;
-                        break; case EXTRA: case UBER: quality = MZ_BEST_COMPRESSION;
+                    else
+                    if( type == BND ) {
+                        quality = MZ_NO_COMPRESSION;
                     }
 
                     std::string pathfile = filename->second;
@@ -894,5 +1138,20 @@ namespace bundle
 
         return result;
     }
-}
 
+    // .bnd binary serialization
+    bool archive::bnd( const std::string &binary ) {
+        return bin( BND, binary );
+    }
+    std::string archive::bnd() const {
+        return bin( BND, 0 );
+    }
+
+    // .zip binary serialization
+    bool archive::zip( const std::string &binary ) {
+        return bin( ZIP, binary );
+    }
+    std::string archive::zip( unsigned level ) const {
+        return bin( ZIP, level );
+    }
+}

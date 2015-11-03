@@ -32,38 +32,25 @@
 # ################################################################
 
 # Version number
-export VERSION=0.0.1
-export RELEASE=r$(VERSION)
+export VERSION := 0.3.2
 
-DESTDIR?=
-PREFIX ?= /usr
-
-LIBDIR ?= $(PREFIX)/lib
-INCLUDEDIR=$(PREFIX)/include
 PRGDIR  = programs
 ZSTDDIR = lib
 
-# Select test target for Travis CI's Build Matrix
-ifneq (,$(filter test-%,$(ZSTD_TRAVIS_CI_ENV)))
-TRAVIS_TARGET=prg-travis
-else
-TRAVIS_TARGET=$(ZSTD_TRAVIS_CI_ENV)
-endif
+.PHONY: clean
 
-
-default: zstdprograms
+default: zstdprogram
 
 all: 
-	@cd $(ZSTDDIR); $(MAKE) -e all
-	@cd $(PRGDIR); $(MAKE) -e all
+	$(MAKE) -C $(ZSTDDIR) $@
+	$(MAKE) -C $(PRGDIR) $@
 
-zstdprograms:
-	@cd $(PRGDIR); $(MAKE) -e
+zstdprogram:
+	$(MAKE) -C $(PRGDIR)
 
 clean:
-	@cd $(PRGDIR); $(MAKE) clean
-	@cd $(ZSTDDIR); $(MAKE) clean
-#	@cd examples; $(MAKE) clean
+	$(MAKE) -C $(ZSTDDIR) $@
+	$(MAKE) -C $(PRGDIR) $@
 	@echo Cleaning completed
 
 
@@ -72,22 +59,37 @@ clean:
 ifneq (,$(filter $(shell uname),Linux Darwin GNU/kFreeBSD GNU))
 
 install:
-	@cd $(ZSTDDIR); $(MAKE) -e install
-	@cd $(PRGDIR); $(MAKE) -e install
+	$(MAKE) -C $(ZSTDDIR) $@
+	$(MAKE) -C $(PRGDIR) $@
 
 uninstall:
-	@cd $(ZSTDDIR); $(MAKE) uninstall
-	@cd $(PRGDIR); $(MAKE) uninstall
+	$(MAKE) -C $(ZSTDDIR) $@
+	$(MAKE) -C $(PRGDIR) $@
 
 travis-install:
 	sudo $(MAKE) install
 
 test:
-	@cd $(PRGDIR); $(MAKE) -e test
+	$(MAKE) -C $(PRGDIR) $@
 
-test-travis: $(TRAVIS_TARGET)
+clangtest: clean
+	clang -v
+	$(MAKE) all CC=clang MOREFLAGS="-Werror -Wconversion -Wno-sign-conversion"
 
-prg-travis:
-	@cd $(PRGDIR); $(MAKE) -e $(ZSTD_TRAVIS_CI_ENV)
+gpptest: clean
+	$(MAKE) all CC=g++ CFLAGS="-O3 -Wall -Wextra -Wundef -Wshadow -Wcast-align -Werror"
+
+armtest: clean
+	$(MAKE) -C $(ZSTDDIR) -e all CC=arm-linux-gnueabi-gcc MOREFLAGS="-Werror"
+	$(MAKE) -C $(PRGDIR) -e CC=arm-linux-gnueabi-gcc MOREFLAGS="-Werror"
+
+usan: clean
+	$(MAKE) test CC=clang MOREFLAGS="-g -fsanitize=undefined"
+
+asan: clean
+	$(MAKE) test CC=clang MOREFLAGS="-g -fsanitize=address"
+
+uasan: clean
+	$(MAKE) test CC=clang MOREFLAGS="-g -fsanitize=address -fsanitize=undefined"
 
 endif

@@ -1,3 +1,4 @@
+#include "stdint.h"
 #include "stdio.h"
 #include "assert.h"
 #include "string.h"
@@ -12,7 +13,7 @@ int main() {
   char buf_2[2];
   char buf_4[4];
   char buf_large[4096];
-  int ret;
+  size_t ret;
 
   // test compression
   ret = shoco_compress(LARGE_STR, 0, buf_2, 2);
@@ -92,6 +93,12 @@ int main() {
   assert(ret == non_ascii_len);
   assert(strcmp(buf_large, NON_ASCII_STR) == 0);
   assert(buf_large[non_ascii_len] == '\0'); // null byte written
+
+  ret = shoco_decompress("\x00", 1, buf_large, 4096);
+  assert(ret == SIZE_MAX);
+
+  ret = shoco_decompress("\xe0""ab", 3, buf_large, 4096);
+  assert(ret == SIZE_MAX);
 
   puts("All tests passed.");
   return 0;

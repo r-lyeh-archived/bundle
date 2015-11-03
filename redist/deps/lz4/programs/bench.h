@@ -1,6 +1,6 @@
 /*
     bench.h - Demo program to benchmark open-source compression algorithm
-    Copyright (C) Yann Collet 2012-2014
+    Copyright (C) Yann Collet 2012-2015
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -17,25 +17,17 @@
     51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
     You can contact the author at :
-    - LZ4 homepage : http://fastcompression.blogspot.com/p/lz4.html
-    - LZ4 source repository : http://code.google.com/p/lz4/
+    - LZ4 source repository : https://github.com/Cyan4973/lz4
+    - LZ4 public forum : https://groups.google.com/forum/#!forum/lz4c
 */
 #pragma once
 
-#if defined (__cplusplus)
-extern "C" {
-#endif
 
+/* Main function */
+int BMK_benchFiles(const char** fileNamesTable, int nbFiles, int cLevel);
 
-int BMK_benchFile(char** fileNamesTable, int nbFiles, int cLevel);
+/* Set Parameters */
+void BMK_setBlocksize(int bsize);
+void BMK_setNbIterations(int nbLoops);
+void BMK_setPause(void);
 
-// Parameters
-void BMK_SetBlocksize(int bsize);
-void BMK_SetNbIterations(int nbLoops);
-void BMK_SetPause(void);
-
-
-
-#if defined (__cplusplus)
-}
-#endif

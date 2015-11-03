@@ -81,7 +81,7 @@ static int usage(char* programName)
 {
     DISPLAY( "Compressible data generator\n");
     DISPLAY( "Usage :\n");
-    DISPLAY( "      %s [size] [args]\n", programName);
+    DISPLAY( "      %s [args]\n", programName);
     DISPLAY( "\n");
     DISPLAY( "Arguments :\n");
     DISPLAY( " -g#    : generate # data (default:%i)\n", SIZE_DEFAULT);
@@ -183,7 +183,7 @@ int main(int argc, char** argv)
     DISPLAYLEVEL(3, "Seed = %u \n", seed);
     if (proba!=COMPRESSIBILITY_DEFAULT) DISPLAYLEVEL(3, "Compressibility : %i%%\n", (U32)(proba*100));
 
-    RDG_genOut(size, proba, litProba, seed);
+    RDG_genStdout(size, proba, litProba, seed);
     DISPLAYLEVEL(1, "\n");
 
     return 0;

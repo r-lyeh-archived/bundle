@@ -31,78 +31,18 @@
 #include "./fast_log.h"
 #include "./hash.h"
 #include "./histogram.h"
-#include "./literal_cost.h"
 #include "./prefix.h"
+#include "./utf8_util.h"
 #include "./write_bits.h"
 
 namespace brotli {
 
-static const double kMinUTF8Ratio = 0.75;
 static const int kMinQualityForBlockSplit = 4;
 static const int kMinQualityForContextModeling = 5;
 static const int kMinQualityForOptimizeHistograms = 4;
-
-int ParseAsUTF8(int* symbol, const uint8_t* input, int size) {
-  // ASCII
-  if ((input[0] & 0x80) == 0) {
-    *symbol = input[0];
-    if (*symbol > 0) {
-      return 1;
-    }
-  }
-  // 2-byte UTF8
-  if (size > 1 &&
-      (input[0] & 0xe0) == 0xc0 &&
-      (input[1] & 0xc0) == 0x80) {
-    *symbol = (((input[0] & 0x1f) << 6) |
-               (input[1] & 0x3f));
-    if (*symbol > 0x7f) {
-      return 2;
-    }
-  }
-  // 3-byte UFT8
-  if (size > 2 &&
-      (input[0] & 0xf0) == 0xe0 &&
-      (input[1] & 0xc0) == 0x80 &&
-      (input[2] & 0xc0) == 0x80) {
-    *symbol = (((input[0] & 0x0f) << 12) |
-               ((input[1] & 0x3f) << 6) |
-               (input[2] & 0x3f));
-    if (*symbol > 0x7ff) {
-      return 3;
-    }
-  }
-  // 4-byte UFT8
-  if (size > 3 &&
-      (input[0] & 0xf8) == 0xf0 &&
-      (input[1] & 0xc0) == 0x80 &&
-      (input[2] & 0xc0) == 0x80 &&
-      (input[3] & 0xc0) == 0x80) {
-    *symbol = (((input[0] & 0x07) << 18) |
-               ((input[1] & 0x3f) << 12) |
-               ((input[2] & 0x3f) << 6) |
-               (input[3] & 0x3f));
-    if (*symbol > 0xffff && *symbol <= 0x10ffff) {
-      return 4;
-    }
-  }
-  // Not UTF8, emit a special symbol above the UTF8-code space
-  *symbol = 0x110000 | input[0];
-  return 1;
-}
-
-// Returns true if at least min_fraction of the data is UTF8-encoded.
-bool IsMostlyUTF8(const uint8_t* data, size_t length, double min_fraction) {
-  size_t size_utf8 = 0;
-  size_t pos = 0;
-  while (pos < length) {
-    int symbol;
-    int bytes_read = ParseAsUTF8(&symbol, data + pos, length - pos);
-    pos += bytes_read;
-    if (symbol < 0x110000) size_utf8 += bytes_read;
-  }
-  return size_utf8 > min_fraction * length;
-}
+// For quality 1 there is no block splitting, so we buffer at most this much
+// literals and commands.
+static const int kMaxNumDelayedSymbols = 0x2fff;
 
 void RecomputeDistancePrefixes(Command* cmds,
                                size_t num_commands,
@@ -111,7 +51,7 @@ void RecomputeDistancePrefixes(Command* cmds,
   if (num_direct_distance_codes == 0 && distance_postfix_bits == 0) {
     return;
   }
-  for (int i = 0; i < num_commands; ++i) {
+  for (size_t i = 0; i < num_commands; ++i) {
     Command* cmd = &cmds[i];
     if (cmd->copy_len_ > 0 && cmd->cmd_prefix_ >= 128) {
       PrefixEncodeCopyDistance(cmd->DistanceCode(),
@@ -125,10 +65,11 @@ void RecomputeDistancePrefixes(Command* cmds,
 
 uint8_t* BrotliCompressor::GetBrotliStorage(size_t size) {
   if (storage_size_ < size) {
-    storage_.reset(new uint8_t[size]);
+    delete[] storage_;
+    storage_ = new uint8_t[size];
     storage_size_ = size;
   }
-  return &storage_[0];
+  return storage_;
 }
 
 BrotliCompressor::BrotliCompressor(BrotliParams params)
@@ -142,7 +83,8 @@ BrotliCompressor::BrotliCompressor(BrotliParams params)
       last_processed_pos_(0),
       prev_byte_(0),
       prev_byte2_(0),
-      storage_size_(0) {
+      storage_size_(0),
+      storage_(0) {
   // Sanitize params.
   params_.quality = std::max(1, params_.quality);
   if (params_.lgwin < kMinWindowBits) {
@@ -169,15 +111,10 @@ BrotliCompressor::BrotliCompressor(BrotliParams params)
   // read_block_size_bits + 1 bits because the copy tail length needs to be
   // smaller than ringbuffer size.
   int ringbuffer_bits = std::max(params_.lgwin + 1, params_.lgblock + 1);
-  ringbuffer_.reset(new RingBuffer(ringbuffer_bits, params_.lgblock));
-  if (params_.quality > 9) {
-    literal_cost_mask_ = (1 << params_.lgblock) - 1;
-    literal_cost_.reset(new float[literal_cost_mask_ + 1]);
-  }
+  ringbuffer_ = new RingBuffer(ringbuffer_bits, params_.lgblock);
 
-  // Allocate command buffer.
-  cmd_buffer_size_ = std::max(1 << 18, 1 << params_.lgblock);
-  commands_.reset(new brotli::Command[cmd_buffer_size_]);
+  commands_ = 0;
+  cmd_alloc_size_ = 0;
 
   // Initialize last byte with stream header.
   if (params_.lgwin == 16) {
@@ -187,10 +124,10 @@ BrotliCompressor::BrotliCompressor(BrotliParams params)
     last_byte_ = 1;
     last_byte_bits_ = 7;
   } else if (params_.lgwin > 17) {
-    last_byte_ = ((params_.lgwin - 17) << 1) | 1;
+    last_byte_ = static_cast<uint8_t>(((params_.lgwin - 17) << 1) | 1);
     last_byte_bits_ = 4;
   } else {
-    last_byte_ = ((params_.lgwin - 8) << 4) | 1;
+    last_byte_ = static_cast<uint8_t>(((params_.lgwin - 8) << 4) | 1);
     last_byte_bits_ = 7;
   }
 
@@ -209,6 +146,10 @@ BrotliCompressor::BrotliCompressor(BrotliParams params)
 }
 
 BrotliCompressor::~BrotliCompressor() {
+  delete[] storage_;
+  free(commands_);
+  delete ringbuffer_;
+  delete hashers_;
 }
 
 void BrotliCompressor::CopyInputToRingBuffer(const size_t input_size,
@@ -216,10 +157,10 @@ void BrotliCompressor::CopyInputToRingBuffer(const size_t input_size,
   ringbuffer_->Write(input_buffer, input_size);
   input_pos_ += input_size;
 
-  // Erase a few more bytes in the ring buffer to make hashing not
-  // depend on uninitialized data. This makes compression deterministic
-  // and it prevents uninitialized memory warnings in Valgrind. Even
-  // without erasing, the output would be valid (but nondeterministic).
+  // TL;DR: If needed, initialize 7 more bytes in the ring buffer to make the
+  // hashing not depend on uninitialized data. This makes compression
+  // deterministic and it prevents uninitialized memory warnings in Valgrind.
+  // Even without erasing, the output would be valid (but nondeterministic).
   //
   // Background information: The compressor stores short (at most 8 bytes)
   // substrings of the input already read in a hash table, and detects
@@ -247,7 +188,7 @@ void BrotliCompressor::CopyInputToRingBuffer(const size_t input_size,
   // subsequent rounds data in the ringbuffer would be affected.
   if (pos <= ringbuffer_->mask()) {
     // This is the first time when the ring buffer is being written.
-    // We clear 3 bytes just after the bytes that have been copied from
+    // We clear 7 bytes just after the bytes that have been copied from
     // the input buffer.
     //
     // The ringbuffer has a "tail" that holds a copy of the beginning,
@@ -256,9 +197,9 @@ void BrotliCompressor::CopyInputToRingBuffer(const size_t input_size,
     // in this tail (where index may be larger than mask), so that
     // we have exactly defined behavior and don't read un-initialized
     // memory. Due to performance reasons, hashing reads data using a
-    // LOAD32, which can go 3 bytes beyond the bytes written in the
+    // LOAD64, which can go 7 bytes beyond the bytes written in the
     // ringbuffer.
-    memset(ringbuffer_->start() + pos, 0, 3);
+    memset(ringbuffer_->start() + pos, 0, 7);
   }
 }
 
@@ -288,27 +229,21 @@ bool BrotliCompressor::WriteBrotliData(const bool is_last,
     return false;
   }
 
-  bool utf8_mode =
-      params_.quality >= 9 &&
-      IsMostlyUTF8(&data[last_processed_pos_ & mask], bytes, kMinUTF8Ratio);
-
-  if (literal_cost_.get()) {
-    if (utf8_mode) {
-      EstimateBitCostsForLiteralsUTF8(last_processed_pos_, bytes, mask,
-                                      literal_cost_mask_, data,
-                                      literal_cost_.get());
-    } else {
-      EstimateBitCostsForLiterals(last_processed_pos_, bytes, mask,
-                                  literal_cost_mask_,
-                                  data, literal_cost_.get());
-    }
+  // Theoretical max number of commands is 1 per 2 bytes.
+  size_t newsize = num_commands_ + bytes / 2 + 1;
+  if (newsize > cmd_alloc_size_) {
+    // Reserve a bit more memory to allow merging with a next block
+    // without realloc: that would impact speed.
+    newsize += bytes / 4;
+    cmd_alloc_size_ = newsize;
+    commands_ =
+        static_cast<Command*>(realloc(commands_, sizeof(Command) * newsize));
   }
+
   CreateBackwardReferences(bytes, last_processed_pos_, data, mask,
-                           literal_cost_.get(),
-                           literal_cost_mask_,
                            max_backward_distance_,
                            params_.quality,
-                           hashers_.get(),
+                           hashers_,
                            hash_type_,
                            dist_cache_,
                            &last_insert_len_,
@@ -316,16 +251,12 @@ bool BrotliCompressor::WriteBrotliData(const bool is_last,
                            &num_commands_,
                            &num_literals_);
 
-  // For quality 1 there is no block splitting, so we buffer at most this much
-  // literals and commands.
-  static const int kMaxNumDelayedSymbols = 0x2fff;
-  int max_length = std::min<int>(mask + 1, 1 << kMaxInputBlockBits);
+  size_t max_length = std::min<size_t>(mask + 1, 1u << kMaxInputBlockBits);
   if (!is_last && !force_flush &&
       (params_.quality >= kMinQualityForBlockSplit ||
        (num_literals_ + num_commands_ < kMaxNumDelayedSymbols)) &&
-      num_commands_ + (input_block_size() >> 1) < cmd_buffer_size_ &&
       input_pos_ + input_block_size() <= last_flush_pos_ + max_length) {
-    // Everything will happen later.
+    // Merge with next input block. Everything will happen later.
     last_processed_pos_ = input_pos_;
     *out_size = 0;
     return true;
@@ -339,7 +270,7 @@ bool BrotliCompressor::WriteBrotliData(const bool is_last,
     last_insert_len_ = 0;
   }
 
-  return WriteMetaBlockInternal(is_last, utf8_mode, out_size, output);
+  return WriteMetaBlockInternal(is_last, out_size, output);
 }
 
 // Decide about the context map based on the ability of the prediction
@@ -373,6 +304,8 @@ void ChooseContextMap(int quality,
   for (int k = 0; k < 3; ++k) {
     entropy3 += ShannonEntropy(bigram_histo + 3 * k, 3, &dummy);
   }
+
+  assert(total != 0);
   entropy1 *= (1.0 / total);
   entropy2 *= (1.0 / total);
   entropy3 *= (1.0 / total);
@@ -423,7 +356,7 @@ void DecideOverLiteralContextModeling(const uint8_t* input,
   // intervals.
   const size_t end_pos = start_pos + length;
   int bigram_prefix_histo[9] = { 0 };
-  for (; start_pos + 64 < end_pos; start_pos += 4096) {
+  for (; start_pos + 64 <= end_pos; start_pos += 4096) {
       static const int lut[4] = { 0, 0, 1, 2 };
     const size_t stride_end_pos = start_pos + 64;
     int prev = lut[input[start_pos & mask] >> 6] * 3;
@@ -439,7 +372,6 @@ void DecideOverLiteralContextModeling(const uint8_t* input,
 }
 
 bool BrotliCompressor::WriteMetaBlockInternal(const bool is_last,
-                                              const bool utf8_mode,
                                               size_t* out_size,
                                               uint8_t** output) {
   const size_t bytes = input_pos_ - last_flush_pos_;
@@ -452,15 +384,16 @@ bool BrotliCompressor::WriteMetaBlockInternal(const bool is_last,
 
   bool uncompressed = false;
   if (num_commands_ < (bytes >> 8) + 2) {
-    if (num_literals_ > 0.99 * bytes) {
+    if (num_literals_ > 0.99 * static_cast<double>(bytes)) {
       int literal_histo[256] = { 0 };
       static const int kSampleRate = 13;
       static const double kMinEntropy = 7.92;
-      static const double kBitCostThreshold = bytes * kMinEntropy / kSampleRate;
-      for (int i = last_flush_pos_; i < input_pos_; i += kSampleRate) {
+      const double bit_cost_threshold =
+          static_cast<double>(bytes) * kMinEntropy / kSampleRate;
+      for (size_t i = last_flush_pos_; i < input_pos_; i += kSampleRate) {
         ++literal_histo[data[i & mask]];
       }
-      if (BitsEntropy(literal_histo, 256) > kBitCostThreshold) {
+      if (BitsEntropy(literal_histo, 256) > bit_cost_threshold) {
         uncompressed = true;
       }
     }
@@ -487,21 +420,21 @@ bool BrotliCompressor::WriteMetaBlockInternal(const bool is_last,
     if (params_.quality > 9 && params_.mode == BrotliParams::MODE_FONT) {
       num_direct_distance_codes = 12;
       distance_postfix_bits = 1;
-      RecomputeDistancePrefixes(commands_.get(),
+      RecomputeDistancePrefixes(commands_,
                                 num_commands_,
                                 num_direct_distance_codes,
                                 distance_postfix_bits);
     }
     if (params_.quality < kMinQualityForBlockSplit) {
       if (!StoreMetaBlockTrivial(data, last_flush_pos_, bytes, mask, is_last,
-                                 commands_.get(), num_commands_,
+                                 commands_, num_commands_,
                                  &storage_ix,
                                  &storage[0])) {
         return false;
       }
     } else {
       MetaBlockSplit mb;
-      int literal_context_mode = utf8_mode ? CONTEXT_UTF8 : CONTEXT_SIGNED;
+      int literal_context_mode = CONTEXT_UTF8;
       if (params_.quality <= 9) {
         int num_literal_contexts = 1;
         const int* literal_context_map = NULL;
@@ -512,7 +445,7 @@ bool BrotliCompressor::WriteMetaBlockInternal(const bool is_last,
                                          &literal_context_map);
         if (literal_context_map == NULL) {
           BuildMetaBlockGreedy(data, last_flush_pos_, mask,
-                               commands_.get(), num_commands_,
+                               commands_, num_commands_,
                                &mb);
         } else {
           BuildMetaBlockGreedyWithContexts(data, last_flush_pos_, mask,
@@ -520,13 +453,16 @@ bool BrotliCompressor::WriteMetaBlockInternal(const bool is_last,
                                            literal_context_mode,
                                            num_literal_contexts,
                                            literal_context_map,
-                                           commands_.get(), num_commands_,
+                                           commands_, num_commands_,
                                            &mb);
         }
       } else {
+        if (!IsMostlyUTF8(data, last_flush_pos_, mask, bytes, kMinUTF8Ratio)) {
+          literal_context_mode = CONTEXT_SIGNED;
+        }
         BuildMetaBlock(data, last_flush_pos_, mask,
                        prev_byte_, prev_byte2_,
-                       commands_.get(), num_commands_,
+                       commands_, num_commands_,
                        literal_context_mode,
                        &mb);
       }
@@ -541,14 +477,14 @@ bool BrotliCompressor::WriteMetaBlockInternal(const bool is_last,
                           num_direct_distance_codes,
                           distance_postfix_bits,
                           literal_context_mode,
-                          commands_.get(), num_commands_,
+                          commands_, num_commands_,
                           mb,
                           &storage_ix,
                           &storage[0])) {
         return false;
       }
     }
-    if (bytes + 4 < (storage_ix >> 3)) {
+    if (bytes + 4 < static_cast<size_t>(storage_ix >> 3)) {
       // Restore the distance cache and last byte.
       memcpy(dist_cache_, saved_dist_cache_, sizeof(dist_cache_));
       storage[0] = last_byte_;
@@ -610,9 +546,11 @@ bool BrotliCompressor::WriteMetadata(const size_t input_size,
   if (input_size == 0) {
     WriteBits(2, 0, &storage_ix, encoded_buffer);
     *encoded_size = (storage_ix + 7) >> 3;
+  } else if (input_size > (1 << 24)) {
+    return false;
   } else {
-    size_t nbits = Log2Floor(input_size - 1) + 1;
-    size_t nbytes = (nbits + 7) / 8;
+    int nbits = Log2Floor(static_cast<uint32_t>(input_size) - 1) + 1;
+    int nbytes = (nbits + 7) / 8;
     WriteBits(2, nbytes, &storage_ix, encoded_buffer);
     WriteBits(8 * nbytes, input_size - 1, &storage_ix, encoded_buffer);
     size_t hdr_size = (storage_ix + 7) >> 3;
@@ -641,7 +579,6 @@ int BrotliCompressBuffer(BrotliParams params,
     // Output buffer needs at least one byte.
     return 0;
   }
-  BrotliCompressor compressor(params);
   BrotliMemIn in(input_buffer, input_size);
   BrotliMemOut out(encoded_buffer, *encoded_size);
   if (!BrotliCompress(params, &in, &out)) {
@@ -684,7 +621,7 @@ bool BrotliInIsFinished(BrotliIn* r) {
 }
 
 int BrotliCompress(BrotliParams params, BrotliIn* in, BrotliOut* out) {
-  return BrotliCompressWithCustomDictionary(0, nullptr, params, in, out);
+  return BrotliCompressWithCustomDictionary(0, 0, params, in, out);
 }
 
 int BrotliCompressWithCustomDictionary(size_t dictsize, const uint8_t* dict,
@@ -711,5 +648,6 @@ int BrotliCompressWithCustomDictionary(size_t dictsize, const uint8_t* dict,
   }
   return true;
 }
+
 
 }  // namespace brotli
