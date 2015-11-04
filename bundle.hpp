@@ -8,7 +8,8 @@
 #ifndef BUNDLE_HPP
 #define BUNDLE_HPP
 
-#define BUNDLE_VERSION "2.0.0" /* (2015/11/03) Add BCM,ZLING,MCM,Tangelo,ZMolly,ZSTDf support; Change archive format /!\
+#define BUNDLE_VERSION "2.0.1" /* (2015/11/04) Fix clang warnings and compilation errors
+#define BUNDLE_VERSION "2.0.0" // (2015/11/03) Add BCM,ZLING,MCM,Tangelo,ZMolly,ZSTDf support; Change archive format /!\
 #define BUNDLE_VERSION "1.0.2" // (2015/10/29) Skip extra copy during archive decompression; add extra archive meta-info
 #define BUNDLE_VERSION "1.0.1" // (2015/10/10) Shrink to fit during measures() function
 #define BUNDLE_VERSION "1.0.0" // (2015/10/09) Change benchmark API to sort multiples values as well /!\

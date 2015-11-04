@@ -269,9 +269,10 @@ namespace bundle
 |[zstd](https://github.com/Cyan4973/zstd)|Yann Collet|BSD-2|0.3.2||
 
 ### Evaluated alternatives
-[FastLZ](http://fastlz.org/), [FLZP](http://cs.fit.edu/~mmahoney/compression/#flzp), [LibLZF](http://freshmeat.net/projects/liblzf), [LZFX](https://code.google.com/p/lzfx/), [LZHAM](https://code.google.com/p/lzham/), [LZJB](http://en.wikipedia.org/wiki/LZJB), [LZLIB](http://www.nongnu.org/lzip/lzlib.html), [LZO](http://www.oberhumer.com/opensource/lzo/), [LZP](http://www.cbloom.com/src/index_lz.html), [SMAZ](https://github.com/antirez/smaz), [Snappy](https://code.google.com/p/snappy/), [ZLIB](http://www.zlib.net/), [bzip2](http://www.bzip2.org/), [CMix](http://www.byronknoll.com/cmix.html), [Crush](http://sourceforge.net/projects/crush/), [Yappy](http://blog.gamedeff.com/?p=371), [M1](https://sites.google.com/site/toffer86/m1-project)
+[FastLZ](http://fastlz.org/), [FLZP](http://cs.fit.edu/~mmahoney/compression/#flzp), [LibLZF](http://freshmeat.net/projects/liblzf), [LZFX](https://code.google.com/p/lzfx/), [LZHAM](https://code.google.com/p/lzham/), [LZJB](http://en.wikipedia.org/wiki/LZJB), [LZLIB](http://www.nongnu.org/lzip/lzlib.html), [LZO](http://www.oberhumer.com/opensource/lzo/), [LZP](http://www.cbloom.com/src/index_lz.html), [SMAZ](https://github.com/antirez/smaz), [Snappy](https://code.google.com/p/snappy/), [ZLIB](http://www.zlib.net/), [bzip2](http://www.bzip2.org/), [Yappy](http://blog.gamedeff.com/?p=371), [CMix](http://www.byronknoll.com/cmix.html), [Crush](http://sourceforge.net/projects/crush/), [M1](https://sites.google.com/site/toffer86/m1-project)
 
 ### Changelog
+- v2.0.1 (2015/11/04): Fix clang warnings and compilation errors
 - v2.0.0 (2015/11/03): Add BCM, ZLING, MCM, Tangelo, ZMolly, ZSTDf support
 - v2.0.0 (2015/11/03): Change archive format (break change)
 - v2.0.0 (2015/11/03): Disambiguate .bnd/.zip archive handling
