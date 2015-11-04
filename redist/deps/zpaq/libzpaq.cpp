@@ -4330,9 +4330,9 @@ int Predictor::assemble_p() {
           put1a(0x3d, (1<<19)-1);      // cmp eax, (1<<19)-1
           put2(0x7e05);                // jle L1
           put1a(0xb8, (1<<19)-1);      // mov eax, (1<<19)-1
-          put1a(0x3d, -1<<19);         // cmp eax, -1<<19
+          put1a(0x3d, -(1<<19));       // cmp eax, -1<<19
           put2(0x7d05);                // jge L2
-          put1a(0xb8, -1<<19);         // mov eax, -1<<19
+          put1a(0xb8, -(1<<19));       // mov eax, -1<<19
           put3(0x8904d6);              // L2: mov [esi+edx*8], eax
           put3(0x83c110);              // add ecx, 16 ; err
           put3(0xc1f905);              // sar ecx, 5
@@ -4340,9 +4340,9 @@ int Predictor::assemble_p() {
           put2a(0x81f9, (1<<19)-1);    // cmp ecx, (1<<19)-1
           put2(0x7e05);                // jle L3
           put1a(0xb9, (1<<19)-1);      // mov ecx, (1<<19)-1
-          put2a(0x81f9, -1<<19);       // cmp ecx, -1<<19
+          put2a(0x81f9, -(1<<19));     // cmp ecx, -1<<19
           put2(0x7d05);                // jge L4
-          put1a(0xb9, -1<<19);         // mov ecx, -1<<19
+          put1a(0xb9, -(1<<19));       // mov ecx, -1<<19
           put4(0x894cd604);            // L4: mov [esi+edx*8+4], ecx
         }
         break;
@@ -4541,9 +4541,9 @@ int Predictor::assemble_p() {
           put1a(0x3d, (1<<19)-1);      // cmp eax, (1<<19)-1
           put2(0x7e05);                // jge L1
           put1a(0xb8, (1<<19)-1);      // mov eax, (1<<19)-1
-          put1a(0x3d, -1<<19);         // cmp eax, -1<<19
+          put1a(0x3d, -(1<<19));       // cmp eax, -1<<19
           put2(0x7d05);                // jle L2
-          put1a(0xb8, -1<<19);         // mov eax, -1<<19
+          put1a(0xb8, -(1<<19));       // mov eax, -1<<19
           put2(0x8906);                // L2: mov [esi], eax
           if (k<cp[3]-1) {
             if (S==8) put1(0x48);      // rex.w

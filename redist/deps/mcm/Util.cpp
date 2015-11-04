@@ -36,7 +36,7 @@ double clockToSeconds(clock_t c) {
 }
 
 std::string errstr(int err) {
-#ifdef WIN32
+#ifdef _MSC_VER
 	char buffer[1024];
 	strerror_s(buffer, sizeof(buffer), err);
 	return buffer;

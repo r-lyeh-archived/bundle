@@ -248,25 +248,25 @@ namespace bundle
 |BUNDLE_USE_CXX11|(autodetected)|Define as 0/1 to disable/enable C++11 features
 
 ### Licensing table
-| Software | Author(s) | License | Version | Major modifications? |
+| Software | Author(s) | License | Version | Major changes? |
 |:--------:|:---------:|:-------:|:-------:|:---------------------|
-|[bundle](https://github.com/r-lyeh/bundle)|r-lyeh|ZLIB/LibPNG license|latest||
+|[bundle](https://github.com/r-lyeh/bundle)|r-lyeh|ZLIB/LibPNG|latest||
 |[bcm](http://sourceforge.net/projects/bcm/)|Ilya Muravyov|Public Domain|1.00|istream based now|
-|[brotli](https://github.com/google/brotli)|Jyrki Alakuijala, Zoltan Szabadka|Apache 2.0 license|2015/11/03||
+|[brotli](https://github.com/google/brotli)|Jyrki Alakuijala, Zoltan Szabadka|Apache 2.0|2015/11/03||
 |[csc](https://github.com/fusiyuan2010/CSC)|Siyuan Fu|Public Domain|2015/06/16||
 |[easylzma](https://github.com/lloyd/easylzma)|Igor Pavlov, Lloyd Hilaiel|Public Domain|0.0.7||
 |[endian](https://gist.github.com/panzi/6856583)|Mathias Panzenböck|Public Domain||msvc fix|
-|[libbsc](https://github.com/IlyaGrebnov/libbsc)|Ilya Grebnov|Apache 2.0 license|3.1.0||
-|[libzling](https://github.com/richox/libzling)|Zhang Li|BSD-3 license|2015/09/16||
-|[libzpaq](https://github.com/zpaq/zpaq)|Matt Mahoney|Public Domain||7.05|
-|[lz4](https://github.com/Cyan4973/lz4)|Yann Collet|BSD-2 license|1.7.1||
-|[mcm](https://github.com/mathieuchartier/mcm)|Mathieu Chartier|GPL license||0.84|
+|[libbsc](https://github.com/IlyaGrebnov/libbsc)|Ilya Grebnov|Apache 2.0|3.1.0||
+|[libzling](https://github.com/richox/libzling)|Zhang Li|BSD-3|2015/09/16||
+|[libzpaq](https://github.com/zpaq/zpaq)|Matt Mahoney|Public Domain|7.05||
+|[lz4](https://github.com/Cyan4973/lz4)|Yann Collet|BSD-2|1.7.1||
+|[mcm](https://github.com/mathieuchartier/mcm)|Mathieu Chartier|GPL|0.84||
 |[miniz](https://code.google.com/p/miniz/)|Rich Geldreich|Public Domain|v1.15 r.4.1|alignment fix|
-|[shoco](https://github.com/Ed-von-Schleck/shoco)|Christian Schramm|MIT license|2015/03/16||
-|[shrinker](https://code.google.com/p/data-shrinker/)|Siyuan Fu|BSD-3 license|rev 3||
-|[tangelo](http://encode.ru/threads/1738-TANGELO-new-compressor-(derived-from-PAQ8-FP8))|Matt Mahoney, Jan Ondrus|GPL license|2.41|reentrant fixes, istream based now|
-|[zmolly](https://github.com/richox/zmolly)|Zhang Li|BSD-3 license|0.0.1|reentrant and memstream fixes|
-|[zstd](https://github.com/Cyan4973/zstd)|Yann Collet|BSD-2 license|0.3.2||
+|[shoco](https://github.com/Ed-von-Schleck/shoco)|Christian Schramm|MIT|2015/03/16||
+|[shrinker](https://code.google.com/p/data-shrinker/)|Siyuan Fu|BSD-3|rev 3||
+|[tangelo](http://encode.ru/threads/1738-TANGELO-new-compressor-(derived-from-PAQ8-FP8))|Matt Mahoney, Jan Ondrus|GPL|2.41|reentrant fixes, istream based now|
+|[zmolly](https://github.com/richox/zmolly)|Zhang Li|BSD-3|0.0.1|reentrant and memstream fixes|
+|[zstd](https://github.com/Cyan4973/zstd)|Yann Collet|BSD-2|0.3.2||
 
 ### Evaluated alternatives
 [FastLZ](http://fastlz.org/), [FLZP](http://cs.fit.edu/~mmahoney/compression/#flzp), [LibLZF](http://freshmeat.net/projects/liblzf), [LZFX](https://code.google.com/p/lzfx/), [LZHAM](https://code.google.com/p/lzham/), [LZJB](http://en.wikipedia.org/wiki/LZJB), [LZLIB](http://www.nongnu.org/lzip/lzlib.html), [LZO](http://www.oberhumer.com/opensource/lzo/), [LZP](http://www.cbloom.com/src/index_lz.html), [SMAZ](https://github.com/antirez/smaz), [Snappy](https://code.google.com/p/snappy/), [ZLIB](http://www.zlib.net/), [bzip2](http://www.bzip2.org/), [CMix](http://www.byronknoll.com/cmix.html), [Crush](http://sourceforge.net/projects/crush/), [Yappy](http://blog.gamedeff.com/?p=371), [M1](https://sites.google.com/site/toffer86/m1-project)
