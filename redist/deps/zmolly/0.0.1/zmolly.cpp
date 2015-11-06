@@ -37,6 +37,7 @@
 #include <vector>
 #include <thread>
 #include <sstream>
+#include <map>
 
 /*******************************************************************************
  * Portable CLZ
@@ -72,6 +73,9 @@
 /*******************************************************************************
  * Allocator
  ******************************************************************************/
+
+#if 0
+
 static const int ALLOCATOR_POOLSIZE = 8192;
 
 struct allocator_element_t {
@@ -127,6 +131,34 @@ struct allocator_t {
         m_freelist = element;
     }
 };
+
+#else
+
+struct allocator_t {
+    std::map< void *, size_t > map;
+
+    allocator_t() {
+    }
+    ~allocator_t() {
+        for( auto &pair : map ) {
+            if( pair.second ) {
+                free( pair.first );
+            }
+        }
+    }
+
+    inline void* alloc(int nsize) {
+        void *ptr = malloc(nsize);
+        map[ ptr ] = 1;
+        return ptr;
+    }
+
+    inline void free(void* ptr) {
+        map[ ptr ] = 0;
+    }
+};
+
+#endif
 
 /*******************************************************************************
  * Arithmetic coder
@@ -837,6 +869,8 @@ int zmolly_encode(std::istream& fdata, std::ostream& fcomp0, int block_size) {
 
             while (mpos < int(ib.size()) && midx < MLEN_SIZE) {
                 match_len = 1;
+                // find a match -- avoid underflow
+                if (mpos >= 8)
                 // find a match -- avoid overflow
                 if (mpos + matcher_t::match_max < int(ib.size())) {
                     match_len = matcher.lookup(ib.data(), ib.size(), mpos);
