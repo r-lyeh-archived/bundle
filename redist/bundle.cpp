@@ -369,7 +369,7 @@ namespace bundle {
 
     bool is_packed( const void *mem, size_t size ) {
         unsigned char *mem8 = (unsigned char *)mem;
-        return mem8 && (size >= 3) && (0 == mem8[0]) && (0x70 == mem8[1]) && (mem8[2] <= bundle::ZMOLLY);
+        return mem8 && (size >= 3) && (0 == mem8[0]) && (0x70 == mem8[1]) && (mem8[2] <= bundle::LZJB);
     }
     bool is_unpacked( const void *mem, size_t size ) {
         return !is_packed( mem, size );
@@ -396,8 +396,10 @@ namespace bundle {
             break; case BCM: return "BCM";
             break; case ZLING: return "ZLING";
             break; case MCM: return "MCM";
-            break; case ZMOLLY: return "ZMOLLY";
             break; case TANGELO: return "TANGELO";
+            break; case ZMOLLY: return "ZMOLLY";
+            break; case CRUSH: return "CRUSH";
+            break; case LZJB: return "LZJB";
 #if 0
             // for archival purposes
             break; case BZIP2: return "BZIP2";
@@ -436,8 +438,10 @@ namespace bundle {
             break; case BCM: return "bcm";
             break; case ZLING: return "zli";
             break; case MCM: return "mcm";
-            break; case ZMOLLY: return "zmo";
             break; case TANGELO: return "tan";
+            break; case ZMOLLY: return "zmo";
+            break; case CRUSH: return "crush";
+            break; case LZJB: return "lzjb";
 #if 0
             // for archival purposes
             break; case BZIP2: return "bz2";
@@ -489,6 +493,7 @@ namespace bundle {
         size_t zlen = len;
         switch( q ) {
             break; default : zlen = zlen * 2;
+            break; case RAW: zlen = zlen * 1;
 #ifndef BUNDLE_NO_LZ4
             break; case LZ4F: case LZ4: zlen = LZ4_compressBound((int)(len));
 #endif
@@ -549,6 +554,7 @@ namespace bundle {
             ok = true;
             switch( q ) {
                 break; default: ok = false;
+                break; case RAW: memcpy( out, in, outlen = inlen ); 
 #ifndef BUNDLE_NO_LZ4
                 break; case LZ4F: outlen = LZ4_compress( (const char *)in, (char *)out, inlen );
                 break; case LZ4: outlen = LZ4_compressHC2( (const char *)in, (char *)out, inlen, 16 );
@@ -736,6 +742,16 @@ namespace bundle {
                     outlen = os.tell();
             }
 #endif
+#ifndef BUNDLE_NO_CRUSH
+            break; case CRUSH: {
+                outlen = crush::compress(0, (uint8_t*)in, int(inlen), (uint8_t*)out);
+            }
+#endif
+#ifndef BUNDLE_NO_LZJB
+            break; case LZJB: {
+                outlen = lzjb_compress2010((uint8_t *)in, (uint8_t *)out, inlen, outlen, 0);
+            }
+#endif
 #if 0
                 // for archival purposes:
                 break; case YAPPY: outlen = Yappy_Compress( (const unsigned char *)in, (unsigned char *)out, inlen ) - out;
@@ -780,6 +796,7 @@ namespace bundle {
             ok = true;
             switch( q ) {
                 break; default: ok = false;
+                break; case RAW: memcpy( out, in, bytes_read = outlen = inlen ); 
 #ifndef BUNDLE_NO_LZ4
                 break; case LZ4F: case LZ4: if( LZ4_decompress_safe( (const char *)in, (char *)out, inlen, outlen ) >= 0 ) bytes_read = inlen; // faster: bytes_read = LZ4_uncompress( (const char *)in, (char *)out, outlen );
 #endif
@@ -899,6 +916,16 @@ namespace bundle {
                         archive.decompress(&os);
                         bytes_read = inlen;
                     }
+            }
+#endif
+#ifndef BUNDLE_NO_CRUSH
+            break; case CRUSH: {
+                    bytes_read = outlen == crush::decompress( (uint8_t*)in, (uint8_t*)out, int(outlen) ) ? inlen : 0;
+            }
+#endif
+#ifndef BUNDLE_NO_LZJB
+            break; case LZJB: {
+                    bytes_read = outlen == lzjb_decompress2010( (uint8_t*)in, (uint8_t*)out, inlen, outlen, 0) ? inlen : 0;
             }
 #endif
 

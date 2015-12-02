@@ -13,8 +13,8 @@ int main() {
     vector<unsigned> libs { 
         RAW, SHOCO, LZ4F, MINIZ, LZIP, LZMA20,
         ZPAQ, LZ4, BROTLI9, ZSTD, LZMA25,
-        BSC, BROTLI11, SHRINKER, CSC20,
-        BCM, ZLING, MCM, TANGELO, ZMOLLY
+        BSC, BROTLI11, SHRINKER, CSC20, BCM,
+        ZLING, MCM, TANGELO, ZMOLLY, CRUSH, LZJB
     };
     for( auto &lib : libs ) {
         string packed = pack(lib, original);

@@ -8,7 +8,8 @@
 #ifndef BUNDLE_HPP
 #define BUNDLE_HPP
 
-#define BUNDLE_VERSION "2.0.2" /* (2015/11/07) Fix ZMolly segmentation fault (OSX)
+#define BUNDLE_VERSION "2.0.3" /* (2015/12/02) Add LZJB and CRUSH; Add BUNDLE_NO_CDDL directive
+#define BUNDLE_VERSION "2.0.2" // (2015/11/07) Fix ZMolly segmentation fault (OSX)
 #define BUNDLE_VERSION "2.0.1" // (2015/11/04) Fix clang warnings and compilation errors
 #define BUNDLE_VERSION "2.0.0" // (2015/11/03) Add BCM,ZLING,MCM,Tangelo,ZMolly,ZSTDf support; Change archive format /!\
 #define BUNDLE_VERSION "1.0.2" // (2015/10/29) Skip extra copy during archive decompression; add extra archive meta-info
@@ -70,9 +71,9 @@
 namespace bundle
 {
     // libraries and/or encoders 
-    enum { RAW, SHOCO, LZ4F, MINIZ, LZIP, LZMA20, ZPAQ,         //  0..6
-           LZ4, BROTLI9, ZSTD, LZMA25, BSC, BROTLI11, SHRINKER, //  7..13
-           CSC20, ZSTDF, BCM, ZLING, MCM, TANGELO, ZMOLLY       // 14..20
+    enum { RAW, SHOCO, LZ4F, MINIZ, LZIP, LZMA20, ZPAQ, LZ4,      //  0..7
+           BROTLI9, ZSTD, LZMA25, BSC, BROTLI11, SHRINKER, CSC20, //  7..14
+           ZSTDF, BCM, ZLING, MCM, TANGELO, ZMOLLY, CRUSH, LZJB   // 15..22
     };
 
     // algorithm properties
@@ -237,7 +238,6 @@ namespace bundle
             all.push_back( LZ4 );
             all.push_back( ZSTD );
             all.push_back( BSC );
-            all.push_back( BROTLI9 );
             all.push_back( SHRINKER );
             all.push_back( CSC20 );
             all.push_back( BCM );
@@ -245,6 +245,8 @@ namespace bundle
             all.push_back( MCM );
             all.push_back( ZMOLLY );
             all.push_back( ZSTDF );
+            all.push_back( CRUSH );
+            all.push_back( LZJB );
 #if 0
             // for archival purposes
             all.push_back( BZIP2 );
@@ -262,6 +264,7 @@ namespace bundle
     static inline std::vector<unsigned> slow_encodings() {
         static std::vector<unsigned> all;
         if( all.empty() ) {
+            all.push_back( BROTLI9 );
             all.push_back( BROTLI11 );
             all.push_back( ZPAQ );
             all.push_back( TANGELO );
@@ -273,6 +276,7 @@ namespace bundle
         static std::vector<unsigned> all;
         if( all.empty() ) {
             all = fast_encodings();
+            all.push_back( BROTLI9 );
             all.push_back( BROTLI11 );
             all.push_back( ZPAQ );
             all.push_back( TANGELO );
@@ -293,15 +297,25 @@ namespace bundle
         double memusage = 0;
         unsigned long long bytes = 0;
         T packed;
-        std::string str() const {
+        double encspeed() const {
             double mbytes = bytes / 1024.0 / 1024.0;
             auto secs = []( double x ) { return x / 1000000.0; };
-            auto encspeed = mbytes / secs(enctime > 0.0 ? enctime : 1.0);
-            auto decspeed = mbytes / secs(dectime > 0.0 ? dectime : 1.0);
-            auto avgspeed = 0.5 * (encspeed + decspeed);
+            mbytes /= secs(enctime > 0.0 ? enctime : 1.0);
+            return int( mbytes * 100 ) / 100.0;
+        }
+        double decspeed() const {
+            double mbytes = bytes / 1024.0 / 1024.0;
+            auto secs = []( double x ) { return x / 1000000.0; };
+            mbytes /= secs(dectime > 0.0 ? dectime : 1.0);
+            return int( mbytes * 100 ) / 100.0;
+        }
+        double avgspeed() const {
+            return encspeed() * 0.5 + decspeed() * 0.5;
+        }
+        std::string str() const {
             std::stringstream ss;
             ss << ( pass ? "[ OK ] " : "[FAIL] ") << name_of(q) << ": ratio=" << ratio << "% enctime=" << int(enctime) << "us dectime=" << int(dectime) << "us (zlen=" << packed.size() << " bytes)";
-            ss << "(enc:" << encspeed << " MB/s,dec:" << decspeed << " MB/s,avg:" << avgspeed << " MB/s)";
+            ss << "(enc:" << encspeed() << " MB/s,dec:" << decspeed() << " MB/s,avg:" << avgspeed() << " MB/s)";
             return ss.str();
         }
     };
@@ -369,7 +383,7 @@ namespace bundle
         for( auto end = measures.size(), it = end - end; it < end; ++it ) {
             auto &r = measures[ it ];
             // skip compression results if compression ratio is below % (like <5%). default: 0 (do not skip)
-            if( r.pass && r.q != RAW && r.ratio >= pct_treshold_to_skip_compression ) {
+            if( r.pass /*&& r.q != RAW*/ && r.ratio >= pct_treshold_to_skip_compression ) {
                 q[ r.ratio ].insert( it );
             }
         }
@@ -387,7 +401,7 @@ namespace bundle
         std::map<double,std::set<unsigned>> q;
         for( auto end = measures.size(), it = end - end; it < end; ++it ) {
             auto &r = measures[ it ];
-            if( r.pass && r.q != RAW ) {
+            if( r.pass /*&& r.q != RAW*/ ) {
                 q[ r.enctime ].insert( it );
             }
         }
@@ -405,7 +419,7 @@ namespace bundle
         std::map<double,std::set<unsigned>> q;
         for( auto end = measures.size(), it = end - end; it < end; ++it ) {
             auto &r = measures[ it ];
-            if( r.pass && r.q != RAW ) {
+            if( r.pass /*&& r.q != RAW*/ ) {
                 q[ r.dectime ].insert( it );
             }
         }
@@ -522,3 +536,142 @@ namespace bundle
 
 #endif
 
+
+#ifdef BUNDLE_BUILD_TESTS
+
+#include <cassert>
+#include <fstream>
+#include <iostream>
+#include <string>
+#include <vector>
+
+// tiny unittest suite { // usage: int main() { /* orphan test */ test(1<2); suite("grouped tests") { test(1<2); test(1<2); } }
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#define suite(...) if(printf("------ " __VA_ARGS__),puts(""),true)
+#define test(...)  (errno=0,++tst,err+=!(ok=!!(__VA_ARGS__))),printf("[%s] %d %s (%s)\n",ok?" OK ":"FAIL",__LINE__,#__VA_ARGS__,strerror(errno))
+unsigned tst=0,err=0,ok=atexit([]{ suite("summary"){ printf("[%s] %d tests = %d passed + %d errors\n",err?"FAIL":" OK ",tst,tst-err,err); }});
+// } rlyeh, public domain.
+
+void stream_tests() {
+    suite( "stream tests" ) {
+        using namespace std;
+        using namespace bundle;
+        // 23 mb dataset
+        string original( "There's a lady who's sure all that glitters is gold" );
+        for (int i = 0; i < 18; ++i) original += original + string( i + 1, 32 + i );
+
+        // pack, unpack & verify all encoders
+        vector<unsigned> libs { 
+            RAW, SHOCO, LZ4F, MINIZ, LZIP, LZMA20,
+            ZPAQ, LZ4, BROTLI9, ZSTD, LZMA25,
+            BSC, BROTLI11, SHRINKER, CSC20, BCM,
+            ZLING, MCM, TANGELO, ZMOLLY, CRUSH, LZJB
+        };
+        for( auto &lib : libs ) {
+            suite( "stream test (%s)", name_of(lib) ) {
+                string packed = pack(lib, original);
+                string unpacked = unpack(packed);
+                cout << "[ OK ] " << original.size() << " <-> " << packed.size() << " bytes" << endl;
+                test( original == unpacked );
+            }
+        }
+    }
+}
+
+void zip_tests() {
+    std::string binary;
+
+    suite( ".zip saving tests" ) {
+        bundle::archive pak;
+
+        pak.resize(2);
+
+        pak[0]["name"] = "test.txt";
+        pak[0]["data"] = "hello world";
+
+        pak[1]["name"] = "test2.txt";
+        pak[1]["data"] = "1337";
+
+        //std::cout << "zipping files..." << std::endl;
+
+        // save .zip archive to memory string (then optionally to disk)
+        binary = pak.zip(60); // compression level = 60 (of 100)
+
+        //std::cout << "saving test:\n" << pak.toc() << std::endl;
+    }
+
+    suite( ".zip loading tests" ) {
+        //std::cout << "unzipping files..." << std::endl;
+
+        bundle::archive pak;
+        pak.zip( binary );
+
+        //std::cout << "loading test:\n" << pak.toc() << std::endl;
+
+        test( pak.size() == 2 );
+
+        test( pak[0]["name"] == "test.txt" );
+        test( pak[0]["data"] == "hello world" );
+
+        test( pak[1]["name"] == "test2.txt" );
+        test( pak[1]["data"] == "1337" );
+    }
+}
+
+void bnd_tests() {
+    std::string binary;
+
+    suite( ".bnd saving tests" ) {
+        bundle::archive pak;
+        pak.resize(2);
+
+        pak[0]["name"] = "test_lz4.txt";
+        pak[0]["data"] = "hellohellohellohellohellohello";
+        pak[0]["data"] = bundle::pack( bundle::LZ4, pak[0]["data"] );
+
+        pak[1]["name"] = "test_shoco.txt";
+        pak[1]["data"] = "hellohellohellohellohellohello";
+        pak[1]["data"] = bundle::pack( bundle::SHOCO, pak[1]["data"] );
+
+        //std::cout << "packing files..." << std::endl;
+
+        // save .bnd archive to memory string (then optionally to disk)
+        binary = pak.bnd();
+
+        //std::cout << "saving test:\n" << pak.toc() << std::endl;
+    }
+
+    suite( ".bnd loading tests" ) {
+        //std::cout << "unpacking files..." << std::endl;
+
+        bundle::archive pak;
+        pak.bnd( binary );
+
+        //std::cout << "loading test:\n" << pak.toc() << std::endl;
+
+        test( pak.size() == 2 );
+
+        pak[0]["data"] = bundle::unpack( pak[0]["data"] );
+        pak[1]["data"] = bundle::unpack( pak[1]["data"] );
+
+        //std::cout << pak[0]["data"] << std::endl;
+
+        test( pak[0]["name"] == "test_lz4.txt" );
+        test( pak[1]["data"] == "hellohellohellohellohellohello" );
+
+        test( pak[1]["name"] == "test_shoco.txt" );
+        test( pak[1]["data"] == "hellohellohellohellohellohello" );
+
+        //std::cout << pak.toc() << std::endl;
+    }
+}
+
+int main() {
+    stream_tests();
+    zip_tests();
+    bnd_tests();
+}
+
+#endif

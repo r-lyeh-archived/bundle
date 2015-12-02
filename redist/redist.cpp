@@ -58,6 +58,15 @@
 #   ifndef BUNDLE_NO_LZMA
 #       define BUNDLE_NO_LZMA
 #   endif
+#   ifndef BUNDLE_NO_CRUSH
+#       define BUNDLE_NO_CRUSH
+#   endif
+#endif
+
+#ifdef BUNDLE_NO_CDDL
+#   ifndef BUNDLE_NO_LZJB
+#       define BUNDLE_NO_LZJB
+#   endif
 #endif
 
 #ifdef BUNDLE_NO_BSD2
@@ -557,6 +566,14 @@ extern "C" void bz_internal_error(int errcode) {
 
 #ifndef BUNDLE_NO_ZMOLLY
 #include "deps/zmolly/0.0.1/zmolly.cpp"
+#endif
+
+#ifndef BUNDLE_NO_CRUSH
+#include "deps/crush/crush.cpp"
+#endif
+
+#ifndef BUNDLE_NO_LZJB
+#include "deps/lzjb/lzjb2010.c"
 #endif
 
 #include "deps/endian/endian.h"
