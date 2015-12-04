@@ -359,17 +359,19 @@ namespace bundle {
 
             return out2 + "[...] (" + out1 + "[...])";
         }
+    }
 
-        void shout( unsigned q, const char *context, size_t from, size_t to ) {
-            if( verbose ) {
-                std::cout << context << " q:" << q << ",from:" << from << ",to:" << to << std::endl;
-            }
-        }
+    size_t padding( const void *mem, size_t size ) {
+        size_t padding = 0;
+        unsigned char *mem8 = (unsigned char *)mem;
+        while( mem8 && size && (0 == *mem8) ) mem8++, padding++, size--;
+        return padding;
     }
 
     bool is_packed( const void *mem, size_t size ) {
         unsigned char *mem8 = (unsigned char *)mem;
-        return mem8 && (size >= 3) && (0 == mem8[0]) && (0x70 == mem8[1]) && (mem8[2] <= bundle::LZJB);
+        while( mem8 && size && (0 == *mem8) ) mem8++, size--;
+        return mem8 && (size >= 2) && (0x70 == mem8[0]) && (mem8[1] <= bundle::LZJB);
     }
     bool is_unpacked( const void *mem, size_t size ) {
         return !is_packed( mem, size );
@@ -455,41 +457,40 @@ namespace bundle {
         }
     }
 
-    unsigned guess_type_of( const void *ptr, size_t size ) {
-        unsigned char *mem = (unsigned char *)ptr;
-        //std::string s; s.resize( size ); memcpy( &s[0], mem, size );
+    unsigned guess_type_of( const void *ptr, size_t len ) {
+        unsigned char *mem = (unsigned char *)ptr + padding( ptr, len );
+        //std::string s; s.resize( len ); memcpy( &s[0], mem, len );
         //std::cout << hexdump( s) << std::endl;
-        if( size >= 4 && mem && mem[0] == 'L' && mem[1] == 'Z' && mem[2] == 'I' && mem[3] == 'P' ) return LZIP;
-        if( size >= 1 && mem && mem[0] == 0xEC ) return MINIZ;
-        if( size >= 1 && mem && mem[0] >= 0xF0 ) return LZ4F;
+        if( len >= 4 && mem && mem[0] == 'L' && mem[1] == 'Z' && mem[2] == 'I' && mem[3] == 'P' ) return LZIP;
+        if( len >= 1 && mem && mem[0] == 0xEC ) return MINIZ;
+        if( len >= 1 && mem && mem[0] >= 0xF0 ) return LZ4F;
         return RAW;
     }
 
-    unsigned type_of( const void *mem, size_t size ) {
-        const char *ptr = (const char *)mem + 2;
-        return (*ptr);
+    unsigned type_of( const void *ptr, size_t len ) {
+        const char *mem = (const char *)ptr + padding( ptr, len ) + 2;
+        return (*mem);
     }
 
-    size_t len( const void *mem, size_t len ) {
-        if( !is_packed(mem, len) ) return 0;
-        const char *ptr = (const char *)mem + 3;
-        return vlebit(ptr);
+    size_t len( const void *ptr, size_t len ) {
+        if( !is_packed(ptr, len) ) return 0;
+        const char *mem = (const char *)ptr + padding( ptr, len ) + 3;
+        return vlebit(mem);
     }
 
-    size_t zlen( const void *mem, size_t len ) {
-        if( !is_packed(mem, len) ) return 0;
-        const char *ptr = (const char *)mem + 3;
-        return vlebit(ptr), vlebit(ptr);
+    size_t zlen( const void *ptr, size_t len ) {
+        if( !is_packed(ptr, len) ) return 0;
+        const char *mem = (const char *)ptr + padding( ptr, len ) + 3;
+        return vlebit(mem), vlebit(mem);
     }
 
-    const void *zptr( const void *mem, size_t len ) {
-        if( !is_packed(mem, len) ) return 0;
-        const char *ptr = (const char *)mem + 3;
-        return vlebit(ptr), vlebit(ptr), (const void *)ptr;
+    const void *zptr( const void *ptr, size_t len ) {
+        if( !is_packed(ptr, len) ) return 0;
+        const char *mem = (const char *)ptr + padding( ptr, len ) + 3;
+        return vlebit(mem), vlebit(mem), (const void *)mem;
     }
 
     size_t bound( unsigned q, size_t len ) {
-        enum { MAX_BUNDLE_HEADERS = 1 + 1 + 1 + (16 + 1) + (16 + 1) }; // up to 128-bit length sized streams
         size_t zlen = len;
         switch( q ) {
             break; default : zlen = zlen * 2;
@@ -510,7 +511,7 @@ namespace bundle {
             //break; case FSE: zlen = FSE_compressBound((int)len);
 #endif
         }
-        return zlen += MAX_BUNDLE_HEADERS, shout( q, "[bound]", len, zlen ), zlen;
+        return zlen += MAX_HEADER_SIZE;
     }
 
     size_t unc_payload( unsigned q ) {
@@ -524,13 +525,21 @@ namespace bundle {
         return payload;
     }
 
-    bool init() {
+    bool init_bsc() {
 #ifndef BUNDLE_NO_BSC
         static const bool init_bsc = (bsc_init(0), true);
 #endif
+        return true;
+    }
+
+    bool init_mcm() {
 #ifndef BUNDLE_NO_MCM
         static const bool init_mcm = (CompressorFactories::init(), true);
 #endif
+        return true;
+    }
+
+    bool init() {
 #if 0
         // for archival purposes:
         static const bool init_yappy = (Yappy_FillTables(), true);
@@ -548,7 +557,6 @@ namespace bundle {
     }
 
     bool pack( unsigned q, const void *in, size_t inlen, void *out, size_t &outlen ) {
-        static const bool crt0 = init();
         bool ok = false;
         if( in && inlen && out && outlen >= inlen ) {
             ok = true;
@@ -632,7 +640,10 @@ namespace bundle {
                 break; case ZSTDF: outlen = ZSTD_compress( out, outlen, in, inlen ); if( ZSTD_isError(outlen) ) outlen = 0;
 #endif
 #ifndef BUNDLE_NO_BSC
-                break; case BSC: outlen = bsc_compress((const unsigned char *)in, (unsigned char *)out, inlen, LIBBSC_DEFAULT_LZPHASHSIZE, LIBBSC_DEFAULT_LZPMINLEN, LIBBSC_DEFAULT_BLOCKSORTER, LIBBSC_CODER_QLFC_ADAPTIVE, LIBBSC_FEATURE_FASTMODE | 0);
+                break; case BSC: {
+                    static const bool crt0 = init_bsc();
+                    outlen = bsc_compress((const unsigned char *)in, (unsigned char *)out, inlen, LIBBSC_DEFAULT_LZPHASHSIZE, LIBBSC_DEFAULT_LZPMINLEN, LIBBSC_DEFAULT_BLOCKSORTER, LIBBSC_CODER_QLFC_ADAPTIVE, LIBBSC_FEATURE_FASTMODE | 0);
+                }
 #endif
 #ifndef BUNDLE_NO_SHRINKER
                 break; case SHRINKER: outlen = shrinker_compress((void *)in, out, inlen); if( -1 == int(outlen) ) outlen = 0;
@@ -726,6 +737,7 @@ namespace bundle {
 #endif
 #ifndef BUNDLE_NO_MCM
             break; case MCM: {
+                    static const bool crt0 = init_mcm();
                     ReadMemoryStream is((byte*)in, (byte*)in+inlen);
                     WriteMemoryStream os((byte*)out);
                     CompressionOptions options;
@@ -785,7 +797,7 @@ namespace bundle {
         }
         ok = ok && outlen > 0 && outlen < inlen;
         outlen = ok && outlen ? outlen : 0;
-        return shout( q, "[pack]", inlen, outlen ), ok;
+        return ok;
       }
 
     bool unpack( unsigned q, const void *in, size_t inlen, void *out, size_t &outlen ) {
@@ -828,7 +840,10 @@ namespace bundle {
                 break; case ZSTDF: bytes_read = ZSTD_decompress( out, outlen, in, inlen ); if( !ZSTD_isError(bytes_read) ) bytes_read = inlen;
 #endif
 #ifndef BUNDLE_NO_BSC
-                break; case BSC: bsc_decompress((const unsigned char *)in, inlen, (unsigned char *)out, outlen, /*LIBBSC_FEATURE_FASTMODE | */0); bytes_read = inlen;
+                break; case BSC: {
+                    static const bool crt0 = init_bsc();
+                    bsc_decompress((const unsigned char *)in, inlen, (unsigned char *)out, outlen, /*LIBBSC_FEATURE_FASTMODE | */0); bytes_read = inlen;
+                }
 #endif
 #ifndef BUNDLE_NO_SHRINKER
                 break; case SHRINKER: bytes_read = shrinker_decompress((void *)in, out, outlen); bytes_read = -1 == int(bytes_read) ? 0 : inlen;
@@ -908,6 +923,7 @@ namespace bundle {
 #endif
 #ifndef BUNDLE_NO_MCM
             break; case MCM: {
+                    static const bool crt0 = init_mcm();
                     ReadMemoryStream is((byte*)in, (byte*)in+inlen);
                     WriteMemoryStream os((byte*)out);
                     Archive archive(&is);
@@ -957,7 +973,7 @@ namespace bundle {
         }
         ok = ok && bytes_read == inlen;
         outlen = ok && outlen ? outlen : 0;
-        return shout( q, "[unpack]", inlen, outlen ), ok;
+        return ok;
     }
 
 }
@@ -1100,7 +1116,7 @@ namespace bundle
                 if( filename != it->end() && content != it->end() ) {
                     const size_t bufsize = content->second.size();
 
-                    int quality;
+                    int quality, padding(0);
                     if( type == ZIP ) {
                         quality = level;
                         if( it->find("comp") != it->end() ) {
@@ -1115,6 +1131,7 @@ namespace bundle
                     else
                     if( type == BND ) {
                         quality = MZ_NO_COMPRESSION;
+                        padding = bundle::padding( content->second );
                     }
 
                     std::string pathfile = filename->second;
@@ -1123,10 +1140,10 @@ namespace bundle
                     //std::cout << hexdump(content->second) << std::endl;
 
                     if( comment == it->end() ) {
-                        status = mz_zip_writer_add_mem_ex( &zip_archive, pathfile.c_str(), content->second.c_str(), bufsize,
+                        status = mz_zip_writer_add_mem_ex( &zip_archive, pathfile.c_str(), content->second.c_str() + padding, bufsize,
                             0, 0, quality, 0, 0 );
                     } else {
-                        status = mz_zip_writer_add_mem_ex( &zip_archive, pathfile.c_str(), content->second.c_str(), bufsize,
+                        status = mz_zip_writer_add_mem_ex( &zip_archive, pathfile.c_str(), content->second.c_str() + padding, bufsize,
                             comment->second.c_str(), comment->second.size(), quality, 0, 0 );
                     }
 

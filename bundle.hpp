@@ -8,7 +8,8 @@
 #ifndef BUNDLE_HPP
 #define BUNDLE_HPP
 
-#define BUNDLE_VERSION "2.0.3" /* (2015/12/02) Add LZJB and CRUSH; Add BUNDLE_NO_CDDL directive
+#define BUNDLE_VERSION "2.0.4" /* (2015/12/04) Add padding support; Fix reentrant CRUSH; Optimizations & fixes
+#define BUNDLE_VERSION "2.0.3" // (2015/12/02) Add LZJB and CRUSH; Add BUNDLE_NO_CDDL directive
 #define BUNDLE_VERSION "2.0.2" // (2015/11/07) Fix ZMolly segmentation fault (OSX)
 #define BUNDLE_VERSION "2.0.1" // (2015/11/04) Fix clang warnings and compilation errors
 #define BUNDLE_VERSION "2.0.0" // (2015/11/03) Add BCM,ZLING,MCM,Tangelo,ZMolly,ZSTDf support; Change archive format /!\
@@ -76,6 +77,9 @@ namespace bundle
            ZSTDF, BCM, ZLING, MCM, TANGELO, ZMOLLY, CRUSH, LZJB   // 15..22
     };
 
+    // constant: 32 = [0..10] padding + [1] 0x70 + [1] q + [1..10] vle(in) + [1..10] vle(out)
+    enum { MAX_HEADER_SIZE = 32 }; 
+
     // algorithm properties
     const char *const name_of( unsigned q );
     const char *const version_of( unsigned q );
@@ -91,6 +95,7 @@ namespace bundle
     unsigned guess_type_of( const void *mem, size_t size );
     size_t len( const void *mem, size_t size );
     size_t zlen( const void *mem, size_t size );
+    size_t padding( const void *mem, size_t size );
     const void *zptr( const void *mem, size_t size );
     bool pack( unsigned q, const void *in, size_t len, void *out, size_t &zlen );
     bool unpack( unsigned q, const void *in, size_t len, void *out, size_t &zlen );
@@ -131,6 +136,10 @@ namespace bundle
         return ext_of( type_of( input ) );
     }
     template<typename T>
+    static inline size_t padding( const T &input ) {
+        return padding( &input[0], input.size() );
+    }
+    template<typename T>
     static inline size_t len( const T &input ) {
         return len( &input[0], input.size() );
     }
@@ -146,13 +155,15 @@ namespace bundle
     template < class T1, class T2 >
     static inline bool unpack( T2 &output, const T1 &input ) {
         // sanity checks
-        assert( sizeof(input.at(0)) == 1 && "size of input elements != 1" );
-        assert( sizeof(output.at(0)) == 1 && "size of output elements != 1" );
+        assert( sizeof(input[0]) == 1 && "size of input elements != 1" );
+        assert( sizeof(output[0]) == 1 && "size of output elements != 1" );
 
         if( is_packed( input ) ) {
             // decapsulate
-            unsigned Q = input[2];
-            const char *ptr = (const char *)&input[3];
+            size_t pad = padding( input );
+            unsigned h = input[pad + 0];
+            unsigned Q = input[pad + 1];
+            const char *ptr = (const char *)&input[pad + 2];
             size_t size1 = vlebit(ptr);
             size_t size2 = vlebit(ptr);
 
@@ -174,8 +185,8 @@ namespace bundle
     template < class T1, class T2 >
     static inline bool pack( unsigned q, T2 &output, const T1 &input ) {
         // sanity checks
-        assert( sizeof(input.at(0)) == 1 && "size of input elements != 1" );
-        assert( sizeof(output.at(0)) == 1 && "size of output elements != 1" );
+        assert( sizeof(input[0]) == 1 && "size of input elements != 1" );
+        assert( sizeof(output[0]) == 1 && "size of output elements != 1" );
 
         if( input.empty() ) {
             output = input;
@@ -185,19 +196,18 @@ namespace bundle
         if( 1 /* is_unpacked( input ) */ ) {
             // resize to worst case
             size_t zlen = bound(q, input.size());
-            output.resize( zlen );
+            output.resize( MAX_HEADER_SIZE + zlen );
 
             // compress
-            if( pack( q, &input.at(0), input.size(), &output.at(0), zlen ) ) {
-                // resize properly
-                output.resize( zlen );
+            if( pack( q, &input[0], input.size(), &output[MAX_HEADER_SIZE], zlen ) ) {
+                // resize properly (new zlen)
+                output.resize( MAX_HEADER_SIZE + zlen );
 
                 // encapsulate
-                std::string header = std::string() + char(0) + char(0x70) + char(q) + vlebit(input.size()) + vlebit(output.size());
-                unsigned header_len = header.size();
-                output.resize( zlen + header_len );
-                memmove( &output[header_len], &output[0], zlen );
-                memcpy( &output[0], &header[0], header_len );
+                std::string header = std::string() + char(0x70) + char(q) + vlebit(input.size()) + vlebit(output.size() - MAX_HEADER_SIZE);
+                size_t header_len = header.size();
+                memset( &output[0], 0, MAX_HEADER_SIZE );
+                memcpy( &output[MAX_HEADER_SIZE-header_len], &header[0], header_len );
                 return true;
             }
         }
@@ -232,18 +242,12 @@ namespace bundle
             all.push_back( LZ4F );
             all.push_back( SHOCO );
             all.push_back( MINIZ );
-            all.push_back( LZIP );
             all.push_back( LZMA20 );
             all.push_back( LZMA25 );
             all.push_back( LZ4 );
             all.push_back( ZSTD );
-            all.push_back( BSC );
             all.push_back( SHRINKER );
-            all.push_back( CSC20 );
-            all.push_back( BCM );
             all.push_back( ZLING );
-            all.push_back( MCM );
-            all.push_back( ZMOLLY );
             all.push_back( ZSTDF );
             all.push_back( CRUSH );
             all.push_back( LZJB );
@@ -264,10 +268,16 @@ namespace bundle
     static inline std::vector<unsigned> slow_encodings() {
         static std::vector<unsigned> all;
         if( all.empty() ) {
-            all.push_back( BROTLI9 );
+            all.push_back( BCM );
             all.push_back( BROTLI11 );
-            all.push_back( ZPAQ );
+            all.push_back( BROTLI9 );
+            all.push_back( BSC );
+            all.push_back( CSC20 );
+            all.push_back( LZIP );
+            all.push_back( MCM );
             all.push_back( TANGELO );
+            all.push_back( ZMOLLY );
+            all.push_back( ZPAQ );
         }
         return all;
     }
@@ -276,10 +286,16 @@ namespace bundle
         static std::vector<unsigned> all;
         if( all.empty() ) {
             all = fast_encodings();
-            all.push_back( BROTLI9 );
+            all.push_back( BCM );
             all.push_back( BROTLI11 );
-            all.push_back( ZPAQ );
+            all.push_back( BROTLI9 );
+            all.push_back( BSC );
+            all.push_back( CSC20 );
+            all.push_back( LZIP );
+            all.push_back( MCM );
             all.push_back( TANGELO );
+            all.push_back( ZMOLLY );
+            all.push_back( ZPAQ );
         }
         return all;
     }
@@ -310,7 +326,10 @@ namespace bundle
             return int( mbytes * 100 ) / 100.0;
         }
         double avgspeed() const {
-            return encspeed() * 0.5 + decspeed() * 0.5;
+            double mbytes = bytes / 1024.0 / 1024.0;
+            auto secs = []( double x ) { return x / 1000000.0; };
+            mbytes = mbytes * 2 / secs(dectime + enctime ? dectime + enctime : 1.0);
+            return int( mbytes * 100 ) / 100.0;
         }
         std::string str() const {
             std::stringstream ss;
@@ -334,15 +353,14 @@ namespace bundle
             r.bytes = bytes;
 
             if( r.pass && do_enc ) {
-#ifdef BUNDLE_USE_OMP_TIMER
+#if BUNDLE_USE_OMP_TIMER
                 auto start = omp_get_wtime();
-                r.packed = pack( encoding, original );
-                r.packed.shrink_to_fit();
+                pack( encoding, r.packed, original );
                 auto end = omp_get_wtime();
                 r.enctime = ( end - start ) * 1000000;
 #else
                 auto start = std::chrono::steady_clock::now();
-                r.packed = pack( encoding, original );
+                pack( encoding, r.packed, original );
                 auto end = std::chrono::steady_clock::now();
                 r.enctime = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
 #endif
@@ -352,14 +370,16 @@ namespace bundle
             }
 
             if( r.pass && do_dec ) {
-#ifdef BUNDLE_USE_OMP_TIMER
+#if BUNDLE_USE_OMP_TIMER
+                std::string unpacked;
                 auto start = omp_get_wtime();
-                std::string unpacked = unpack( r.packed );
+                unpack( unpacked, r.packed );
                 auto end = omp_get_wtime();
                 r.dectime = ( end - start ) * 1000000;
 #else
+                std::string unpacked;
                 auto start = std::chrono::steady_clock::now();
-                std::string unpacked = unpack( r.packed );
+                unpack( unpacked, r.packed );
                 auto end = std::chrono::steady_clock::now();
                 r.dectime = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
 #endif
@@ -369,6 +389,8 @@ namespace bundle
 
             if( !r.pass ) {
                 r.ratio = r.enctime = r.dectime = 0;
+            } else {
+                // @todo: clean up, if !best ratio && !fastest dec && !best mem
             }
         }
 
@@ -379,11 +401,12 @@ namespace bundle
 
     template< class T >
     std::vector<unsigned> sort_smallest_encoders( const std::vector< measure<T> > &measures, double pct_treshold_to_skip_compression = 0 ) {
+        // skip compression results if compression ratio is below % (like <5%). default: 0 (do not skip)
+        // also, sort in reverse order
         std::map<double,std::set<unsigned>,std::greater<double>> q;
         for( auto end = measures.size(), it = end - end; it < end; ++it ) {
             auto &r = measures[ it ];
-            // skip compression results if compression ratio is below % (like <5%). default: 0 (do not skip)
-            if( r.pass /*&& r.q != RAW*/ && r.ratio >= pct_treshold_to_skip_compression ) {
+            if( r.pass && r.ratio >= pct_treshold_to_skip_compression ) {
                 q[ r.ratio ].insert( it );
             }
         }
@@ -401,7 +424,7 @@ namespace bundle
         std::map<double,std::set<unsigned>> q;
         for( auto end = measures.size(), it = end - end; it < end; ++it ) {
             auto &r = measures[ it ];
-            if( r.pass /*&& r.q != RAW*/ ) {
+            if( r.pass ) {
                 q[ r.enctime ].insert( it );
             }
         }
@@ -419,7 +442,7 @@ namespace bundle
         std::map<double,std::set<unsigned>> q;
         for( auto end = measures.size(), it = end - end; it < end; ++it ) {
             auto &r = measures[ it ];
-            if( r.pass /*&& r.q != RAW*/ ) {
+            if( r.pass ) {
                 q[ r.dectime ].insert( it );
             }
         }
@@ -432,13 +455,31 @@ namespace bundle
         return v;
     }
 
+    template< class T >
+    std::vector<unsigned> sort_average_coders( const std::vector< measure<T> > &measures ) {
+        std::map<double,std::set<unsigned>> q;
+        for( auto end = measures.size(), it = end - end; it < end; ++it ) {
+            auto &r = measures[ it ];
+            if( r.pass ) {
+                q[ r.enctime + r.dectime ].insert( it );
+            }
+        }
+        std::vector<unsigned> v;
+        for( auto &set : q ) {
+            for( auto &avg : set.second ) {
+                v.push_back( avg );
+            }
+        }
+        return v;
+    }
+
     // find_* functions return sorted encoding enums (as slot indices are traversed from measures vector)
 
     template< class T >
     std::vector<unsigned> find_smallest_encoders( const std::vector< measure<T> > &measures, double pct_treshold_to_skip_compression = 0 ) {
         std::vector<unsigned> v;
         for( auto &slot : sort_smallest_encoders( measures, pct_treshold_to_skip_compression ) ) {
-            v.push_back( type_of( measures[slot].packed ) );
+            v.push_back( measures[slot].q );
         }
         return v;
     }
@@ -447,7 +488,7 @@ namespace bundle
     std::vector<unsigned> find_fastest_encoders( const std::vector< measure<T> > &measures ) {
         std::vector<unsigned> v;
         for( auto &slot : sort_fastest_encoders( measures ) ) {
-            v.push_back( type_of( measures[slot].packed ) );
+            v.push_back( measures[slot].q );
         }
         return v;
     }
@@ -456,7 +497,16 @@ namespace bundle
     std::vector<unsigned> find_fastest_decoders( const std::vector< measure<T> > &measures ) {
         std::vector<unsigned> v;
         for( auto &slot : sort_fastest_decoders( measures ) ) {
-            v.push_back( type_of( measures[slot].packed ) );
+            v.push_back( measures[slot].q );
+        }
+        return v;
+    }
+
+    template< class T >
+    std::vector<unsigned> find_average_coders( const std::vector< measure<T> > &measures ) {
+        std::vector<unsigned> v;
+        for( auto &slot : sort_average_coders( measures ) ) {
+            v.push_back( measures[slot].q );
         }
         return v;
     }

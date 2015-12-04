@@ -1,6 +1,6 @@
 // crush.cpp
 // Written and placed in the public domain by Ilya Muravyov
-//
+// modified by @r-lyeh: thread-safe, reentrant
 
 #ifdef _MSC_VER
 #define _CRT_SECECURE_NO_WARNINGS
@@ -19,51 +19,48 @@ namespace crush
 
 // Bit I/O
 //
+struct bits {
+	uint8_t* g_inbuf;
+	uint8_t* g_outbuf;
+	int g_inbuf_pos;
+	int g_outbuf_pos;
+	int bit_buf;
+	int bit_count;
 
-uint8_t* g_inbuf;
-uint8_t* g_outbuf;
-int g_inbuf_pos;
-int g_outbuf_pos;
-int bit_buf;
-int bit_count;
-
-inline void init_bits(uint8_t* inbuf, uint8_t* outbuf)
-{
-	bit_count=bit_buf=g_inbuf_pos=g_outbuf_pos=0;
-	g_inbuf = inbuf;
-	g_outbuf = outbuf;
-}
-
-inline void put_bits(int n, int x)
-{
-	bit_buf|=x<<bit_count;
-	bit_count+=n;
-	while (bit_count>=8)
-	{
-		g_outbuf[g_outbuf_pos++] = bit_buf;
-		bit_buf>>=8;
-		bit_count-=8;
+	void init(uint8_t* inbuf, uint8_t* outbuf) {
+		bit_count=bit_buf=g_inbuf_pos=g_outbuf_pos=0;
+		g_inbuf = inbuf;
+		g_outbuf = outbuf;
 	}
-}
 
-inline void flush_bits()
-{
-	put_bits(7, 0);
-	bit_count=bit_buf=0;
-}
-
-inline int get_bits(int n)
-{
-	while (bit_count<n)
-	{
-		bit_buf|=g_inbuf[g_inbuf_pos++]<<bit_count;
-		bit_count+=8;
+	void put(int n, int x) {
+		bit_buf|=x<<bit_count;
+		bit_count+=n;
+		while (bit_count>=8)
+		{
+			g_outbuf[g_outbuf_pos++] = bit_buf;
+			bit_buf>>=8;
+			bit_count-=8;
+		}
 	}
-	const int x=bit_buf&((1<<n)-1);
-	bit_buf>>=n;
-	bit_count-=n;
-	return x;
-}
+
+	void flush() {
+		put(7, 0);
+		bit_count=bit_buf=0;
+	}
+
+	int get(int n) {
+		while (bit_count<n)
+		{
+			bit_buf|=g_inbuf[g_inbuf_pos++]<<bit_count;
+			bit_count+=8;
+		}
+		const int x=bit_buf&((1<<n)-1);
+		bit_buf>>=n;
+		bit_count-=n;
+		return x;
+	}
+};
 
 // LZ77
 //
@@ -140,6 +137,8 @@ uint32_t compress(int level, uint8_t* buf, int size, uint8_t* outbuf)
 
 	const int max_chain[]={4, 256, 1<<12};
 
+	bits bits;
+
 	{
 		for (int i=0; i<HASH1_SIZE+HASH2_SIZE; ++i)
 			head[i]=-1;
@@ -151,7 +150,7 @@ uint32_t compress(int level, uint8_t* buf, int size, uint8_t* outbuf)
 		for (int i=0; i<HASH2_LEN; ++i)
 			h2=update_hash2(h2, buf[i]);
 
-		init_bits(NULL, outbuf);
+		bits.init(NULL, outbuf);
 
 		int p=0;
 		while (p<size)
@@ -237,54 +236,54 @@ uint32_t compress(int level, uint8_t* buf, int size, uint8_t* outbuf)
 
 			if (len>=MIN_MATCH) // Match
 			{
-				put_bits(1, 1);
+				bits.put(1, 1);
 
 				const int l=len-MIN_MATCH;
 				if (l<A)
 				{
-					put_bits(1, 1); // 1
-					put_bits(A_BITS, l);
+					bits.put(1, 1); // 1
+					bits.put(A_BITS, l);
 				}
 				else if (l<B)
 				{
-					put_bits(2, 1<<1); // 01
-					put_bits(B_BITS, l-A);
+					bits.put(2, 1<<1); // 01
+					bits.put(B_BITS, l-A);
 				}
 				else if (l<C)
 				{
-					put_bits(3, 1<<2); // 001
-					put_bits(C_BITS, l-B);
+					bits.put(3, 1<<2); // 001
+					bits.put(C_BITS, l-B);
 				}
 				else if (l<D)
 				{
-					put_bits(4, 1<<3); // 0001
-					put_bits(D_BITS, l-C);
+					bits.put(4, 1<<3); // 0001
+					bits.put(D_BITS, l-C);
 				}
 				else if (l<E)
 				{
-					put_bits(5, 1<<4); // 00001
-					put_bits(E_BITS, l-D);
+					bits.put(5, 1<<4); // 00001
+					bits.put(E_BITS, l-D);
 				}
 				else
 				{
-					put_bits(5, 0); // 00000
-					put_bits(F_BITS, l-E);
+					bits.put(5, 0); // 00000
+					bits.put(F_BITS, l-E);
 				}
 
 				--offset;
 				int log=W_BITS-NUM_SLOTS;
 				while (offset>=(2<<log))
 					++log;
-				put_bits(SLOT_BITS, log-(W_BITS-NUM_SLOTS));
+				bits.put(SLOT_BITS, log-(W_BITS-NUM_SLOTS));
 				if (log>(W_BITS-NUM_SLOTS))
-					put_bits(log, offset-(1<<log));
+					bits.put(log, offset-(1<<log));
 				else
-					put_bits(W_BITS-(NUM_SLOTS-1), offset);
+					bits.put(W_BITS-(NUM_SLOTS-1), offset);
 			}
 			else // Literal
 			{
 				len=1;
-				put_bits(9, buf[p]<<1); // 0 xxxxxxxx
+				bits.put(9, buf[p]<<1); // 0 xxxxxxxx
 			}
 
 			while (len--!=0) // Insert new strings
@@ -298,48 +297,49 @@ uint32_t compress(int level, uint8_t* buf, int size, uint8_t* outbuf)
 			}
 		}
 
-		flush_bits();
+		bits.flush();
 	}
 
-	return g_outbuf_pos;
+	return bits.g_outbuf_pos;
 }
 
 uint32_t decompress(uint8_t* inbuf, uint8_t* outbuf, int outsize)
 {
     if ((outsize<1))
     {
-        fprintf(stderr, "File corrupted: size=%d\n", outsize);
+        //fprintf(stderr, "File corrupted: size=%d\n", outsize);
         return 0;
     }
 
-    init_bits(inbuf, NULL);
+    bits bits;
+    bits.init(inbuf, NULL);
 
     int p=0;
     while (p<outsize)
     {
-        if (get_bits(1))
+        if (bits.get(1))
         {
             int len;
-            if (get_bits(1))
-                len=get_bits(A_BITS);
-            else if (get_bits(1))
-                len=get_bits(B_BITS)+A;
-            else if (get_bits(1))
-                len=get_bits(C_BITS)+B;
-            else if (get_bits(1))
-                len=get_bits(D_BITS)+C;
-            else if (get_bits(1))
-                len=get_bits(E_BITS)+D;
+            if (bits.get(1))
+                len=bits.get(A_BITS);
+            else if (bits.get(1))
+                len=bits.get(B_BITS)+A;
+            else if (bits.get(1))
+                len=bits.get(C_BITS)+B;
+            else if (bits.get(1))
+                len=bits.get(D_BITS)+C;
+            else if (bits.get(1))
+                len=bits.get(E_BITS)+D;
             else
-                len=get_bits(F_BITS)+E;
+                len=bits.get(F_BITS)+E;
 
-            const int log=get_bits(SLOT_BITS)+(W_BITS-NUM_SLOTS);
+            const int log=bits.get(SLOT_BITS)+(W_BITS-NUM_SLOTS);
             int s=~(log>(W_BITS-NUM_SLOTS)
-                ?get_bits(log)+(1<<log)
-                :get_bits(W_BITS-(NUM_SLOTS-1)))+p;
+                ?bits.get(log)+(1<<log)
+                :bits.get(W_BITS-(NUM_SLOTS-1)))+p;
             if (s<0)
             {
-                fprintf(stderr, "File corrupted: s=%d p=%d outsize=%d\n", s, p, outsize);
+                //fprintf(stderr, "File corrupted: s=%d p=%d outsize=%d\n", s, p, outsize);
                 return 0;
             }
 
@@ -350,7 +350,7 @@ uint32_t decompress(uint8_t* inbuf, uint8_t* outbuf, int outsize)
                 outbuf[p++]=outbuf[s++];
         }
         else
-            outbuf[p++]=get_bits(8);
+            outbuf[p++]=bits.get(8);
     }
 
     return p;
