@@ -159,10 +159,11 @@ namespace bundle
         assert( sizeof(output[0]) == 1 && "size of output elements != 1" );
 
         if( is_packed( input ) ) {
-            // decapsulate
+            // decapsulate, skip header (initial byte), and grab Q (compression algorithm)
             size_t pad = padding( input );
-            unsigned h = input[pad + 0];
             unsigned Q = input[pad + 1];
+
+            // retrieve uncompressed and compressed size
             const char *ptr = (const char *)&input[pad + 2];
             size_t size1 = vlebit(ptr);
             size_t size2 = vlebit(ptr);
@@ -171,7 +172,7 @@ namespace bundle
             size1 += unc_payload(Q);
             output.resize( size1 );
 
-            // note: output must be resized properly before calling this function!!
+            // note: output must be resized properly before calling this function!! (see bound() function)
             if( unpack( Q, ptr, size2, &output[0], size1 ) ) {
                 output.resize( size1 );
                 return true;
