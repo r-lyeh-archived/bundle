@@ -104,10 +104,9 @@ int main() {
 
 [@mavam](https://github.com/mavam) has an awesome R script that plots some fancy graphics in [his compbench repository](https://github.com/mavam/compbench). The following CC images are a few of his own showcasing an invocation for a 10,000 packet PCAP trace:
 
-![Tradeoff](https://raw.githubusercontent.com/mavam/compbench/master/screenshots/pcap-tradeoff.png)
-![Compression Ratio](https://raw.githubusercontent.com/mavam/compbench/master/screenshots/pcap-compression-ratio.png)
-![Throughput Scatterplot](https://raw.githubusercontent.com/mavam/compbench/master/screenshots/pcap-throughput-scatter.png)
-![Throughput Barplot](https://raw.githubusercontent.com/mavam/compbench/master/screenshots/pcap-throughput-bars.png)
+![Tradeoff](https://raw.githubusercontent.com/mavam/compbench/master/screenshots/bro-tradeoff-comp.png)
+![Throughput Scatterplot](https://raw.githubusercontent.com/mavam/compbench/master/screenshots/bro-throughput-scatter.png)
+![Compression Ratio](https://raw.githubusercontent.com/mavam/compbench/master/screenshots/bro-compression-ratio-decomp.png)
 
 ### API - data
 ```c++
