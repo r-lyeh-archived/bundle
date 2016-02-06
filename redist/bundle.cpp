@@ -371,7 +371,7 @@ namespace bundle {
     bool is_packed( const void *mem, size_t size ) {
         unsigned char *mem8 = (unsigned char *)mem;
         while( mem8 && size && (0 == *mem8) ) mem8++, size--;
-        return mem8 && (size >= 2) && (0x70 == mem8[0]) && (mem8[1] <= bundle::LZJB);
+        return mem8 && (size >= 2) && (0x70 == mem8[0]) && (mem8[1] <= bundle::BZIP2);
     }
     bool is_unpacked( const void *mem, size_t size ) {
         return !is_packed( mem, size );
@@ -402,9 +402,9 @@ namespace bundle {
             break; case ZMOLLY: return "ZMOLLY";
             break; case CRUSH: return "CRUSH";
             break; case LZJB: return "LZJB";
+            break; case BZIP2: return "BZIP2";
 #if 0
             // for archival purposes
-            break; case BZIP2: return "BZIP2";
             break; case BLOSC: return "BLOSC";
             break; case FSE: return "FSE";
             break; case LZFX: return "LZFX";
@@ -444,9 +444,9 @@ namespace bundle {
             break; case ZMOLLY: return "zmo";
             break; case CRUSH: return "crush";
             break; case LZJB: return "lzjb";
+            break; case BZIP2: return "bz2";
 #if 0
             // for archival purposes
-            break; case BZIP2: return "bz2";
             break; case BLOSC: return "blosc";
             break; case FSE: return "fse";
             break; case LZFX: return "lzfx";
@@ -764,10 +764,19 @@ namespace bundle {
                 outlen = lzjb_compress2010((uint8_t *)in, (uint8_t *)out, inlen, outlen, 0);
             }
 #endif
+#ifndef BUNDLE_NO_BZIP2
+            break; case BZIP2: {
+                unsigned int o(outlen);
+                if( BZ_OK == BZ2_bzBuffToBuffCompress( (char *)out, &o, (char *)in, inlen, 9 /*level*/, 0 /*verbosity*/, 30 /*default*/ ) ) {
+                    outlen = o;
+                } else {
+                    outlen = 0;
+                }
+            }
+#endif
 #if 0
                 // for archival purposes:
                 break; case YAPPY: outlen = Yappy_Compress( (const unsigned char *)in, (unsigned char *)out, inlen ) - out;
-                break; case BZIP2: { unsigned int o(outlen); if( BZ_OK != BZ2_bzBuffToBuffCompress( (char *)out, &o, (char *)in, inlen, 9 /*level*/, 0 /*verbosity*/, 30 /*default*/ ) ) outlen = 0; else outlen = o; }
                 break; case BLOSC: { int clevel = 9, doshuffle = 0, typesize = 1;
                     int r = blosc_compress( clevel, doshuffle, typesize, inlen, in, out, outlen);
                     if( r <= 0 ) outlen = 0; else outlen = r; }
@@ -944,12 +953,18 @@ namespace bundle {
                     bytes_read = outlen == lzjb_decompress2010( (uint8_t*)in, (uint8_t*)out, inlen, outlen, 0) ? inlen : 0;
             }
 #endif
-
+#ifndef BUNDLE_NO_BZIP2
+            break; case BZIP2: { 
+                    unsigned int o(outlen); 
+                    if( BZ_OK == BZ2_bzBuffToBuffDecompress( (char *)out, &o, (char *)in, inlen, 0 /*fast*/, 0 /*verbosity*/ ) ) { 
+                        bytes_read = inlen;
+                    }
+            }
+#endif
 #if 0
                 // for archival purposes:
                 break; case EASYLZMA: if( lzma_decompress<0>( (const uint8_t *)in, inlen, (uint8_t *)out, &outlen ) ) bytes_read = inlen;
                 break; case YAPPY: Yappy_UnCompress( (const unsigned char *)in, ((const unsigned char *)in) + inlen, (unsigned char *)out ); bytes_read = inlen;
-                break; case BZIP2: { unsigned int o(outlen); if( BZ_OK == BZ2_bzBuffToBuffDecompress( (char *)out, &o, (char *)in, inlen, 0 /*fast*/, 0 /*verbosity*/ ) ) { bytes_read = inlen; outlen = o; }}
                 break; case BLOSC: if( blosc_decompress( in, out, outlen ) > 0 ) bytes_read = inlen;
                 break; case FSE: { int r = FSE_decompress( (unsigned char*)out, outlen, (const void *)in ); if( r >= 0 ) bytes_read = r; }
                 break; case LZFX: if( lzfx_decompress( in, inlen, out, &outlen ) >= 0 ) bytes_read = inlen;

@@ -1,16 +1,15 @@
 # bundle :package: <a href="https://travis-ci.org/r-lyeh/bundle"><img src="https://api.travis-ci.org/r-lyeh/bundle.svg?branch=master" align="right" /></a>
 
-Bundle is an embeddable compression library that supports 22 compression algorithms and 2 archive formats. 
+Bundle is an embeddable compression library that supports 23 compression algorithms and 2 archive formats. 
 
 Distributed in two files.
 
 ### Features
 - [x] Archive support: .bnd, .zip
-- [x] Stream support: DEFLATE, LZMA, LZIP, ZPAQ, LZ4, ZSTD, BROTLI, BSC, CSC, BCM, MCM, ZMOLLY, ZLING, TANGELO, SHRINKER, CRUSH, LZJB and SHOCO 
-- [x] Cross-platform, compiles on clang++/g++/visual studio (C++03).
+- [x] Stream support: DEFLATE, LZMA, LZIP, ZPAQ, LZ4, ZSTD, BROTLI, BSC, CSC, BCM, MCM, ZMOLLY, ZLING, TANGELO, SHRINKER, CRUSH, LZJB, BZIP2 and SHOCO 
 - [x] Optimized for highest compression ratios on each compressor, where possible.
 - [x] Optimized for fastest decompression times on each decompressor, where possible.
-- [x] Configurable, redistributable, self-contained, amalgamated and cross-platform.
+- [x] Configurable, redistributable, self-contained, amalgamated and cross-platform (C++03).
 - [x] Optional benchmark infrastructure (C++11).
 - [x] ZLIB/LibPNG licensed.
 
@@ -20,7 +19,8 @@ Distributed in two files.
 [0x70 0x??]          Header (8 bits). De/compression algorithm (8 bits)
                      enum { RAW, SHOCO, LZ4F, MINIZ, LZIP, LZMA20, ZPAQ, LZ4,      //  0..7
                             BROTLI9, ZSTD, LZMA25, BSC, BROTLI11, SHRINKER, CSC20, //  7..14
-                            ZSTDF, BCM, ZLING, MCM, TANGELO, ZMOLLY, CRUSH, LZJB   // 15..22
+                            ZSTDF, BCM, ZLING, MCM, TANGELO, ZMOLLY, CRUSH, LZJB,  // 15..22
+                            BZIP2                                                  // 23..
                      };
 [vle_unpacked_size]  Unpacked size of the stream (N bytes). Data is stored in a variable
                      length encoding value, where bytes are just shifted and added into a
@@ -73,31 +73,32 @@ int main() {
 ```
 
 ### On choosing compressors (on a regular basis)
-|Rank|Compression ratio      |Fastest compressors    |Fastest decompressors  |Average speed          |
-|---:|:----------------------|:----------------------|:----------------------|:----------------------|
-| 1st|91.12% ZPAQ            |874.36MB/s RAW         |2472.60MB/s RAW        |1291.89MB/s RAW        
-| 2nd|90.67% MCM             |97.72MB/s LZJB         |290.69MB/s LZ4         |119.72MB/s LZJB        
-| 3rd|89.96% TANGELO         |71.45MB/s SHRINKER     |207.38MB/s SHRINKER    |106.29MB/s SHRINKER    
-| 4th|88.24% BSC             |65.51MB/s SHOCO        |198.69MB/s LZ4F        |88.93MB/s LZ4F         
-| 5th|87.65% LZMA25          |57.29MB/s LZ4F         |179.78MB/s MINIZ       |87.29MB/s SHOCO        
-| 6th|87.65% LZIP            |48.64MB/s ZSTDF        |154.52MB/s LZJB        |61.25MB/s ZSTDF        
-| 7th|87.54% BROTLI11        |21.47MB/s ZLING        |130.76MB/s SHOCO       |33.90MB/s ZLING        
-| 8th|87.42% CSC20           |16.10MB/s CRUSH        |113.23MB/s BROTLI9     |27.60MB/s CRUSH        
-| 9th|87.31% BCM             |07.15MB/s ZSTD         |112.88MB/s ZSTD        |13.45MB/s ZSTD         
-|10th|86.33% ZMOLLY          |04.04MB/s BSC          |109.14MB/s BROTLI11    |04.80MB/s BSC          
-|11th|86.02% LZMA20          |02.24MB/s BROTLI9      |96.73MB/s CRUSH        |04.39MB/s BROTLI9      
-|12th|85.94% BROTLI9         |02.14MB/s ZMOLLY       |82.68MB/s ZSTDF        |02.78MB/s MINIZ        
-|13th|85.13% ZSTD            |01.81MB/s BCM          |80.44MB/s ZLING        |02.64MB/s CSC20        
-|14th|82.72% ZLING           |01.40MB/s MINIZ        |47.98MB/s LZMA25       |02.52MB/s LZIP         
-|15th|81.99% MINIZ           |01.36MB/s CSC20        |45.61MB/s CSC20        |02.50MB/s LZMA25       
-|16th|78.23% ZSTDF           |01.30MB/s LZIP         |43.04MB/s LZMA20       |02.46MB/s LZMA20       
-|17th|77.93% LZ4             |01.28MB/s LZMA25       |37.68MB/s LZIP         |02.37MB/s LZ4          
-|18th|77.04% CRUSH           |01.26MB/s LZMA20       |05.89MB/s BSC          |02.06MB/s ZMOLLY       
-|19th|67.46% SHRINKER        |01.19MB/s LZ4          |01.99MB/s ZMOLLY       |01.75MB/s BCM          
-|20th|63.41% LZ4F            |00.58MB/s MCM          |01.69MB/s BCM          |00.60MB/s MCM          
-|21th|59.78% LZJB            |00.33MB/s TANGELO      |00.62MB/s MCM          |00.33MB/s TANGELO      
-|22th|06.16% SHOCO           |00.22MB/s ZPAQ         |00.33MB/s TANGELO      |00.22MB/s ZPAQ         
-|23th|00.00% RAW             |00.06MB/s BROTLI11     |00.22MB/s ZPAQ         |00.13MB/s BROTLI11     
+|Rank|Compression ratio      |Fastest compressors    |Fastest decompressors  |Average speed          |Memory efficiency|
+|---:|:----------------------|:----------------------|:----------------------|:----------------------|:----------------|
+| 1st|91.15% ZPAQ            |958.18MB/s RAW         |2231.20MB/s RAW        |1340.63MB/s RAW        |tbd
+| 2nd|90.71% MCM             |358.41MB/s LZ4F        |993.68MB/s LZ4         |508.50MB/s LZ4F        |tbd
+| 3rd|90.02% TANGELO         |240.87MB/s SHRINKER    |874.83MB/s LZ4F        |334.57MB/s SHRINKER    |tbd
+| 4th|88.31% BSC             |223.28MB/s LZJB        |547.62MB/s SHRINKER    |267.57MB/s LZJB        |tbd
+| 5th|87.74% LZMA25          |210.74MB/s ZSTDF       |382.52MB/s MINIZ       |246.66MB/s ZSTDF       |tbd
+| 6th|87.74% LZIP            |159.59MB/s SHOCO       |380.39MB/s ZSTD        |209.32MB/s SHOCO       |tbd
+| 7th|87.63% BROTLI11        |40.19MB/s ZLING        |333.76MB/s LZJB        |65.40MB/s ZLING        |tbd
+| 8th|87.50% CSC20           |33.67MB/s CRUSH        |304.06MB/s SHOCO       |60.29MB/s CRUSH        |tbd
+| 9th|87.15% BCM             |13.73MB/s ZSTD         |297.34MB/s ZSTDF       |26.51MB/s ZSTD         |tbd
+|10th|86.44% ZMOLLY          |09.00MB/s BSC          |287.83MB/s CRUSH       |13.44MB/s BZIP2        |tbd
+|11th|86.17% LZMA20          |08.51MB/s BZIP2        |287.58MB/s BROTLI9     |11.51MB/s BROTLI9      |tbd
+|12th|86.05% BROTLI9         |06.77MB/s ZMOLLY       |246.88MB/s BROTLI11    |10.78MB/s BSC          |tbd
+|13th|85.27% BZIP2           |05.87MB/s BROTLI9      |175.54MB/s ZLING       |08.13MB/s LZ4          |tbd
+|14th|85.24% ZSTD            |05.21MB/s BCM          |118.49MB/s LZMA25      |07.24MB/s MINIZ        |tbd
+|15th|82.89% ZLING           |04.08MB/s LZ4          |108.71MB/s LZMA20      |06.73MB/s ZMOLLY       |tbd
+|16th|81.68% MINIZ           |03.65MB/s MINIZ        |72.72MB/s CSC20        |05.27MB/s LZMA20       |tbd
+|17th|77.93% ZSTDF           |02.70MB/s LZMA20       |57.05MB/s LZIP         |04.90MB/s LZMA25       |tbd
+|18th|77.57% LZ4             |02.50MB/s LZMA25       |31.88MB/s BZIP2        |04.83MB/s CSC20        |tbd
+|19th|77.37% CRUSH           |02.50MB/s CSC20        |13.44MB/s BSC          |04.65MB/s BCM          |tbd
+|20th|67.30% SHRINKER        |02.25MB/s MCM          |06.68MB/s ZMOLLY       |04.13MB/s LZIP         |tbd
+|21th|63.30% LZ4F            |02.14MB/s LZIP         |04.20MB/s BCM          |02.29MB/s MCM          |tbd
+|22th|59.37% LZJB            |01.15MB/s TANGELO      |02.34MB/s MCM          |01.17MB/s TANGELO      |tbd
+|23th|06.42% SHOCO           |00.24MB/s BROTLI11     |01.18MB/s TANGELO      |00.48MB/s BROTLI11     |tbd
+|24th|00.00% RAW             |00.23MB/s ZPAQ         |00.21MB/s ZPAQ         |00.22MB/s ZPAQ         |tbd
 - Note: SHOCO is a _text_ compressor intended to be used for plain ascii IDs only.
 
 ### Charts
@@ -177,6 +178,7 @@ namespace bundle
 |BUNDLE_NO_BCM|(undefined)|Define to remove BCM library from build
 |BUNDLE_NO_BROTLI|(undefined)|Define to remove Brotli library from build
 |BUNDLE_NO_BSC|(undefined)|Define to remove LibBsc library from build
+|BUNDLE_NO_BZIP2|(undefined)|Define to remove BZip2 library from build
 |BUNDLE_NO_CRUSH|(undefined)|Define to remove CRUSH library from build
 |BUNDLE_NO_CSC|(undefined)|Define to remove CSC library from build
 |BUNDLE_NO_LZ4|(undefined)|Define to remove LZ4/LZ4 libraries 
@@ -207,6 +209,7 @@ namespace bundle
 |[bundle](https://github.com/r-lyeh/bundle)|r-lyeh|ZLIB/LibPNG|latest||
 |[bcm](http://sourceforge.net/projects/bcm/)|Ilya Muravyov|Public Domain|1.00|istream based now|
 |[brotli](https://github.com/google/brotli)|Jyrki Alakuijala, Zoltan Szabadka|Apache 2.0|2015/11/03||
+|[bzip2](http://www.bzip.org/)|Julian Seward|BSD-4||
 |[crush](http://sourceforge.net/projects/crush/)|Ilya Muravyov|Public Domain|1.00|reentrant fix|
 |[csc](https://github.com/fusiyuan2010/CSC)|Siyuan Fu|Public Domain|2015/06/16||
 |[easylzma](https://github.com/lloyd/easylzma)|Igor Pavlov, Lloyd Hilaiel|Public Domain|0.0.7||
@@ -228,6 +231,7 @@ namespace bundle
 [FastLZ](http://fastlz.org/), [FLZP](http://cs.fit.edu/~mmahoney/compression/#flzp), [LibLZF](http://freshmeat.net/projects/liblzf), [LZFX](https://code.google.com/p/lzfx/), [LZHAM](https://code.google.com/p/lzham/), [LZLIB](http://www.nongnu.org/lzip/lzlib.html), [LZO](http://www.oberhumer.com/opensource/lzo/), [LZP](http://www.cbloom.com/src/index_lz.html), [SMAZ](https://github.com/antirez/smaz), [Snappy](https://code.google.com/p/snappy/), [ZLIB](http://www.zlib.net/), [bzip2](http://www.bzip2.org/), [Yappy](http://blog.gamedeff.com/?p=371), [CMix](http://www.byronknoll.com/cmix.html), [M1](https://sites.google.com/site/toffer86/m1-project)
 
 ### Changelog
+- v2.0.5 (2016/02/06): Bring back BZIP2 support
 - v2.0.4 (2015/12/04): Add padding support; Fix reentrant CRUSH; Optimizations & fixes
 - v2.0.3 (2015/12/02): Add LZJB and CRUSH; Add BUNDLE_NO_CDDL directive
 - v2.0.2 (2015/11/07): Fix ZMolly segmentation fault (OSX)

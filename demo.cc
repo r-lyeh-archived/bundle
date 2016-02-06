@@ -1,13 +1,23 @@
 #include <cassert>
+#include <fstream>
+#include <sstream>
 #include "bundle.hpp"
 
-int main() {
+int main(int argc, const char **argv) {
     using namespace bundle;
     using namespace std;
 
     // 23 mb dataset
     string original( "There's a lady who's sure all that glitters is gold" );
     for (int i = 0; i < 18; ++i) original += original + string( i + 1, 32 + i );
+
+    // argument file?
+    if( argc > 1 ) {
+        ifstream ifs( argv[1], ios::binary );
+        stringstream ss;
+        ss << ifs.rdbuf();
+        original = ss.str();
+    }
 
     // pack, unpack & verify all encoders
     vector<unsigned> libs { 

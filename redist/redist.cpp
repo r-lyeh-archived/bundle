@@ -88,6 +88,9 @@
 #   ifndef BUNDLE_NO_SHRINKER
 #       define BUNDLE_NO_SHRINKER
 #   endif
+#   ifndef BUNDLE_NO_BZIP2
+#       define BUNDLE_NO_BZIP2
+#   endif
 #endif
 
 #ifdef BUNDLE_NO_MIT
@@ -380,23 +383,34 @@
 #endif
 #endif
 
-#if 0
+#ifndef BUNDLE_NO_BZIP2
 // bzip2
 #define BZ_NO_STDIO
+#ifdef Bool
+#undef Bool
+#endif
+#ifdef True
+#undef True
+#endif
+#ifdef False
+#undef False
+#endif
+#ifdef GET_BIT
+#undef GET_BIT
+#endif
+#define Bool Bool2
+#define UInt64 UInt642
 extern "C" void bz_internal_error(int errcode) {
     exit(-1);
 }
-#undef GET_BIT
-#undef True
-#undef False
-#define Bool Bool2
-#define UInt64 UInt642
 #include "deps/bzip2/bzlib.h"
 #include "deps/bzip2/crctable.c"
-#include "deps/bzip2/compress_.c"
-#include "deps/bzip2/decompress_.c"
+#include "deps/bzip2/compress.c"
+#include "deps/bzip2/decompress.c"
 #include "deps/bzip2/blocksort.c"
+#ifdef SET_BINARY_MODE
 #undef SET_BINARY_MODE
+#endif
 #include "deps/bzip2/bzlib.c"
 #include "deps/bzip2/randtable.c"
 #include "deps/bzip2/huffman.c"
@@ -574,6 +588,33 @@ extern "C" void bz_internal_error(int errcode) {
 
 #ifndef BUNDLE_NO_LZJB
 #include "deps/lzjb/lzjb2010.c"
+#endif
+
+#if 0
+#ifndef BUNDLE_NO_BZIP2
+extern "C" {
+#ifdef Bool
+#undef Bool
+#endif
+#ifdef True
+#undef True
+#endif
+#ifdef False
+#undef False
+#endif
+#ifdef GET_BIT
+#undef GET_BIT
+#endif
+#define Bool Bool2
+#include "deps/bzip2/bzlib.c"
+#include "deps/bzip2/compress.c"
+#include "deps/bzip2/decompress.c"
+#include "deps/bzip2/crctable.c"
+#include "deps/bzip2/blocksort.c"
+#include "deps/bzip2/huffman.c"
+#include "deps/bzip2/randtable.c"
+}
+#endif
 #endif
 
 #include "deps/endian/endian.h"

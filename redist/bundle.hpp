@@ -8,7 +8,8 @@
 #ifndef BUNDLE_HPP
 #define BUNDLE_HPP
 
-#define BUNDLE_VERSION "2.0.4" /* (2015/12/04) Add padding support; Fix reentrant CRUSH; Optimizations & fixes
+#define BUNDLE_VERSION "2.0.5" /* (2016/02/06) Bring back BZIP2 support
+#define BUNDLE_VERSION "2.0.4" // (2015/12/04) Add padding support; Fix reentrant CRUSH; Optimizations & fixes
 #define BUNDLE_VERSION "2.0.3" // (2015/12/02) Add LZJB and CRUSH; Add BUNDLE_NO_CDDL directive
 #define BUNDLE_VERSION "2.0.2" // (2015/11/07) Fix ZMolly segmentation fault (OSX)
 #define BUNDLE_VERSION "2.0.1" // (2015/11/04) Fix clang warnings and compilation errors
@@ -74,7 +75,8 @@ namespace bundle
     // libraries and/or encoders 
     enum { RAW, SHOCO, LZ4F, MINIZ, LZIP, LZMA20, ZPAQ, LZ4,      //  0..7
            BROTLI9, ZSTD, LZMA25, BSC, BROTLI11, SHRINKER, CSC20, //  7..14
-           ZSTDF, BCM, ZLING, MCM, TANGELO, ZMOLLY, CRUSH, LZJB   // 15..22
+           ZSTDF, BCM, ZLING, MCM, TANGELO, ZMOLLY, CRUSH, LZJB,  // 15..22
+           BZIP2                                                  // 23..
     };
 
     // constant: 32 = [0..10] padding + [1] 0x70 + [1] q + [1..10] vle(in) + [1..10] vle(out)
@@ -252,9 +254,9 @@ namespace bundle
             all.push_back( ZSTDF );
             all.push_back( CRUSH );
             all.push_back( LZJB );
+            all.push_back( BZIP2 );
 #if 0
             // for archival purposes
-            all.push_back( BZIP2 );
             all.push_back( LZFX );
             all.push_back( LZHAM );
             all.push_back( LZP1 );
@@ -618,7 +620,8 @@ void stream_tests() {
             RAW, SHOCO, LZ4F, MINIZ, LZIP, LZMA20,
             ZPAQ, LZ4, BROTLI9, ZSTD, LZMA25,
             BSC, BROTLI11, SHRINKER, CSC20, BCM,
-            ZLING, MCM, TANGELO, ZMOLLY, CRUSH, LZJB
+            ZLING, MCM, TANGELO, ZMOLLY, CRUSH, LZJB,
+            BZIP2
         };
         for( auto &lib : libs ) {
             suite( "stream test (%s)", name_of(lib) ) {
