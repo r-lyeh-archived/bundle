@@ -1,4 +1,3 @@
-#include <cassert>
 #include <fstream>
 #include <sstream>
 #include "bundle.hpp"
@@ -29,8 +28,8 @@ int main(int argc, const char **argv) {
     for( auto &lib : libs ) {
         string packed = pack(lib, original);
         string unpacked = unpack(packed);
-        cout << original.size() << " -> " << packed.size() << " bytes (" << name_of(lib) << ")" << endl;
-        assert( original == unpacked );
+        cout << original.size() << " -> " << packed.size() << " bytes (" << name_of(lib) << ")";
+        if( original == unpacked ) cout << endl; else cout << " (failed)" << endl;
     }
 
     cout << "All ok." << endl;
