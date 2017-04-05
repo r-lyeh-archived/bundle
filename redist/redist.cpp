@@ -11,6 +11,19 @@
 #endif
 // }
 
+// disable MSVC warnings {
+#if defined(_WIN32)
+#pragma warning(disable:4334)
+#pragma warning(disable:4309)
+#pragma warning(disable:4267)
+#pragma warning(disable:4244)
+#pragma warning(disable:4101)
+#pragma warning(disable:4800)
+#pragma warning(disable:4065)
+#pragma warning(disable:4018)
+#endif
+// }
+
 // ensure no other lib is polluting min/max macros at any point { 
 #ifdef _WIN32
 #ifndef NOMINMAX
