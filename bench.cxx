@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-#include "bundle.hpp"
+#include "bundle.h"
 
 int main( int argc, char **argv )
 {
@@ -95,7 +95,7 @@ int main( int argc, char **argv )
         zip << pak.zip(60); // 60% compression
     }
 
-    // write .bnd file
+    // write .bun file
     {
         bundle::archive pak;
         for( auto &result : datas ) {
@@ -106,7 +106,7 @@ int main( int argc, char **argv )
             }
         }
         
-        ofstream bnd( "test.bnd", std::ios::binary );
-        bnd << pak.bnd();
+        ofstream bun( "test.bun", std::ios::binary );
+        bun << pak.bun();
     }
 }

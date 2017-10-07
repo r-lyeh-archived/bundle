@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 #ifdef _7Z_TYPES_
-#include "Types.h"
+#include "csc_types.h"
 #else
 #endif
 

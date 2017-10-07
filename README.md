@@ -5,7 +5,7 @@ Bundle is an embeddable compression library that supports 23 compression algorit
 Distributed in two files.
 
 ### Features
-- [x] Archive support: .bnd, .zip
+- [x] Archive support: .bun, .zip
 - [x] Stream support: DEFLATE, LZMA, LZIP, ZPAQ, LZ4, ZSTD, BROTLI, BSC, CSC, BCM, MCM, ZMOLLY, ZLING, TANGELO, SHRINKER, CRUSH, LZJB, BZIP2 and SHOCO 
 - [x] Optimized for highest compression ratios on each compressor, where possible.
 - [x] Optimized for fastest decompression times on each decompressor, where possible.
@@ -32,7 +32,7 @@ Distributed in two files.
                      If possible, header-less bitstreams are preferred.
 ```
 
-### Bundle .bnd archive format
+### Bundle .bun archive format
 ```c++
 - Files/datas are packed into streams by using any compression method (see above)
 - Streams are archived into a standard ZIP file:
@@ -44,7 +44,7 @@ Distributed in two files.
 ### Showcase
 ```c++
 #include <cassert>
-#include "bundle.hpp"
+#include "bundle.h"
 
 int main() {
     using namespace bundle;
@@ -150,8 +150,8 @@ namespace bundle
     string  toc() const;             // inspection (json)
   };
   struct archive : vector<file>    { // ~sequence of files
-    void   bnd(string);              // .bnd serialization
-    string bnd() const;              // .bnd serialization
+    void   bun(string);              // .bun serialization
+    string bun() const;              // .bun serialization
     void   zip(string);              // .zip serialization
     string zip() const;              // .zip serialization
     string toc() const;              // inspection (json)
@@ -170,7 +170,7 @@ namespace bundle
 |BUNDLE_NO_MIT|(undefined)|Define to remove any MIT library from build
 |BUNDLE_NO_UNLICENSE|(undefined)|Define to remove any Public Domain library from build (*)
 
-(*): will disable `.bnd` and `.zip` archive support as well.
+(*): will disable `.bun` and `.zip` archive support as well.
 
 ### Build Directives (Libraries)
 |#define directive|Default value|Meaning|
@@ -195,7 +195,7 @@ namespace bundle
 |BUNDLE_NO_ZPAQ|(undefined)|Define to remove ZPAQ library from build
 |BUNDLE_NO_ZSTD|(undefined)|Define to remove ZSTD library from build
 
-(*): will disable `.bnd` and `.zip` archive support as well.
+(*): will disable `.bun` and `.zip` archive support as well.
 
 ## Build Directives (Other)
 |#define directive|Default value|Meaning|
@@ -230,7 +230,14 @@ namespace bundle
 ### Evaluated alternatives
 [FastLZ](http://fastlz.org/), [FLZP](http://cs.fit.edu/~mmahoney/compression/#flzp), [LibLZF](http://freshmeat.net/projects/liblzf), [LZFX](https://code.google.com/p/lzfx/), [LZHAM](https://code.google.com/p/lzham/), [LZLIB](http://www.nongnu.org/lzip/lzlib.html), [LZO](http://www.oberhumer.com/opensource/lzo/), [LZP](http://www.cbloom.com/src/index_lz.html), [SMAZ](https://github.com/antirez/smaz), [Snappy](https://code.google.com/p/snappy/), [ZLIB](http://www.zlib.net/), [bzip2](http://www.bzip2.org/), [Yappy](http://blog.gamedeff.com/?p=371), [CMix](http://www.byronknoll.com/cmix.html), [M1](https://sites.google.com/site/toffer86/m1-project)
 
+### Creating DLLs
+```bash
+cl bundle.cpp -DBUNDLE_API=BUNDLE_API_EXPORT /LD
+cl demo.cc -DBUNDLE_API=BUNDLE_API_IMPORT bundle.lib
+```
+
 ### Changelog
+- v2.1.0 (2017/06/10): C API and DLL bindings; Pump up libcsc; Rename .bnd to .bun
 - v2.0.5 (2016/02/06): Bring back BZIP2 support
 - v2.0.4 (2015/12/04): Add padding support; Fix reentrant CRUSH; Optimizations & fixes
 - v2.0.3 (2015/12/02): Add LZJB and CRUSH; Add BUNDLE_NO_CDDL directive

@@ -12,7 +12,7 @@ class MemIO;
 class CSCEncoder
 {
 public:
-    int Init(const CSCProps *p, MemIO *io);
+    int Init(const CSCProps *p, MemIO *io, ISzAlloc *alloc);
     
 
     void WriteEOF();
@@ -37,8 +37,8 @@ public:
     
 
 private:
-    uint32_t fixedDataType; //
-    uint32_t typeArg1,typeArg2,typeArg3;
+    ISzAlloc *alloc_;
+    uint32_t fixed_datatype_;
     CSCProps p_;
 
     Filters filters_;

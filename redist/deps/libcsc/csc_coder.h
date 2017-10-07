@@ -7,7 +7,9 @@
 #define BCWCheckBound() do{if (bc_size_ == bc_bufsize_) \
         {\
             outsize_ += bc_size_;\
-            io_->WriteBCData(bc_buf_, bc_bufsize_);\
+            if (io_->WriteBCData(bc_buf_, bc_bufsize_) != (int)bc_bufsize_) {\
+                throw (int)WRITE_ERROR; \
+            } \
             bc_size_ = 0;\
             pbc_ = bc_buf_;\
         }}while(0)
@@ -15,10 +17,11 @@
 class Coder
 {
     MemIO *io_;
+    ISzAlloc *alloc_;
 
 public:
 
-    int Init(MemIO *io);
+    int Init(MemIO *io, ISzAlloc *alloc);
     void Destroy();
 
     //flush the coder

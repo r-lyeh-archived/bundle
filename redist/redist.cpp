@@ -1,7 +1,7 @@
 /** This is an auto-generated file. Do not edit.
  */
 
-#include "bundle.hpp"
+#include "bundle.h"
 
 // here comes the fun. take a coffee {
 
@@ -492,7 +492,7 @@ extern "C" void bz_internal_error(int errcode) {
 #define KB KB2
 #define MB MB2
 #define _7Z_TYPES
-#include "deps/libcsc/Types.h"
+#include "deps/libcsc/csc_types.h"
 #include "deps/libcsc/csc_analyzer.h"
 #include "deps/libcsc/csc_coder.h"
 #include "deps/libcsc/csc_common.h"
@@ -518,6 +518,7 @@ extern "C" void bz_internal_error(int errcode) {
 #define CSCInstance CSCInstance_Enc
 #include "deps/libcsc/csc_enc.cpp"
 #include "deps/libcsc/csc_encoder_main.cpp"
+#include "deps/libcsc/csc_default_alloc.cpp"
 #endif
 
 #ifndef BUNDLE_NO_MCM

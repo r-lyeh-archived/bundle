@@ -1,6 +1,10 @@
 #include <fstream>
 #include <sstream>
-#include "bundle.hpp"
+#include "bundle.h"
+
+#ifdef _MSC_VER
+#include <omp.h>
+#endif
 
 int main(int argc, const char **argv) {
     using namespace bundle;
@@ -26,9 +30,15 @@ int main(int argc, const char **argv) {
         ZLING, MCM, TANGELO, ZMOLLY, CRUSH, LZJB
     };
     for( auto &lib : libs ) {
+        #ifdef _MSC_VER
+        double t = omp_get_wtime();
+        #endif
         string packed = pack(lib, original);
         string unpacked = unpack(packed);
-        cout << original.size() << " -> " << packed.size() << " bytes (" << name_of(lib) << ")";
+        cout << original.size() << " <--> " << packed.size() << " bytes (" << name_of(lib) << ")";
+        #ifdef _MSC_VER
+        cout << " " << ((omp_get_wtime() - t)*1000) << "ms.";
+        #endif
         if( original == unpacked ) cout << endl; else cout << " (failed)" << endl;
     }
 

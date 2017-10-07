@@ -16,7 +16,10 @@ uint64_t CSCEnc_EstMemUsage(const CSCProps *props);
 
 typedef void * CSCEncHandle;
 
-CSCEncHandle CSCEnc_Create(const CSCProps *props, ISeqOutStream *outstream);
+// alloc can be NULL, so default malloc/free will be used
+CSCEncHandle CSCEnc_Create(const CSCProps *props,
+                           ISeqOutStream *outstream,
+                           ISzAlloc *alloc);
 
 void CSCEnc_Destroy(CSCEncHandle p);
 
